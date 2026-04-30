@@ -1,18 +1,29 @@
-﻿/.idea
+# IDE
+/.idea
 .env
+
+# Environment variables
+.env
+.venv
+venv
+
+# Data - ignore content, keep folder structure
 /data/*
 !/data/raw/
 /data/raw/*
-!/data/processed/
-/data/processed/*
-!/data/raw/.gitkeep
-!/data/processed/.gitkeep
-/logs/*
-!/logs/.gitkeep
-/models/checkpoints/*
-!/models/checkpoints/.gitkeep
+!/data/raw/README.md
+!/data/preprocessed/
+/data/preprocessed/*
+!/data/preprocessed/README.md
+
+# Python
 __pycache__/
 *.py[cod]
 *.class
 venv/
 .env/
+
+# App build artifacts
+/app/node_modules/
+/app/.next/
+/app/dist/

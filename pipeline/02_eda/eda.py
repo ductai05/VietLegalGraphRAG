@@ -384,13 +384,14 @@ def get_id_coverage(
 # ══════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    BASE = os.path.dirname(__file__) or "."
+    BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    DATA_DIR = os.path.join(BASE, "data", "raw", "vietnamese-legal-documents")
     FILES = [
-        os.path.join(BASE, "data", "content.parquet"),
-        os.path.join(BASE, "data", "metadata.parquet"),
-        os.path.join(BASE, "data", "relationships.parquet"),
-        os.path.join(BASE, "legacy", "content.parquet"),
-        os.path.join(BASE, "legacy", "metadata.parquet"),
+        os.path.join(DATA_DIR, "data", "content.parquet"),
+        os.path.join(DATA_DIR, "data", "metadata.parquet"),
+        os.path.join(DATA_DIR, "data", "relationships.parquet"),
+        os.path.join(DATA_DIR, "legacy", "content.parquet"),
+        os.path.join(DATA_DIR, "legacy", "metadata.parquet"),
     ]
     for f in FILES:
         if os.path.exists(f):
