@@ -34,3 +34,91 @@ Hệ thống sử dụng bộ dữ liệu `vietnamese-legal-documents` (>518,000
 - Nguyễn Trần Trung Kiên (23122038)
 
 **Giảng viên hướng dẫn:** TS. Bùi Tiến Lên
+
+## Cấu trúc thư mục
+\\	ext
+[ML]_VietLegalGraphRAG/
+├── src/                # Mã nguồn chính của dự án (pipeline, services, apps, utils)
+├── notebooks/          # Jupyter notebooks cho EDA và thử nghiệm
+├── experiments/        # Các scripts chạy thử nghiệm mô hình
+├── scripts/            # Script tự động hóa cài đặt (setup, tải dữ liệu)
+├── data/               # Dữ liệu dự án
+│   ├── raw/            # Dữ liệu gốc (chưa qua xử lý)
+│   └── processed/      # Dữ liệu đã xử lý
+├── models/             # Chứa model checkpoints và configurations
+├── logs/               # File log xuất ra khi chạy hệ thống
+├── main.py             # Entrypoint chính để chạy các module
+├── README.md
+└── requirements.txt
+\## 🛠 Hướng dẫn Cài đặt
+Dự án cung cấp các script tự động thiết lập môi trường (ưu tiên sử dụng Conda với Python 3.12) và tải dataset từ HuggingFace.
+### 1. Cài đặt toàn bộ (Khuyên dùng)
+Chạy script tổng hợp dưới đây trên PowerShell để tự tạo môi trường Conda (hoặc venv), cài đặt thư viện và tải dữ liệu:
+\\powershell
+.\scripts\setup_all.ps1
+\### 2. Cài đặt thủ công từng bước
+**Bước 2.1: Tạo môi trường ảo (ví dụ với Conda)**
+\\ash
+conda create -n vlegal_env python=3.12 -y
+conda activate vlegal_env
+pip install -r requirements.txt
+pip install huggingface_hub
+\**Bước 2.2: Tải dữ liệu từ HuggingFace**
+Dữ liệu sẽ được tự động tải vào \data/raw/vietnamese-legal-documents\.
+\\ash
+python scripts/download_data.py
+\## 🚀 Hướng dẫn Sử dụng
+Chạy \main.py\ với các tham số task tương ứng (ví dụ: \data_prep\, \	rain\, \infer\):
+\\ash
+python main.py --task data_prep
+\
+
+## Cấu trúc thư mục
+
+```text
+[ML]_VietLegalGraphRAG/
+├── src/                # Mã nguồn chính của dự án (pipeline, services, apps, utils)
+├── notebooks/          # Jupyter notebooks cho EDA và thử nghiệm
+├── experiments/        # Các scripts chạy thử nghiệm mô hình
+├── scripts/            # Script tự động hóa cài đặt (setup, tải dữ liệu)
+├── data/               # Dữ liệu dự án
+│   ├── raw/            # Dữ liệu gốc (chưa qua xử lý)
+│   └── processed/      # Dữ liệu đã xử lý
+├── models/             # Chứa model checkpoints và configurations
+├── logs/               # File log xuất ra khi chạy hệ thống
+├── main.py             # Entrypoint chính để chạy các module
+├── README.md
+└── requirements.txt
+```
+
+## 🛠 Hướng dẫn Cài đặt
+
+Dự án cung cấp các script tự động thiết lập môi trường (ưu tiên sử dụng Conda với Python 3.12) và tải dataset từ HuggingFace.
+
+### 1. Cài đặt toàn bộ (Khuyên dùng)
+Chạy script tổng hợp dưới đây trên PowerShell để tự tạo môi trường Conda (hoặc venv), cài đặt thư viện và tải dữ liệu:
+```powershell
+.\scripts\setup_all.ps1
+```
+
+### 2. Cài đặt thủ công từng bước
+
+**Bước 2.1: Tạo môi trường ảo (ví dụ với Conda)**
+```bash
+conda create -n vlegal_env python=3.12 -y
+conda activate vlegal_env
+pip install -r requirements.txt
+pip install huggingface_hub
+```
+
+**Bước 2.2: Tải dữ liệu từ HuggingFace**
+Dữ liệu sẽ được tự động tải vào `data/raw/vietnamese-legal-documents`.
+```bash
+python scripts/download_data.py
+```
+
+## 🚀 Hướng dẫn Sử dụng
+Chạy `main.py` với các tham số task tương ứng (ví dụ: `data_prep`, `train`, `infer`):
+```bash
+python main.py --task data_prep
+```
