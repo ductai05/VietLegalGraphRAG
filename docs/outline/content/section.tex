@@ -1,0 +1,86 @@
+\section{Xác định vấn đề với ngữ cảnh Việt Nam}
+
+\textbf{Mô tả bài toán:} 
+Đa số người dân Việt Nam thường có tâm lý ngại đọc luật vì văn bản pháp lý vốn khô khan, dài dòng và khó hiểu. Do đó, nhóm mong muốn phát triển một Trợ lý ảo có khả năng diễn giải các quy định pháp luật phức tạp thành những câu trả lời dễ hiểu, kèm theo dẫn chứng rõ ràng cho người dùng.
+
+\hfill
+
+\textbf{Tính cấp thiết:}
+\begin{itemize}
+    \item \textbf{Rủi ro từ sự thiếu hiểu biết:} Một sinh viên đi thuê nhà hay một công nhân ký hợp đồng lao động nếu không hiểu rõ các điều khoản sẽ rất dễ bị chèn ép, chịu thiệt hại lớn về tiền bạc mà không biết cách giải quyết.
+    \item \textbf{Chi phí cao:} Các văn phòng luật sư hoặc các chatbot AI chuyên sâu về luật uy tín có chi phí quá lớn, không phù hợp cho đối tượng sinh viên hoặc những người có thu nhập khiêm tốn nhưng vẫn có nhu cầu tìm hiểu về luật.
+\end{itemize}
+
+\textbf{Ý nghĩa thực tiễn:}
+\begin{itemize}
+    \item \textbf{Bảo vệ người dân:} Giúp người dân bảo vệ quyền lợi của mình mà không cần tốn quá nhiều chi phí về cả thời gian lẫn tiền bạc.
+    \item \textbf{Công cụ cho giới chuyên môn:} Giúp sinh viên và chuyên viên luật tiết kiệm thời gian tra cứu, đối chiếu các Nghị định, Thông tư chồng chéo.
+    \item \textbf{Cảnh báo rủi ro tức thì:} Chỉ với một bức ảnh chụp hợp đồng, người dùng có thể biết ngay mình đang ký vào điều khoản bất lợi nào, từ đó tránh được các tranh chấp không đáng có.
+\end{itemize}
+
+\section{Kế hoạch dữ liệu}
+
+\begin{itemize}
+    \item \textbf{Nguồn dữ liệu:} Khai thác bộ dữ liệu \texttt{vietnamese-legal-documents} \cite{ngo_thinh_2026_vietnamese_legal} từ HuggingFace. Đây là nguồn dữ liệu đầy đủ tiêu đề, nội dung và phân loại các văn bản luật Việt Nam. Kiểm thử chất lượng kết quả RAG trên bộ dữ liệu \texttt{vietnamese-legal-qa} \cite{vietnamese_legal_qa}.
+    \item \textbf{Đặc điểm dữ liệu:} Dữ liệu dạng bảng với các cột nội dung văn bản cực kỳ dài. Thách thức lớn nhất là xử lý các văn bản có độ dài vượt mức giới hạn của mô hình ngôn ngữ thông thường.
+    \item \textbf{Cấu trúc Đồ thị tri thức:} Để giải quyết tính liên kết của pháp luật Việt Nam, dữ liệu luật sẽ được mô hình hóa thành Đồ thị tri thức theo thứ tự ưu tiên như sau:
+    \begin{itemize}
+        \item \textbf{Tầng 1: Nền tảng pháp lý:} 
+        \begin{itemize}
+            \item Hiến pháp
+            \item Điều ước quốc tế / Hiệp định / Công ước
+            \item Luật / Bộ luật
+            \item Pháp lệnh / Nghị quyết của Quốc hội, Ủy ban TVQH
+            \item Lệnh (Của Chủ tịch nước)
+        \end{itemize} 
+
+        \item \textbf{Tầng 2: Hướng dẫn thi hành}
+        \begin{itemize}
+            \item Nghị định của Chính phủ
+            \item Quyết định của Thủ tướng Chính phủ
+            \item Thông tư / Thông tư liên tịch (Cấp Bộ)
+            \item Nghị quyết của Hội đồng thẩm phán Tòa án nhân dân tối cao
+        \end{itemize}
+        
+        \item \textbf{Tầng 3: Hành chính, Phái sinh và Áp dụng} 
+        \begin{itemize}
+            \item Nghị quyết (HĐND), Quyết định (UBND, Bộ trưởng)
+            \item Chỉ thị, Công văn, Văn bản hợp nhất
+            \item Các văn bản khác
+        \end{itemize}
+        
+    \end{itemize}
+\end{itemize}
+
+\section{Phương pháp dự kiến}
+
+\textbf{Loại bài toán:} Retrieval-Augmented Generation (RAG), xây dựng đồ thị tri thức (Knowledge graph) kết hợp nhận diện ký tự quang học (OCR).
+
+\hfill
+
+\textbf{Mô hình dự kiến:} 
+\begin{itemize}
+    \item Mô hình embedding: vietlegal-harrier-0.6b \cite{vietlegal-harrier}, vnlegal-lal \cite{vnlegal-lal}.
+    \item Knowledge graph framework: LightRAG, Neo4j.
+    \item LLM: Gemini-3.1-Flash-Lite, Qwen3.5-4B.
+\end{itemize}
+
+\hfill
+
+\textbf{Công nghệ dự kiến sử dụng:}
+\begin{itemize}
+    \item \textbf{Ngôn ngữ:} Python (AI/Backend), TypeScript (Frontend).
+    \item \textbf{Thư viện:} LangChain, PaddleOCR, LightRAG.
+    \item \textbf{Web framework:} FastAPI, Next.js.
+\end{itemize}
+
+\section{Dự kiến sản phẩm đầu ra}
+
+\begin{itemize}
+    \item \textbf{Giao diện Chat thông minh:}
+    \begin{itemize}
+        \item Cho phép người dùng chọn vai trò (Dễ hiểu hoặc chuyên sâu) để nhận câu trả lời phù hợp theo nhu cầu.
+        \item \textbf{Bảng trích dẫn:} Hiển thị rõ ràng các điều khoản luật được dùng làm căn cứ ngay bên cạnh nội dung chat.
+    \end{itemize}
+    \item \textbf{Công cụ phân tích hợp đồng:} Người dùng chụp ảnh hợp đồng, hệ thống sẽ thực hiện OCR và trả về tóm tắt các điểm cần lưu ý.
+\end{itemize}
