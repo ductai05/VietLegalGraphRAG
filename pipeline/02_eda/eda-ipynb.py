@@ -273,6 +273,7 @@ sns.despine()
 max_val = vc["count"].max()
 for i, (_, row) in enumerate(vc.iterrows()):
     ax.text(row["count"] + max_val * 0.005, i, f'{row["count"]:,}', va="center", fontsize=10)
+ax.set_xlim(right=max_val * 1.12)
 
 plt.tight_layout()
 plt.show()
@@ -296,6 +297,7 @@ sns.despine(ax=axes[0])
 max_val_0 = vc_bar["count"].max()
 for i, (_, row) in enumerate(vc_bar.iterrows()):
     axes[0].text(row["count"] + max_val_0 * 0.005, i, f'{row["count"]:,}', va="center", fontsize=10)
+axes[0].set_xlim(right=max_val_0 * 1.12)
 
 # Pie chart – group small slices (<2%) into "Other"
 total = vc_status["count"].sum()
@@ -349,6 +351,7 @@ sns.despine()
 max_rel = vc_rel["count"].max()
 for i, (_, row) in enumerate(vc_rel.iterrows()):
     ax.text(row["count"] + max_rel * 0.005, i, f'{row["count"]:,}', va="center", fontsize=10)
+ax.set_xlim(right=max_rel * 1.12)
 plt.tight_layout()
 plt.show()
 
@@ -504,20 +507,50 @@ display(pl.DataFrame(meta_summary))
 
 # %%
 # === Cell 15c: So sánh categorical columns giữa 2 bộ ===
+
+# Categories to always keep even if count < threshold (notable legal types)
+_KEEP_ALWAYS = {"Bộ luật", "Hiến pháp", "Constitution", "Code"}
+_MIN_COUNT = 300  # hide categories below this threshold
+
 for pair_name, pair_data in mcmp["cat_comparisons"].items():
     display(Markdown(f"### 🏷️ {pair_name}"))
-    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 
-    for i, (label, vc_df) in enumerate([("data/", pair_data["data"]), ("legacy/", pair_data["legacy"])]):
+    # For loai_van_ban vs legal_type: filter small categories
+    is_type_chart = "loai_van_ban" in pair_name
+
+    filtered_pair = {}
+    for side_key, vc_df in [("data", pair_data["data"]), ("legacy", pair_data["legacy"])]:
         pdf = vc_df.to_pandas()
+        if is_type_chart:
+            n_before = len(pdf)
+            mask = (pdf["count"] >= _MIN_COUNT) | (pdf["value"].isin(_KEEP_ALWAYS))
+            pdf = pdf[mask]
+            n_hidden = n_before - len(pdf)
+        else:
+            n_hidden = 0
+        filtered_pair[side_key] = (pdf, n_hidden)
+
+    # Dynamic height: scale based on max number of categories across both sides
+    n_max = max(len(filtered_pair["data"][0]), len(filtered_pair["legacy"][0]))
+    fig_h = max(6, n_max * 0.45 + 2)  # at least 6, ~0.45 inch per category
+    fig, axes = plt.subplots(1, 2, figsize=(18, fig_h))
+
+    for i, (label, side_key) in enumerate([("data/", "data"), ("legacy/", "legacy")]):
+        pdf, n_hidden = filtered_pair[side_key]
         pdf = pdf.sort_values("count", ascending=True)
         axes[i].barh(pdf["value"], pdf["count"],
                       color=sns.color_palette("viridis" if i == 0 else "magma", len(pdf)))
-        axes[i].set_title(f"{label} ({pair_name.split(' vs ')[i]})")
+        subtitle = f"{label} ({pair_name.split(' vs ')[i]})"
+        if n_hidden > 0:
+            subtitle += f"  - {n_hidden} hidden types (count < {_MIN_COUNT})"
+        axes[i].set_title(subtitle, fontsize=13, fontweight="bold")
         axes[i].set_xlabel("Count")
+        axes[i].tick_params(axis="y", labelsize=9)
+        max_cnt = max(pdf["count"])
         for j, (_, row) in enumerate(pdf.iterrows()):
-            axes[i].text(row["count"] + max(pdf["count"])*0.01, j,
+            axes[i].text(row["count"] + max_cnt * 0.01, j,
                          f'{row["count"]:,}', va="center", fontsize=8)
+        axes[i].set_xlim(right=max_cnt * 1.15)
 
     plt.tight_layout()
     plt.show()
@@ -584,13 +617,13 @@ def draw_entity(ax, x, y, title, cols, w=3.2, color="#4C72B0", bg="#E8F0FE"):
 
 # ── Draw entities ──
 cx, cy = 1.8, 4.0
-draw_entity(ax, cx, cy, "📄 content", [
+draw_entity(ax, cx, cy, "content", [
     ("id", "PK · String"),
     ("content_html", "String"),
 ], w=3.0, color="#3D7ABF", bg="#E8F0FE")
 
 mx, my = 8.0, 3.0
-draw_entity(ax, mx, my, "📋 metadata", [
+draw_entity(ax, mx, my, "metadata", [
     ("id", "PK · String"),
     ("so_ky_hieu", "String"),
     ("title", "String"),
@@ -604,9 +637,9 @@ draw_entity(ax, mx, my, "📋 metadata", [
 ], w=3.8, color="#2E7D32", bg="#E8F6EF")
 
 rx, ry = 14.2, 4.0
-draw_entity(ax, rx, ry, "🔗 relationships", [
-    ("doc_id", "FK → metadata.id"),
-    ("other_doc_id", "FK → metadata.id"),
+draw_entity(ax, rx, ry, "relationships", [
+    ("doc_id", "FK -> metadata.id"),
+    ("other_doc_id", "FK -> metadata.id"),
     ("relationship", "String"),
 ], w=3.6, color="#E65100", bg="#FFF3E0")
 
@@ -700,8 +733,8 @@ for bar, v in zip(bars1, vals1):
                  f"{v:,}", ha="center", fontsize=11, fontweight="bold")
 
 # Relationships coverage
-labels2 = ["doc_id\n∈ metadata", "doc_id\n∉ metadata",
-           "other_doc_id\n∈ metadata", "other_doc_id\n∉ metadata"]
+labels2 = ["doc_id\nin metadata", "doc_id\nnot in metadata",
+           "other_doc_id\nin metadata", "other_doc_id\nnot in metadata"]
 vals2 = [cov["rel_src_in_metadata"], cov["rel_src_not_in_metadata"],
          cov["rel_tgt_in_metadata"], cov["rel_tgt_not_in_metadata"]]
 colors2 = ["#55A868", "#DD8452", "#55A868", "#DD8452"]
@@ -848,7 +881,7 @@ plt.show()
 # === Cell 21: Top signers & authorities ===
 display(Markdown("### 👤 Top người ký & cơ quan ban hành"))
 
-fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+fig, axes = plt.subplots(1, 2, figsize=(18, 8))
 
 # Top signers
 signers = (
@@ -865,11 +898,14 @@ signers.columns = ["nguoi_ky", "count"]
 signers = signers.sort_values("count", ascending=True)
 axes[0].barh(signers["nguoi_ky"], signers["count"],
              color=sns.color_palette("viridis", len(signers)))
-axes[0].set_xlabel("Documents signed")
-axes[0].set_title("Top 15 signers (nguoi_ky)")
+axes[0].set_xlabel("Documents signed", fontsize=11)
+axes[0].set_title("Top 15 signers (nguoi_ky)", fontsize=13, fontweight="bold", pad=10)
+axes[0].tick_params(axis="y", labelsize=10)
+max_s = max(signers["count"])
 for i, (_, row) in enumerate(signers.iterrows()):
-    axes[0].text(row["count"] + max(signers["count"]) * 0.01, i,
-                 f'{row["count"]:,}', va="center", fontsize=8)
+    axes[0].text(row["count"] + max_s * 0.01, i,
+                 f'{row["count"]:,}', va="center", fontsize=9)
+axes[0].set_xlim(right=max_s * 1.12)
 
 # Top authorities
 auths = (
@@ -886,11 +922,14 @@ auths.columns = ["co_quan_ban_hanh", "count"]
 auths = auths.sort_values("count", ascending=True)
 axes[1].barh(auths["co_quan_ban_hanh"], auths["count"],
              color=sns.color_palette("magma", len(auths)))
-axes[1].set_xlabel("Documents issued")
-axes[1].set_title("Top 15 issuing authorities (co_quan_ban_hanh)")
+axes[1].set_xlabel("Documents issued", fontsize=11)
+axes[1].set_title("Top 15 issuing authorities (co_quan_ban_hanh)", fontsize=13, fontweight="bold", pad=10)
+axes[1].tick_params(axis="y", labelsize=9)
+max_a = max(auths["count"])
 for i, (_, row) in enumerate(auths.iterrows()):
-    axes[1].text(row["count"] + max(auths["count"]) * 0.01, i,
-                 f'{row["count"]:,}', va="center", fontsize=8)
+    axes[1].text(row["count"] + max_a * 0.01, i,
+                 f'{row["count"]:,}', va="center", fontsize=9)
+axes[1].set_xlim(right=max_a * 1.12)
 
 plt.tight_layout()
 plt.show()
