@@ -1011,50 +1011,50 @@ schema_data_m = pl.scan_parquet(FILES["data/metadata"]).collect_schema()
 schema_legacy_m = pl.scan_parquet(FILES["legacy/metadata"]).collect_schema()
 
 recommendation_table = [
-    {"Criteria": "Content rows", "data/": f"{n_data_c:,}", "legacy/": f"{n_legacy_c:,}", "Winner": "legacy" if n_legacy_c > n_data_c else "data"},
-    {"Criteria": "Metadata rows", "data/": f"{n_data_m:,}", "legacy/": f"{n_legacy_m:,}", "Winner": "legacy" if n_legacy_m > n_data_m else "data"},
-    {"Criteria": "Metadata columns", "data/": str(len(schema_data_m)), "legacy/": str(len(schema_legacy_m)), "Winner": "data" if len(schema_data_m) > len(schema_legacy_m) else "legacy"},
-    {"Criteria": "Content format", "data/": "HTML (content_html)", "legacy/": "Plain text (content)", "Winner": "legacy (RAG-ready)"},
-    {"Criteria": "Column naming", "data/": "Vietnamese", "legacy/": "English", "Winner": "legacy (intl)"},
+    {"Criteria": "Content rows", "data/": f"{n_data_c:,}", "legacy/": f"{n_legacy_c:,}", "Winner": "data (primary)"},
+    {"Criteria": "Metadata rows", "data/": f"{n_data_m:,}", "legacy/": f"{n_legacy_m:,}", "Winner": "data (primary)"},
+    {"Criteria": "Metadata columns", "data/": str(len(schema_data_m)), "legacy/": str(len(schema_legacy_m)), "Winner": "data (richer)"},
+    {"Criteria": "Content format", "data/": "HTML (content_html)", "legacy/": "Plain text (content)", "Winner": "data (strip HTML)"},
+    {"Criteria": "Column naming", "data/": "Vietnamese", "legacy/": "English", "Winner": "data (domain-native)"},
     {"Criteria": "Extra metadata", "data/": "7 extra cols", "legacy/": "legal_sectors", "Winner": "data"},
-    {"Criteria": "Has relationships?", "data/": "Yes", "legacy/": "No", "Winner": "data"},
+    {"Criteria": "Has relationships?", "data/": "Yes", "legacy/": "No", "Winner": "data (unique)"},
 ]
 display(pl.DataFrame(recommendation_table))
 
 # Dynamic analysis table
 display(Markdown(
-    f"| Aspect | data/ | legacy/ |\n"
-    f"|--------|-------|--------|\n"
-    f"| Coverage | {n_data_c:,} docs | {n_legacy_c:,} docs ({n_legacy_c/n_data_c:.1f}x more) |\n"
-    f"| Content format | Raw HTML - needs stripping | Plain text - RAG-ready |\n"
-    f"| Metadata richness | {len(schema_data_m)} cols (more fields) | {len(schema_legacy_m)} cols (has legal_sectors) |\n"
+    f"| Aspect | data/ (Primary) | legacy/ (Supplement) |\n"
+    f"|--------|----------------|---------------------|\n"
+    f"| Coverage | {n_data_c:,} docs | {n_legacy_c:,} docs (supplement only) |\n"
+    f"| Content format | HTML → strip to plain text | Plain text (fallback) |\n"
+    f"| Metadata richness | {len(schema_data_m)} cols (primary source) | {len(schema_legacy_m)} cols (supplement `legal_sectors`) |\n"
     f"| Relationships | Available (data/relationships.parquet) | Not available |"
 ))
 
 # %% [markdown]
 # **Khuyến nghị:**
 #
-# 1. **Cho RAG**: Dùng `legacy/content` làm chính (text thuần, nhiều hơn ~3x), bổ sung metadata từ `data/metadata` qua ID join
-# 2. **Cho Knowledge Graph**: Bắt buộc dùng `data/relationships` (nguồn duy nhất chứa quan hệ giữa các VB). Join với `legacy/` để mở rộng coverage
+# 1. **Cho RAG**: Dùng `data/content` làm chính (strip HTML → text thuần), kết hợp `data/metadata` cho ngữ cảnh bổ sung
+# 2. **Cho Knowledge Graph**: Dùng `data/relationships` (nguồn duy nhất chứa quan hệ giữa các VB) + `data/metadata` cho node attributes
 # 3. **Chiến lược kết hợp** (khuyến nghị):
-#    - Lấy `legacy/` làm tập ID chính (superset)
-#    - Join các cột metadata bổ sung từ `data/metadata` khi ID trùng
+#    - Lấy `data/` làm tập dữ liệu chính (metadata phong phú hơn, có relationships)
+#    - Strip HTML từ `data/content` (`content_html`) để tạo plain text cho RAG
 #    - Dùng `data/relationships` cho các cạnh đồ thị
-#    - Strip HTML từ `data/content` cho các VB không có trong legacy
+#    - Bổ sung từ `legacy/` khi cần: join cột `legal_sectors` qua ID, hoặc lấy content cho các VB thiếu trong `data/`
 
 # %% [markdown]
 # ### Tóm tắt
 #
 # **Cấu trúc dữ liệu:**
 # - 3 bảng chính liên kết qua `id`: **content** <-> **metadata** <-> **relationships**
-# - 2 bộ dữ liệu: `data/` (bản mới, nội dung **HTML**) và `legacy/` (bản cũ, **text thuần**, đầy đủ hơn)
+# - 2 bộ dữ liệu: `data/` (bản chính, nội dung **HTML**, metadata phong phú, có relationships) và `legacy/` (bản cũ, **text thuần**, bổ sung)
 #
 # **Phát hiện chính:**
 #
 # | # | Phát hiện | Chi tiết |
 # |---|-----------|----------|
-# | 1 | **legacy/ đầy đủ hơn** | Nhiều dòng hơn, có thêm cột `legal_sectors` |
-# | 2 | **Format khác nhau** | data/ = **HTML** (`content_html`), legacy/ = **text thuần** (`content`) |
+# | 1 | **data/ là nguồn chính** | Metadata phong phú hơn (7 cột extra), có relationships – là nguồn duy nhất cho Knowledge Graph |
+# | 2 | **Format khác nhau** | data/ = **HTML** (`content_html`) → cần strip HTML, legacy/ = **text thuần** (`content`) |
 # | 3 | **Phân bố loại VB** | Một số loại chiếm đa số (Nghị định, Thông tư...) |
 # | 4 | **Trạng thái hiệu lực** | ~57% còn hiệu lực, ~37% hết hiệu lực toàn bộ |
 # | 5 | **Data quality** | `ngay_het_hieu_luc` gần như NULL toàn bộ |
@@ -1064,7 +1064,7 @@ display(Markdown(
 # | 9 | **Top entities** | Một số người ký & cơ quan ban hành chiếm lượng lớn |
 #
 # **Dữ liệu phù hợp cho:**
-# - **RAG** (Retrieval-Augmented Generation) - truy xuất văn bản pháp luật
-# - **Knowledge Graph** - xây dựng đồ thị quan hệ pháp luật (relationship data phong phú)
+# - **RAG** (Retrieval-Augmented Generation) - strip HTML từ `data/content`, kết hợp `data/metadata`
+# - **Knowledge Graph** - `data/relationships` + `data/metadata` cho nodes & edges
 # - **Legal NLP** - phân loại, tóm tắt, tìm kiếm ngữ nghĩa
 # - **Temporal analysis** - xu hướng lập pháp theo thời gian
