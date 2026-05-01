@@ -379,6 +379,58 @@ def get_id_coverage(
     }
 
 
+def analyze_missing_legacy_insights(
+    data_path: str,
+    legacy_path: str,
+) -> dict:
+    """
+    Phân tích sâu các văn bản có trong legacy nhưng bị thiếu trong data.
+    """
+    # 1. Lấy tập IDs
+    ids_data = set(
+        pl.scan_parquet(data_path)
+        .select(pl.col("id").cast(pl.Int64))
+        .collect().to_series().to_list()
+    )
+    
+    # 2. Lọc các văn bản legacy bị thiếu trong data
+    missing_legacy_df = (
+        pl.scan_parquet(legacy_path)
+        .with_columns(pl.col("id").cast(pl.Int64))
+        .filter(~pl.col("id").is_in(list(ids_data)))
+        .collect()
+    )
+    
+    total_missing = len(missing_legacy_df)
+    if total_missing == 0:
+        return {"total_missing": 0}
+        
+    # 3. Phân tích loại văn bản bị thiếu
+    type_counts = missing_legacy_df["legal_type"].drop_nulls().value_counts(sort=True)
+    
+    # Phân tích 449 văn bản trọng yếu bị thiếu
+    important_types = ["Constitution", "Code", "Law", "Ordinance"]
+    critical_missing = missing_legacy_df.filter(pl.col("legal_type").is_in(important_types))
+    critical_count = len(critical_missing)
+    critical_counts_by_type = critical_missing["legal_type"].value_counts(sort=True)
+    
+    # 4. Phân tích năm ban hành bị thiếu
+    missing_legacy_df = missing_legacy_df.with_columns(
+        pl.col("issuance_date").str.slice(0, 4).cast(pl.Int32, strict=False).alias("year")
+    )
+    year_counts = missing_legacy_df["year"].drop_nulls().value_counts(sort=True)
+    
+    return {
+        "total_missing": total_missing,
+        "critical_count": critical_count,
+        "type_counts": type_counts,
+        "critical_counts_by_type": critical_counts_by_type,
+        "year_counts": year_counts,
+        "critical_docs_sample": critical_missing.head(15).select(["id", "document_number", "title", "legal_type", "issuance_date"])
+    }
+
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  CLI ENTRY POINT (optional)
 # ══════════════════════════════════════════════════════════════════════════

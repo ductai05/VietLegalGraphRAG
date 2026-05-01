@@ -1,121 +1,29 @@
 # %% [markdown]
-# > **EDA cells for Jupyter Notebook - Vietnamese Legal Documents.**
-# > All heavy logic lives in `eda.py`, notebook only calls + displays.
-# >
-# > Convert: `jupytext --to notebook eda-ipynb.py -o eda.ipynb`
-
-# %% [markdown]
-# # EDA - Vietnamese Legal Documents (Parquet)
-#
-# ## Cấu trúc Dataset
-# Dataset gồm 4 cấu hình (configs):
+# # Phân tích khám phá dữ liệu (EDA) toàn diện: Data vs Legacy
 # 
-# | Config | Split | Dòng | Mô tả |
-# |---|---|---|---|
-# | `metadata` | `data` | 153,420 | Mỗi văn bản một dòng - 16 trường metadata |
-# | `content` | `data` | 178,665 | Nội dung toàn văn gốc định dạng HTML |
-# | `relationships` | `data` | 897,890 | Đồ thị có hướng (edges) giữa các văn bản |
-# | `legacy` | `metadata` | 518,601 | Lần cào cũ hơn - Tên trường tiếng Anh |
-# | `legacy` | `content` | 518,235 | Nội dung text thuần cho dữ liệu cũ |
-#
-# ### 1. data / metadata
-# | Cột | Mô tả |
-# |---|---|
-# | `id` | ID định danh văn bản (int) |
-# | `title` | Tiêu đề đầy đủ tiếng Việt |
-# | `so_ky_hieu` | Số hiệu chính thức, VD: 115/NQ-HĐBCQG |
-# | `ngay_ban_hanh` | Ngày ban hành (DD/MM/YYYY) |
-# | `loai_van_ban` | Loại văn bản - Quyết định, Nghị quyết, Thông tư, … |
-# | `ngay_co_hieu_luc` | Ngày có hiệu lực |
-# | `ngay_het_hieu_luc` | Ngày hết hiệu lực (rỗng nếu còn hiệu lực) |
-# | `nguon_thu_thap` | Nguồn thu thập (VD: Công báo) |
-# | `ngay_dang_cong_bao` | Ngày đăng Công báo |
-# | `nganh` | Ngành - Tài chính, Y tế, … |
-# | `linh_vuc` | Lĩnh vực pháp lý |
-# | `co_quan_ban_hanh` | Cơ quan ban hành (551 cơ quan) |
-# | `chuc_danh` | Chức danh người ký - Chủ tịch, Bộ trưởng, … |
-# | `nguoi_ky` | Tên người ký |
-# | `pham_vi` | Phạm vi áp dụng |
-# | `thong_tin_ap_dung` | Thông tin áp dụng |
-# | `tinh_trang_hieu_luc` | Tình trạng hiệu lực - Còn hiệu lực, Hết hiệu lực toàn bộ, … |
-#
-# ### 2. data / content
-# | Cột | Mô tả |
-# |---|---|
-# | `id` | ID văn bản (join key → metadata.id) |
-# | `content_html` | Nội dung văn bản định dạng HTML gốc |
-# *Lưu ý: Một số văn bản trong metadata không có dữ liệu trong content vì cổng thông tin chỉ cung cấp bản scan PDF cho các văn bản đó (không có bản HTML).*
-#
-# ### 3. data / relationships
-# | Cột | Mô tả |
-# |---|---|
-# | `doc_id` | ID văn bản nguồn (join key → metadata.id) |
-# | `other_doc_id` | ID văn bản đích |
-# | `relationship` | Loại quan hệ (Căn cứ, Hướng dẫn, v.v.) |
-#
-# ### 4. legacy (metadata & content)
-# Một bản snapshot cào cũ hơn với khoảng 518 nghìn văn bản. Tên cột và các giá trị tiếng Anh (khác với data sử dụng tiếng Việt). Ngày tháng ở định dạng YYYY-MM-DD.
-# Nên sử dụng config này khi cần độ bao phủ lớn hơn nhưng phải hy sinh sự phong phú của metadata.
-#
-# **legacy / metadata (518,601 dòng):**
-# | Cột | Mô tả |
-# |---|---|
-# | `id` | ID định danh văn bản (int) |
-# | `document_number` | Số hiệu chính thức |
-# | `title` | Tiêu đề đầy đủ tiếng Việt |
-# | `legal_type` | Loại văn bản tiếng Anh - Resolution, Decision, Circular, … |
-# | `legal_sectors` | Lĩnh vực tiếng Anh - Finance, Education, … |
-# | `issuing_authority` | Cơ quan ban hành (tên tiếng Việt) |
-# | `issuance_date` | Ngày ban hành (YYYY-MM-DD) |
-# | `effect_date` | Ngày hiệu lực (YYYY-MM-DD) |
-# | `effectless_date` | Ngày hết hiệu lực |
-# | `effect_status` | Tình trạng hiệu lực |
-# | `signers` | Người ký và ID |
-#
-# **legacy / content (518,235 dòng):**
-# | Cột | Mô tả |
-# |---|---|
-# | `id` | ID văn bản (join key → legacy/metadata.id) |
-# | `content` | Nội dung text thuần (không phải HTML) |
-# %%
-# === Cell 1: Imports & Config ===
-# Auto-reload eda.py khi file thay đổi (không cần restart kernel)
-# noinspection PyUnresolvedReferences
-%load_ext autoreload
-# noinspection PyUnresolvedReferences
-%autoreload 2
+# Notebook này thực hiện EDA song song trên cả 2 nguồn dữ liệu: `data/` (bản mới, chi tiết) và `legacy/` (bản cũ, đầy đủ).
+# Quá trình được thực hiện trên Polars để tối ưu RAM.
 
-import polars as pl
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
-import seaborn as sns
+# %%
+# === Cell 1: Imports & Configuration ===
 import os
 from IPython.display import display, Markdown
+import polars as pl
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 
-# Import hàm từ eda.py
+# Apply seaborn style
+sns.set_theme(style="whitegrid")
+plt.rcParams['figure.dpi'] = 100
+
 from eda import (
-    compute_column_stats,
-    get_label_value_counts,
-    compare_content_datasets,
-    compare_metadata_datasets,
     get_id_coverage,
+    analyze_missing_legacy_insights,
+    compare_metadata_datasets
 )
 
-# Polars config
-pl.Config.set_tbl_rows(20)
-pl.Config.set_fmt_str_lengths(120)  # Truncate long strings in head displays
-pl.Config.set_tbl_width_chars(500)
-pl.Config.set_tbl_cols(20)
-
-# Matplotlib config – clean style matching figure
-matplotlib.rcParams["font.family"] = "sans-serif"
-matplotlib.rcParams["font.sans-serif"] = ["Arial", "Helvetica", "DejaVu Sans"]
-sns.set_theme(style="ticks", palette="muted", font_scale=1.1)
-
-# Resolve project root (2 levels up from pipeline/02_eda/)
-# Works as .py script (__file__ exists) and as .ipynb (falls back to cwd)
+# Resolve project root
 try:
     _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 except NameError:
@@ -130,363 +38,51 @@ FILES = {
     "legacy/metadata":    os.path.join(BASE, "legacy", "metadata.parquet"),
 }
 
-# Tổng quan file
-overview_rows = []
-for name, path in FILES.items():
-    exists = os.path.exists(path)
-    size_mb = round(os.path.getsize(path) / 1e6, 1) if exists else 0
-    schema = pl.scan_parquet(path).collect_schema() if exists else None
-    num_rows = pl.scan_parquet(path).select(pl.len()).collect().item() if exists else 0
-    overview_rows.append({
-        "file": name,
-        "size_MB": size_mb,
-        "rows": f"{num_rows:,}" if exists else "N/A",
-        "columns": ", ".join(schema.names()) if schema else "N/A",
-    })
-display(Markdown("### 📂 Tổng quan Dataset"))
-display(pl.DataFrame(overview_rows))
-
 # %% [markdown]
 # ---
-# ## 1. Schema
-# Hầu hết các cột là **String**. Dưới đây chỉ liệt kê các cột **không phải String**:
+# ## 1. Tổng quan Dataset (Schema, Head, Basic Stats)
 
 # %%
-# === Cell 2: Schema – chỉ hiện cột non-String ===
+# === Cell 2: Schema & Size ===
+display(Markdown("### 1.1. Cấu trúc và Kích thước các file"))
 for name, path in FILES.items():
     if not os.path.exists(path):
         continue
     schema = pl.scan_parquet(path).collect_schema()
-    non_str = {col: str(dtype) for col, dtype in schema.items() if dtype != pl.String}
-    if non_str:
-        detail = ", ".join(f"{c} ({t})" for c, t in non_str.items())
-    else:
-        detail = "(tất cả String)"
-    display(Markdown(f"**📄 {name}** — {len(schema)} cột — non-String: {detail}"))
-
-# %% [markdown]
-# ---
-# ## 2. Head - Xem mẫu dữ liệu
-# Dùng `.to_pandas()` để Jupyter hiện đầy đủ nội dung cột dài (title, content).
+    n_rows = pl.scan_parquet(path).select(pl.len()).collect().item()
+    display(Markdown(f"**{name}**: `{n_rows:,}` rows, `{len(schema)}` columns"))
 
 # %%
-# === Cell 3: Head - data/content ===
-# Note: content_html contains raw HTML tags – that's the original format
-display(Markdown("### 📄 data/content"))
-display(
-    pl.scan_parquet(FILES["data/content"]).head(3).collect()
-    .with_columns(pl.col("content_html").str.slice(0, 200).alias("content_html"))
-)
-
-# %%
-# === Cell 4: Head - data/metadata ===
-display(Markdown("### 📄 data/metadata"))
-_df4 = pl.scan_parquet(FILES["data/metadata"]).head(3).collect().to_pandas()
+# === Cell 3: Xem trước dữ liệu ===
+display(Markdown("### 1.2. Dữ liệu mẫu (Head)"))
 from IPython.display import HTML
-display(HTML(
-    _df4.style
-    .set_properties(**{"white-space": "nowrap"})  # no wrapping on all cols
-    .set_properties(subset=["title"], **{"white-space": "normal", "min-width": "400px", "max-width": "600px"})
-    .set_table_styles([{"selector": "table", "props": [("width", "100%")]}])
-    .to_html()
-))
 
-# %%
-# === Cell 5: Head - data/relationships ===
-display(Markdown("### 📄 data/relationships"))
-display(pl.scan_parquet(FILES["data/relationships"]).head(5).collect())
-
-# %%
-# === Cell 6: Head - legacy/content ===
-display(Markdown("### 📄 legacy/content"))
-display(pl.scan_parquet(FILES["legacy/content"]).head(3).collect())
-
-# %%
-# === Cell 7: Head - legacy/metadata ===
-display(Markdown("### 📄 legacy/metadata"))
-_df7 = pl.scan_parquet(FILES["legacy/metadata"]).head(3).collect().to_pandas()
-display(HTML(
-    _df7.style
-    .set_properties(**{"white-space": "nowrap"})
-    .set_properties(subset=["title"], **{"white-space": "normal", "min-width": "400px", "max-width": "600px"})
-    .set_table_styles([{"selector": "table", "props": [("width", "100%")]}])
-    .to_html()
-))
-
-# %% [markdown]
-# ---
-# ## 3. Column Stats
-
-# %%
-# === Cell 8: Stats tất cả file ===
 for name, path in FILES.items():
     if not os.path.exists(path):
         continue
-    display(Markdown(f"### 📊 {name}"))
-    display(compute_column_stats(path))
-
-# %% [markdown]
-# ---
-# ## 4. Label / Categorical Columns
-# Phân bố các cột phân loại (categorical) có nhiều giá trị.
-
-# %%
-# === Cell 9: Labels tất cả file ===
-for name, path in FILES.items():
-    if not os.path.exists(path):
-        continue
-    labels = get_label_value_counts(path)
-    if not labels:
-        continue
-    display(Markdown(f"### 🏷️ {name}"))
-    for col, vc in labels.items():
-        display(Markdown(f"**`{col}`** ({len(vc)} giá trị)"))
-        display(vc)
-
-# %% [markdown]
-# ---
-# ## 5. Trực quan – Phân bố dữ liệu (Seaborn)
-# Vẽ biểu đồ phân bố cho các cột nhãn quan trọng.
-
-# %%
-# === Cell 10: Distribution of loai_van_ban ===
-display(Markdown("### 📊 Distribution of `loai_van_ban` (data/metadata)"))
-df_meta = pl.scan_parquet(FILES["data/metadata"]).collect()
-
-fig, ax = plt.subplots(figsize=(14, 7))
-vc = df_meta["loai_van_ban"].drop_nulls().value_counts(sort=True).to_pandas()
-vc.columns = ["loai_van_ban", "count"]
-# Get Top 15 to match clean figure style
-vc = vc.sort_values("count", ascending=False).head(15)
-vc = vc.sort_values("count", ascending=True)
-
-# Replace null/empty labels
-vc["loai_van_ban"] = vc["loai_van_ban"].replace("", "(Unknown)").fillna("(Unknown)")
-ax.barh(vc["loai_van_ban"], vc["count"], color="#63b167")
-ax.set_xlabel("Number of documents", fontsize=12)
-ax.set_title("Top 15 Document Types (loại văn bản)", fontsize=14, fontweight="bold", pad=15)
-
-# Clean up axes
-sns.despine()
-
-# Add value labels
-max_val = vc["count"].max()
-for i, (_, row) in enumerate(vc.iterrows()):
-    ax.text(row["count"] + max_val * 0.005, i, f'{row["count"]:,}', va="center", fontsize=10)
-ax.set_xlim(right=max_val * 1.12)
-
-plt.tight_layout()
-plt.show()
-
-# %%
-# === Cell 11: Distribution of tinh_trang_hieu_luc ===
-display(Markdown("### 📊 Distribution of `tinh_trang_hieu_luc` (data/metadata)"))
-fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-vc_status = df_meta["tinh_trang_hieu_luc"].drop_nulls().value_counts(sort=True).to_pandas()
-vc_status.columns = ["tinh_trang_hieu_luc", "count"]
-# Replace null/empty labels
-vc_status["tinh_trang_hieu_luc"] = vc_status["tinh_trang_hieu_luc"].replace("", "(Unknown)").fillna("(Unknown)")
-
-# Bar chart
-vc_bar = vc_status.sort_values("count", ascending=True)
-axes[0].barh(vc_bar["tinh_trang_hieu_luc"], vc_bar["count"], color="#63b167")
-axes[0].set_title("Effect status (tinh_trang_hieu_luc)", fontsize=14, fontweight="bold", pad=15)
-axes[0].set_xlabel("Number of documents", fontsize=12)
-sns.despine(ax=axes[0])
-max_val_0 = vc_bar["count"].max()
-for i, (_, row) in enumerate(vc_bar.iterrows()):
-    axes[0].text(row["count"] + max_val_0 * 0.005, i, f'{row["count"]:,}', va="center", fontsize=10)
-axes[0].set_xlim(right=max_val_0 * 1.12)
-
-# Pie chart – group small slices (<2%) into "Other"
-total = vc_status["count"].sum()
-vc_pie = vc_status.copy()
-vc_pie["pct"] = vc_pie["count"] / total * 100
-major = vc_pie[vc_pie["pct"] >= 2.0]
-minor = vc_pie[vc_pie["pct"] < 2.0]
-if len(minor) > 0:
-    other_row = pd.DataFrame([{
-        "tinh_trang_hieu_luc": f"Other ({len(minor)} types)",
-        "count": minor["count"].sum(),
-        "pct": minor["pct"].sum(),
-    }])
-    pie_data = pd.concat([major, other_row], ignore_index=True)
-else:
-    pie_data = major
-pie_data = pie_data.sort_values("count", ascending=False)
-
-wedges, texts, autotexts = axes[1].pie(
-    pie_data["count"],
-    labels=None,  # Remove direct labels to prevent overlap
-    autopct="%1.1f%%",
-    startangle=90,
-    pctdistance=0.75,
-    colors=sns.color_palette("Set2", len(pie_data)),
-)
-for t in autotexts:
-    t.set_fontsize(10)
-    t.set_color("white")
-    t.set_fontweight("bold")
+    display(Markdown(f"**{name}**"))
+    df_head = pl.scan_parquet(path).head(3).collect().to_pandas()
     
-axes[1].set_title("Percentage", fontsize=14, fontweight="bold", pad=15)
-axes[1].legend(wedges, pie_data["tinh_trang_hieu_luc"], loc="center left", bbox_to_anchor=(1, 0.5), fontsize=11, frameon=False)
-
-plt.tight_layout()
-plt.show()
-
-# %%
-# === Cell 12: Biểu đồ relationship ===
-display(Markdown("### 📊 Phân bố `relationship` (data/relationships)"))
-df_rels = pl.scan_parquet(FILES["data/relationships"]).collect()
-
-fig, ax = plt.subplots(figsize=(14, 6))
-vc_rel = df_rels["relationship"].drop_nulls().value_counts(sort=True).to_pandas()
-vc_rel.columns = ["relationship", "count"]
-vc_rel = vc_rel.sort_values("count", ascending=True)
-ax.barh(vc_rel["relationship"], vc_rel["count"], color="#63b167")
-ax.set_xlabel("Number of relationships", fontsize=12)
-ax.set_title("Distribution of relationship types", fontsize=14, fontweight="bold", pad=15)
-sns.despine()
-max_rel = vc_rel["count"].max()
-for i, (_, row) in enumerate(vc_rel.iterrows()):
-    ax.text(row["count"] + max_rel * 0.005, i, f'{row["count"]:,}', va="center", fontsize=10)
-ax.set_xlim(right=max_rel * 1.12)
-plt.tight_layout()
-plt.show()
-
-# %%
-# === Cell 13: Content length distribution ===
-display(Markdown("### 📊 Content length distribution (data/content)"))
-
-# RAM-safe: Polars computes str length lazily, only the integer column is collected
-content_lens_s = (
-    pl.scan_parquet(FILES["data/content"])
-    .select(pl.col("content_html").str.len_chars().alias("length"))
-    .collect()
-    .to_series()
-)
-
-CLIP_MAX = 200_000
-n_outlier = int((content_lens_s > CLIP_MAX).sum())
-med = float(content_lens_s.median())
-p25 = float(content_lens_s.quantile(0.25))
-p75 = float(content_lens_s.quantile(0.75))
-p95 = float(content_lens_s.quantile(0.95))
-len_min = int(content_lens_s.min())
-len_max = int(content_lens_s.max())
-len_mean = float(content_lens_s.mean())
-
-# Convert to numpy for efficient histogram computation
-lens_np = content_lens_s.clip(0, CLIP_MAX).to_numpy()
-bins = np.linspace(0, CLIP_MAX, 81)
-hist_counts, _ = np.histogram(lens_np, bins=bins)
-
-# Sample for strip plot (small memory footprint)
-strip_sample = content_lens_s.sample(min(2000, len(content_lens_s)), seed=42).to_numpy()
-del content_lens_s, lens_np  # free memory
-
-fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-
-# Left: Histogram via bar (pre-computed)
-bin_centers = (bins[:-1] + bins[1:]) / 2
-bin_width = bins[1] - bins[0]
-axes[0].bar(bin_centers, hist_counts, width=bin_width, color="#4C72B0", edgecolor="white", alpha=0.85)
-axes[0].set_yscale("log")
-axes[0].set_xlabel("Length (chars)")
-axes[0].set_ylabel("Documents (log scale)")
-axes[0].set_title(f"Content length distribution (<= {CLIP_MAX//1000}k, {n_outlier:,} outliers clipped)")
-axes[0].axvline(med, color="red", linestyle="--", lw=1.5, label=f"Median: {med:,.0f}")
-axes[0].axvline(p95, color="orange", linestyle=":", lw=1.5, label=f"P95: {p95:,.0f}")
-axes[0].legend(fontsize=9)
-axes[0].xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x/1000:.0f}k"))
-
-# Right: Strip plot + percentile lines (no violinplot to save RAM)
-axes[1].scatter(strip_sample, np.random.normal(1, 0.04, len(strip_sample)),
-                alpha=0.15, s=3, color="#4C72B0", zorder=2)
-for val, label, color, ls in [(p25, "P25", "#55A868", "--"), (med, "Median", "red", "--"),
-                               (p75, "P75", "#DD8452", "--"), (p95, "P95", "orange", ":")]:
-    axes[1].axvline(val, color=color, linestyle=ls, lw=1.5, alpha=0.8,
-                    label=f"{label}: {val:,.0f}")
-axes[1].legend(fontsize=8, loc="upper right")
-axes[1].set_xlabel("Length (chars)")
-axes[1].set_yticks([])
-axes[1].set_title(f'Min={len_min:,}  Max={len_max:,}  Mean={len_mean:,.0f}')
-axes[1].xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x/1000:.0f}k"))
-
-plt.tight_layout()
-plt.show()
+    if "title" in df_head.columns:
+        display(HTML(
+            df_head.style
+            .set_properties(**{"white-space": "nowrap"})
+            .set_properties(subset=["title"], **{"white-space": "normal", "min-width": "400px", "max-width": "600px"})
+            .set_table_styles([{"selector": "table", "props": [("width", "100%")]}])
+            .to_html()
+        ))
+    else:
+        if "content_html" in df_head.columns:
+            df_head["content_html"] = df_head["content_html"].str.slice(0, 200) + "..."
+        display(df_head)
 
 # %% [markdown]
 # ---
-# ## 6. So sánh data/content vs legacy/content
-# Bộ nào đầy đủ hơn? Nội dung có khác nhau không?
+# ## 2. So sánh Phân bố nhãn (Label Distribution)
 
 # %%
-# === Cell 14: So sánh content datasets ===
-display(Markdown("### 🔍 So sánh data/content vs legacy/content"))
-
-cmp = compare_content_datasets(FILES["data/content"], FILES["legacy/content"])
-
-# Bảng tổng hợp
-summary_rows = [
-    {"Metric": "Tổng số dòng", "data/content": f'{cmp["n_data"]:,}', "legacy/content": f'{cmp["n_legacy"]:,}'},
-    {"Metric": "Cột nội dung", "data/content": cmp["content_col_data"], "legacy/content": cmp["content_col_legacy"]},
-    {"Metric": "Format nội dung", "data/content": "HTML", "legacy/content": "Text thuần"},
-    {"Metric": "ID overlap", "data/content": f'{cmp["n_overlap"]:,}', "legacy/content": f'{cmp["n_overlap"]:,}'},
-    {"Metric": "ID chỉ có ở bộ này", "data/content": f'{cmp["n_only_data"]:,}', "legacy/content": f'{cmp["n_only_legacy"]:,}'},
-]
-display(pl.DataFrame(summary_rows))
-
-# %%
-# === Cell 15: Biểu đồ so sánh ID và độ dài content ===
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-# Venn-like bar chart
-labels = ["Only data/", "Shared", "Only legacy/"]
-values = [cmp["n_only_data"], cmp["n_overlap"], cmp["n_only_legacy"]]
-colors = ["#4C72B0", "#55A868", "#C44E52"]
-axes[0].bar(labels, values, color=colors, edgecolor="white", width=0.6)
-axes[0].set_title("ID overlap: data/content vs legacy/content")
-axes[0].set_ylabel("Number of IDs")
-for i, v in enumerate(values):
-    axes[0].text(i, v + max(values)*0.02, f"{v:,}", ha="center", fontsize=11, fontweight="bold")
-# Content length comparison – use pre-computed histogram (RAM-safe)
-bin_centers = (cmp["hist_bins"][:-1] + cmp["hist_bins"][1:]) / 2
-bin_width = cmp["hist_bins"][1] - cmp["hist_bins"][0]
-axes[1].bar(bin_centers, cmp["hist_data"], width=bin_width, alpha=0.6,
-            label=f'data/ ({cmp["content_col_data"]})', color="#4C72B0")
-axes[1].bar(bin_centers, cmp["hist_legacy"], width=bin_width, alpha=0.6,
-            label=f'legacy/ ({cmp["content_col_legacy"]})', color="#C44E52")
-axes[1].set_yscale("log")
-axes[1].set_xlabel("Content length (chars)")
-axes[1].set_ylabel("Documents (log scale)")
-axes[1].set_title("Content length comparison (<= 200k)")
-axes[1].xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x/1000:.0f}k"))
-axes[1].legend()
-
-plt.tight_layout()
-plt.show()
-
-# Nhận xét
-data_median = cmp["median_data"]
-legacy_median = cmp["median_legacy"]
-display(Markdown(f"""
-**Nhận xét:**
-- `legacy/content` có **{cmp['n_legacy']:,}** dòng, `data/content` có {cmp['n_data']:,} dòng
-- `data/content` chứa **HTML** (`content_html`), `legacy/content` chứa **text thuần** (`content`)
-- Độ dài trung vị: data/ = **{data_median:,.0f}** ký tự, legacy/ = **{legacy_median:,.0f}** ký tự
-- **{cmp['n_overlap']:,}** ID chung, **{cmp['n_only_legacy']:,}** ID chỉ có trong legacy/
-"""))
-
-# %% [markdown]
-# ---
-# ## 6.5 So sánh data/metadata vs legacy/metadata
-# Cột nào tương ứng? Dữ liệu khác gì?
-
-# %%
-# === Cell 15b: So sánh metadata datasets ===
-display(Markdown("### 🔍 So sánh data/metadata vs legacy/metadata"))
+# === Cell 4: Phân bố loại văn bản & Tình trạng hiệu lực ===
+display(Markdown("### 2.1. Phân bố Nhãn (Data vs Legacy)"))
 
 mcmp = compare_metadata_datasets(FILES["data/metadata"], FILES["legacy/metadata"])
 
@@ -504,9 +100,6 @@ meta_summary = [
     {"Metric": "ID chỉ có ở bộ này", "data/metadata": f'{mcmp["n_only_data"]:,}', "legacy/metadata": f'{mcmp["n_only_legacy"]:,}'},
 ]
 display(pl.DataFrame(meta_summary))
-
-# %%
-# === Cell 15c: So sánh categorical columns giữa 2 bộ ===
 
 # Categories to always keep even if count < threshold (notable legal types)
 _KEEP_ALWAYS = {"Bộ luật", "Hiến pháp", "Constitution", "Code"}
@@ -555,223 +148,178 @@ for pair_name, pair_data in mcmp["cat_comparisons"].items():
     plt.tight_layout()
     plt.show()
 
-display(Markdown(f"""
-**Nhận xét metadata:**
-- `legacy/metadata` có **{mcmp['n_legacy']:,}** dòng vs `data/metadata` **{mcmp['n_data']:,}** dòng
-- `data/` dùng tên cột **tiếng Việt**, `legacy/` dùng tên **tiếng Anh**
-- Cột chỉ có trong data/: **{', '.join(mcmp['data_only_cols']) or 'Không'}**
-- Cột chỉ có trong legacy/: **{', '.join(mcmp['legacy_only_cols']) or 'Không'}**
-- **{mcmp['n_overlap']:,}** ID chung, **{mcmp['n_only_data']:,}** chỉ data/, **{mcmp['n_only_legacy']:,}** chỉ legacy/
-"""))
 
 # %% [markdown]
 # ---
-# ## 7. Mối quan hệ giữa 3 bảng: content, metadata, relationships
-# Phân tích cách các bảng liên kết với nhau qua cột `id`.
+# ## 3. Phân tích Thời gian (Temporal Analysis)
 
 # %%
-# === Cell 16: ER Diagram – Sơ đồ quan hệ 3 bảng ===
-display(Markdown("### 🔗 Sơ đồ quan hệ (ER Diagram)"))
+# === Cell 5: So sánh xu hướng ban hành theo năm ===
+display(Markdown("### 3.1. So sánh số lượng văn bản qua các năm"))
 
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
-
-fig, ax = plt.subplots(figsize=(16, 8))
-ax.set_xlim(-0.5, 16.5)
-ax.set_ylim(-0.5, 8.5)
-ax.axis("off")
-ax.set_aspect("equal")
-
-def draw_entity(ax, x, y, title, cols, w=3.2, color="#4C72B0", bg="#E8F0FE"):
-    """Vẽ entity box với header + body."""
-    line_h = 0.38
-    h_header = 0.6
-    h_body = len(cols) * line_h + 0.3
-    h_total = h_header + h_body
-
-    # Header
-    header = FancyBboxPatch((x - w/2, y + h_body), w, h_header,
-                            boxstyle="round,pad=0.05", facecolor=color,
-                            edgecolor=color, linewidth=2, zorder=3)
-    ax.add_patch(header)
-    ax.text(x, y + h_body + h_header/2, title, ha="center", va="center",
-            fontsize=12, fontweight="bold", color="white", zorder=4)
-
-    # Body
-    body = FancyBboxPatch((x - w/2, y), w, h_body,
-                          boxstyle="round,pad=0.05", facecolor=bg,
-                          edgecolor=color, linewidth=2, zorder=3)
-    ax.add_patch(body)
-
-    for i, (col_name, col_info) in enumerate(cols):
-        yy = y + h_body - 0.25 - i * line_h
-        if col_info:
-            ax.text(x - w/2 + 0.15, yy, col_name, fontsize=9.5, va="center",
-                    fontfamily="monospace", fontweight="bold", zorder=4)
-            ax.text(x + w/2 - 0.15, yy, col_info, fontsize=8.5, va="center",
-                    ha="right", color="#666", fontfamily="monospace", zorder=4)
-        else:
-            ax.text(x - w/2 + 0.15, yy, col_name, fontsize=9.5, va="center",
-                    fontfamily="monospace", zorder=4)
-
-    return x, y, w, h_total, h_body
-
-# ── Draw entities ──
-cx, cy = 1.8, 4.0
-draw_entity(ax, cx, cy, "content", [
-    ("id", "PK · String"),
-    ("content_html", "String"),
-], w=3.0, color="#3D7ABF", bg="#E8F0FE")
-
-mx, my = 8.0, 3.0
-draw_entity(ax, mx, my, "metadata", [
-    ("id", "PK · String"),
-    ("so_ky_hieu", "String"),
-    ("title", "String"),
-    ("loai_van_ban", "String"),
-    ("co_quan_ban_hanh", "String"),
-    ("ngay_ban_hanh", "String"),
-    ("ngay_co_hieu_luc", "String"),
-    ("ngay_het_hieu_luc", "String"),
-    ("tinh_trang_hieu_luc", "String"),
-    ("nguoi_ky", "String"),
-], w=3.8, color="#2E7D32", bg="#E8F6EF")
-
-rx, ry = 14.2, 4.0
-draw_entity(ax, rx, ry, "relationships", [
-    ("doc_id", "FK -> metadata.id"),
-    ("other_doc_id", "FK -> metadata.id"),
-    ("relationship", "String"),
-], w=3.6, color="#E65100", bg="#FFF3E0")
-
-# ── Arrows ──
-arrow_kw = dict(arrowstyle="-|>", lw=2, mutation_scale=18, zorder=5)
-
-# content ↔ metadata
-ax.annotate("", xy=(6.1, 5.0), xytext=(3.3, 5.0),
-            arrowprops=dict(**arrow_kw, color="#3D7ABF"))
-ax.annotate("", xy=(3.3, 4.7), xytext=(6.1, 4.7),
-            arrowprops=dict(**arrow_kw, color="#2E7D32"))
-ax.text(4.7, 5.5, "content.id = metadata.id", fontsize=9, ha="center",
-        fontweight="bold", color="#1565C0",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#90CAF9", alpha=0.95))
-ax.text(4.7, 5.1, "1 : 1", fontsize=9, ha="center", color="#1565C0", fontweight="bold")
-
-# metadata ↔ relationships
-ax.annotate("", xy=(12.4, 5.3), xytext=(9.9, 5.3),
-            arrowprops=dict(**arrow_kw, color="#E65100",
-                            connectionstyle="arc3,rad=0.15"))
-ax.text(11.15, 6.1, "metadata.id = doc_id", fontsize=9, ha="center",
-        fontweight="bold", color="#E65100",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#FFAB91", alpha=0.95))
-ax.text(11.15, 5.7, "1 : N", fontsize=9, ha="center", color="#E65100", fontweight="bold")
-
-ax.annotate("", xy=(12.4, 4.5), xytext=(9.9, 4.5),
-            arrowprops=dict(**arrow_kw, color="#BF360C",
-                            connectionstyle="arc3,rad=-0.15"))
-ax.text(11.15, 3.8, "metadata.id = other_doc_id", fontsize=9, ha="center",
-        fontweight="bold", color="#BF360C",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#FFAB91", alpha=0.95))
-ax.text(11.15, 4.1, "1 : N", fontsize=9, ha="center", color="#BF360C", fontweight="bold")
-
-# -- Legend --
-legend_text = (
-    "JOIN paths:\n"
-    "    SELECT * FROM content c\n"
-    "    JOIN metadata m ON c.id = m.id\n"
-    "    JOIN relationships r ON m.id = r.doc_id\n\n"
-    "relationships = directed edges between 2 docs:\n"
-    "    doc_id -> other_doc_id  (e.g. basis, guide, replace)"
+# Lấy dữ liệu Data
+df_time_data = pl.scan_parquet(FILES["data/metadata"]).select("ngay_ban_hanh").collect()
+parsed_data = df_time_data.with_columns(
+    pl.col("ngay_ban_hanh").str.to_date("%d/%m/%Y", strict=False).alias("date")
+).filter(pl.col("date").is_not_null())
+yearly_data = (
+    parsed_data.with_columns(pl.col("date").dt.year().alias("year"))
+    .group_by("year").agg(pl.len().alias("count")).sort("year")
+    .filter((pl.col("year") >= 1945) & (pl.col("year") <= 2025))
+    .to_pandas()
 )
-ax.text(8.0, 0.8, legend_text, fontsize=9, ha="center", va="center",
-        fontfamily="monospace",
-        bbox=dict(boxstyle="round,pad=0.6", facecolor="#FFFDE7",
-                  edgecolor="#F9A825", linewidth=1.5, alpha=0.95))
 
-ax.set_title("Entity-Relationship Diagram – Vietnamese Legal Documents",
-             fontsize=15, fontweight="bold", pad=15)
+# Lấy dữ liệu Legacy
+df_time_legacy = pl.scan_parquet(FILES["legacy/metadata"]).select("issuance_date").collect()
+parsed_legacy = df_time_legacy.with_columns(
+    pl.col("issuance_date").str.to_date("%Y-%m-%d", strict=False).alias("date")
+).filter(pl.col("date").is_not_null())
+yearly_legacy = (
+    parsed_legacy.with_columns(pl.col("date").dt.year().alias("year"))
+    .group_by("year").agg(pl.len().alias("count")).sort("year")
+    .filter((pl.col("year") >= 1945) & (pl.col("year") <= 2025))
+    .to_pandas()
+)
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+
+# Timeline bar chart overlap
+axes[0].plot(yearly_legacy["year"], yearly_legacy["count"], label="Legacy (Tiếng Anh)", color="#C44E52", lw=2, marker='.')
+axes[0].plot(yearly_data["year"], yearly_data["count"], label="Data (Tiếng Việt)", color="#4C72B0", lw=2, marker='.')
+axes[0].set_xlabel("Năm ban hành")
+axes[0].set_ylabel("Số lượng văn bản")
+axes[0].set_title("Xu hướng ban hành văn bản qua các năm")
+axes[0].legend()
+
+# Cumulative
+yearly_data_sorted = yearly_data.sort_values("year")
+yearly_data_sorted["cumsum"] = yearly_data_sorted["count"].cumsum()
+yearly_legacy_sorted = yearly_legacy.sort_values("year")
+yearly_legacy_sorted["cumsum"] = yearly_legacy_sorted["count"].cumsum()
+
+axes[1].plot(yearly_legacy_sorted["year"], yearly_legacy_sorted["cumsum"], label="Legacy", color="#C44E52", lw=2)
+axes[1].plot(yearly_data_sorted["year"], yearly_data_sorted["cumsum"], label="Data", color="#4C72B0", lw=2)
+axes[1].set_xlabel("Năm")
+axes[1].set_ylabel("Tổng số tích lũy")
+axes[1].set_title("Tốc độ gia tăng văn bản (Tích lũy)")
+axes[1].legend()
+
 plt.tight_layout()
 plt.show()
 
-# %%
-# === Cell 17: Thống kê ID coverage giữa 3 bảng ===
-display(Markdown("### 📊 ID Coverage giữa 3 bảng (data/)"))
+display(Markdown("> **Nhận xét**: Tập `legacy` có độ phủ thời gian rộng hơn và lưu trữ nhiều văn bản cũ hơn đáng kể so với `data`."))
 
-cov = get_id_coverage(
-    FILES["data/content"],
-    FILES["data/metadata"],
-    FILES["data/relationships"],
-)
 
-cov_rows = [
-    {"Section": "Row counts", "Metric": "content - unique IDs", "Value": f'{cov["n_content"]:,}'},
-    {"Section": "Row counts", "Metric": "metadata - unique IDs", "Value": f'{cov["n_metadata"]:,}'},
-    {"Section": "Row counts", "Metric": "relationships - total rows", "Value": f'{cov["n_rel_rows"]:,}'},
-    {"Section": "Row counts", "Metric": "relationships - unique docs involved", "Value": f'{cov["n_rel_unique_docs"]:,}'},
-    {"Section": "ID overlap", "Metric": "content \u2229 metadata", "Value": f'{cov["content_in_metadata"]:,}'},
-    {"Section": "ID overlap", "Metric": "content \\ metadata (only in content)", "Value": f'{cov["content_not_in_metadata"]:,}'},
-    {"Section": "ID overlap", "Metric": "metadata \\ content (only in metadata)", "Value": f'{cov["metadata_not_in_content"]:,}'},
-    {"Section": "FK coverage", "Metric": "rel.doc_id in metadata", "Value": f'{cov["rel_src_in_metadata"]:,}'},
-    {"Section": "FK coverage", "Metric": "rel.doc_id NOT in metadata", "Value": f'{cov["rel_src_not_in_metadata"]:,}'},
-    {"Section": "FK coverage", "Metric": "rel.other_doc_id in metadata", "Value": f'{cov["rel_tgt_in_metadata"]:,}'},
-    {"Section": "FK coverage", "Metric": "rel.other_doc_id NOT in metadata", "Value": f'{cov["rel_tgt_not_in_metadata"]:,}'},
-]
-display(pl.DataFrame(cov_rows))
+# %% [markdown]
+# ---
+# ## 4. Phân tích Top Thực thể (Top Entities)
 
 # %%
-# === Cell 18: Biểu đồ Venn-like – ID coverage ===
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+# === Cell 6: Top Cơ quan ban hành & Người ký ===
+display(Markdown("### 4.1. So sánh Top Thực thể (Data vs Legacy)"))
 
-# Content vs Metadata
-labels1 = ["Only content", "content \u2229 metadata", "Only metadata"]
-vals1 = [cov["content_not_in_metadata"], cov["content_in_metadata"], cov["metadata_not_in_content"]]
-colors1 = ["#4C72B0", "#55A868", "#C44E52"]
-bars1 = axes[0].bar(labels1, vals1, color=colors1, edgecolor="white", width=0.6)
-axes[0].set_title("content vs metadata - ID overlap")
-axes[0].set_ylabel("Number of IDs")
-for bar, v in zip(bars1, vals1):
-    axes[0].text(bar.get_x() + bar.get_width()/2, v + max(vals1)*0.02,
-                 f"{v:,}", ha="center", fontsize=11, fontweight="bold")
+fig, axes = plt.subplots(2, 2, figsize=(18, 14))
 
-# Relationships coverage
-labels2 = ["doc_id\nin metadata", "doc_id\nnot in metadata",
-           "other_doc_id\nin metadata", "other_doc_id\nnot in metadata"]
-vals2 = [cov["rel_src_in_metadata"], cov["rel_src_not_in_metadata"],
-         cov["rel_tgt_in_metadata"], cov["rel_tgt_not_in_metadata"]]
-colors2 = ["#55A868", "#DD8452", "#55A868", "#DD8452"]
-bars2 = axes[1].bar(labels2, vals2, color=colors2, edgecolor="white", width=0.6)
-axes[1].set_title("relationships - FK coverage in metadata")
-axes[1].set_ylabel("Number of IDs")
-for bar, v in zip(bars2, vals2):
-    axes[1].text(bar.get_x() + bar.get_width()/2, v + max(vals2)*0.02,
-                 f"{v:,}", ha="center", fontsize=10, fontweight="bold")
+# -- Cơ quan ban hành --
+# Data
+auths_data = pl.scan_parquet(FILES["data/metadata"]).select("co_quan_ban_hanh").collect().to_series().drop_nulls().value_counts(sort=True).head(15).to_pandas()
+auths_data.columns = ["auth", "count"]
+auths_data = auths_data.sort_values("count", ascending=True)
+axes[0, 0].barh(auths_data["auth"], auths_data["count"], color="#4C72B0")
+axes[0, 0].set_title("Top 15 Cơ quan ban hành (Data)", fontsize=13)
+
+# Legacy
+auths_leg = pl.scan_parquet(FILES["legacy/metadata"]).select("issuing_authority").collect().to_series().drop_nulls().value_counts(sort=True).head(15).to_pandas()
+auths_leg.columns = ["auth", "count"]
+auths_leg = auths_leg.sort_values("count", ascending=True)
+axes[0, 1].barh(auths_leg["auth"], auths_leg["count"], color="#C44E52")
+axes[0, 1].set_title("Top 15 Issuing Authority (Legacy)", fontsize=13)
+
+# -- Người ký --
+# Data
+sign_data = pl.scan_parquet(FILES["data/metadata"]).select("nguoi_ky").collect().to_series().drop_nulls().value_counts(sort=True).head(15).to_pandas()
+sign_data.columns = ["sign", "count"]
+sign_data = sign_data.sort_values("count", ascending=True)
+axes[1, 0].barh(sign_data["sign"], sign_data["count"], color="#4C72B0")
+axes[1, 0].set_title("Top 15 Người ký (Data)", fontsize=13)
+
+# Legacy
+sign_leg = pl.scan_parquet(FILES["legacy/metadata"]).select("signers").collect().to_series().drop_nulls().value_counts(sort=True).head(15).to_pandas()
+sign_leg.columns = ["sign", "count"]
+sign_leg = sign_leg.sort_values("count", ascending=True)
+axes[1, 1].barh(sign_leg["sign"], sign_leg["count"], color="#C44E52")
+axes[1, 1].set_title("Top 15 Signers (Legacy)", fontsize=13)
+
+plt.tight_layout()
+plt.show()
+
+
+# %% [markdown]
+# ---
+# ## 5. Phân tích Dữ liệu Phi cấu trúc (Unstructured Data)
+
+# %%
+# === Cell 7: So sánh Content Length ===
+display(Markdown("### 5.1. So sánh độ dài văn bản (Data HTML vs Legacy Plain Text)"))
+
+def get_content_length_stats(path: str, col_name: str):
+    len_series = pl.scan_parquet(path).select(pl.col(col_name).str.len_chars().alias("length")).collect().to_series()
+    return len_series
+
+data_len_s = get_content_length_stats(FILES["data/content"], "content_html")
+legacy_len_s = get_content_length_stats(FILES["legacy/content"], "content")
+
+# Random sample to plot KDE safely without crashing RAM
+data_sample = data_len_s.sample(min(10000, len(data_len_s)), seed=42).to_pandas()
+data_sample = data_sample.to_frame(name="length")
+data_sample["dataset"] = "data/ (HTML)"
+
+legacy_sample = legacy_len_s.sample(min(10000, len(legacy_len_s)), seed=42).to_pandas()
+legacy_sample = legacy_sample.to_frame(name="length")
+legacy_sample["dataset"] = "legacy/ (Plain Text)"
+
+comb_pd = pl.concat([pl.DataFrame(data_sample), pl.DataFrame(legacy_sample)]).to_pandas()
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+
+# Plot 1: Boxplot
+sns.boxplot(data=comb_pd, x="dataset", y="length", ax=axes[0], hue="dataset", palette=["#4C72B0", "#C44E52"], legend=False)
+axes[0].set_yscale("log")
+axes[0].set_title("Phân bố độ dài văn bản (Log scale - Sampled)")
+axes[0].set_ylabel("Độ dài (ký tự)")
+
+# Plot 2: Histogram KDE
+sns.kdeplot(data=data_sample, x="length", log_scale=True, ax=axes[1], color="#4C72B0", fill=True, label="data/")
+sns.kdeplot(data=legacy_sample, x="length", log_scale=True, ax=axes[1], color="#C44E52", fill=True, label="legacy/")
+axes[1].set_title("Mật độ phân bố độ dài (Sampled)")
+axes[1].set_xlabel("Độ dài (ký tự, log scale)")
+axes[1].legend()
 
 plt.tight_layout()
 plt.show()
 
 # %% [markdown]
 # ---
-# ## 8. Data Quality – Null heatmap
+# ## 6. Kiểm tra Chất lượng Dữ liệu (Data Quality & Coverage)
 
 # %%
-# === Cell 19: Data Quality Heatmap ===
-display(Markdown("### 🧹 Data Quality – Tỷ lệ NULL theo cột"))
+# === Cell 8: Null Heatmap ===
+display(Markdown("### 6.1. Tỷ lệ Missing Values (NULL Heatmap)"))
 
 quality_data = {}
 for name, path in FILES.items():
     if not os.path.exists(path):
         continue
-    # RAM-safe: compute null counts lazily without loading full data
     schema = pl.scan_parquet(path).collect_schema()
     total_q = pl.scan_parquet(path).select(pl.len()).collect().item()
     null_pcts = {}
-    # Compute all null counts in a single lazy query
     null_exprs = [pl.col(col).null_count().alias(col) for col in schema.names()]
     null_counts = pl.scan_parquet(path).select(null_exprs).collect()
     for col in schema.names():
         null_pcts[col] = round(null_counts[col][0] / total_q * 100, 1)
     quality_data[name] = null_pcts
 
-# Build matrix – all columns across datasets
+# Build matrix
 all_cols = []
 for v in quality_data.values():
     for c in v:
@@ -785,7 +333,7 @@ for ds_name, cols_dict in quality_data.items():
     matrix.append(row)
     ds_labels.append(ds_name)
 
-fig, ax = plt.subplots(figsize=(max(14, len(all_cols) * 0.8), len(ds_labels) * 0.9 + 2))
+fig, ax = plt.subplots(figsize=(16, 6))
 mat = np.array(matrix)
 im = ax.imshow(mat, cmap="YlOrRd", aspect="auto", vmin=0, vmax=100)
 
@@ -806,265 +354,144 @@ for i in range(len(ds_labels)):
 
 plt.colorbar(im, ax=ax, label="Null %", shrink=0.8)
 ax.set_title("Tỷ lệ NULL (%) theo cột × dataset", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.show()
 
-# %% [markdown]
-# ---
-# ## 9. Phân tích thời gian – Ngày ban hành
 
 # %%
-# === Cell 20: Temporal analysis – ngay_ban_hanh ===
-display(Markdown("### 📅 Phân bố thời gian ban hành văn bản"))
+# === Cell 9: ID Coverage ===
+display(Markdown("### 6.2. Mức độ bao phủ ID (ID Coverage)"))
 
-df_time = (
-    pl.scan_parquet(FILES["data/metadata"])
-    .select("ngay_ban_hanh")
-    .collect()
-)
-
-# Parse dates – format varies, try common patterns
-parsed = df_time.with_columns(
-    pl.col("ngay_ban_hanh")
-    .str.to_date("%d/%m/%Y", strict=False)
-    .alias("date")
-).filter(pl.col("date").is_not_null())
-
-n_parsed = len(parsed)
-n_total = len(df_time)
-display(Markdown(f"Parse thành công: **{n_parsed:,}** / {n_total:,} ({n_parsed/n_total*100:.1f}%)"))
-
-# Extract year
-yearly = (
-    parsed
-    .with_columns(pl.col("date").dt.year().alias("year"))
-    .group_by("year")
-    .agg(pl.len().alias("count"))
-    .sort("year")
-    .filter((pl.col("year") >= 1945) & (pl.col("year") <= 2040))
-    .to_pandas()
-)
-
-fig, axes = plt.subplots(1, 2, figsize=(16, 5))
-
-# Timeline bar chart
-axes[0].bar(yearly["year"], yearly["count"], color="#63b167", edgecolor="none", width=0.8)
-axes[0].set_xlabel("Issuance year", fontsize=12)
-axes[0].set_ylabel("Number of documents", fontsize=12)
-axes[0].set_title("Documents by issuance year", fontsize=14, fontweight="bold", pad=15)
-axes[0].axvline(yearly.loc[yearly["count"].idxmax(), "year"], color="red", linestyle="--",
-                alpha=0.7, label=f'Peak: {yearly.loc[yearly["count"].idxmax(), "year"]:.0f}')
-axes[0].legend()
-sns.despine(ax=axes[0])
-
-# Cumulative
-yearly_sorted = yearly.sort_values("year")
-yearly_sorted["cumsum"] = yearly_sorted["count"].cumsum()
-axes[1].fill_between(yearly_sorted["year"], yearly_sorted["cumsum"],
-                     alpha=0.3, color="#63b167")
-axes[1].plot(yearly_sorted["year"], yearly_sorted["cumsum"],
-             color="#63b167", lw=2)
-axes[1].set_xlabel("Year", fontsize=12)
-axes[1].set_ylabel("Cumulative total", fontsize=12)
-axes[1].set_title("Cumulative documents over time", fontsize=14, fontweight="bold", pad=15)
-sns.despine(ax=axes[1])
-axes[1].yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x/1000:.0f}k"))
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ---
-# ## 10. Top người ký & Cơ quan ban hành
-
-# %%
-# === Cell 21: Top signers & authorities ===
-display(Markdown("### 👤 Top người ký & cơ quan ban hành"))
-
-fig, axes = plt.subplots(1, 2, figsize=(18, 8))
-
-# Top signers
-signers = (
-    pl.scan_parquet(FILES["data/metadata"])
-    .select("nguoi_ky")
-    .collect()
-    .to_series()
-    .drop_nulls()
-    .value_counts(sort=True)
-    .head(15)
-    .to_pandas()
-)
-signers.columns = ["nguoi_ky", "count"]
-signers = signers.sort_values("count", ascending=True)
-axes[0].barh(signers["nguoi_ky"], signers["count"],
-             color=sns.color_palette("viridis", len(signers)))
-axes[0].set_xlabel("Documents signed", fontsize=11)
-axes[0].set_title("Top 15 signers (nguoi_ky)", fontsize=13, fontweight="bold", pad=10)
-axes[0].tick_params(axis="y", labelsize=10)
-max_s = max(signers["count"])
-for i, (_, row) in enumerate(signers.iterrows()):
-    axes[0].text(row["count"] + max_s * 0.01, i,
-                 f'{row["count"]:,}', va="center", fontsize=9)
-axes[0].set_xlim(right=max_s * 1.12)
-
-# Top authorities
-auths = (
-    pl.scan_parquet(FILES["data/metadata"])
-    .select("co_quan_ban_hanh")
-    .collect()
-    .to_series()
-    .drop_nulls()
-    .value_counts(sort=True)
-    .head(15)
-    .to_pandas()
-)
-auths.columns = ["co_quan_ban_hanh", "count"]
-auths = auths.sort_values("count", ascending=True)
-axes[1].barh(auths["co_quan_ban_hanh"], auths["count"],
-             color=sns.color_palette("magma", len(auths)))
-axes[1].set_xlabel("Documents issued", fontsize=11)
-axes[1].set_title("Top 15 issuing authorities (co_quan_ban_hanh)", fontsize=13, fontweight="bold", pad=10)
-axes[1].tick_params(axis="y", labelsize=9)
-max_a = max(auths["count"])
-for i, (_, row) in enumerate(auths.iterrows()):
-    axes[1].text(row["count"] + max_a * 0.01, i,
-                 f'{row["count"]:,}', va="center", fontsize=9)
-axes[1].set_xlim(right=max_a * 1.12)
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ---
-# ## 11. Network – Bậc kết nối trong relationships
-
-# %%
-# === Cell 22: Relationship degree distribution ===
-display(Markdown("### 🔗 Phân tích bậc kết nối (degree) trong relationships"))
-
-# RAM-safe: compute degree lazily, never load full 3-column df
-out_deg = (
-    pl.scan_parquet(FILES["data/relationships"])
-    .group_by("doc_id").agg(pl.len().alias("out_degree"))
-    .collect()
-)
-in_deg = (
-    pl.scan_parquet(FILES["data/relationships"])
-    .group_by("other_doc_id").agg(pl.len().alias("in_degree"))
-    .collect()
-)
+cov = get_id_coverage(FILES["data/content"], FILES["data/metadata"], FILES["data/relationships"])
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-out_s = out_deg["out_degree"]
-out_med, out_max = float(out_s.median()), int(out_s.max())
-out_np = out_s.clip(0, 50).to_numpy()
-out_bins = np.arange(0, 52)
-out_hist, _ = np.histogram(out_np, bins=out_bins)
-del out_np
-axes[0].bar(out_bins[:-1], out_hist, width=0.9, color="#4C72B0", edgecolor="white", alpha=0.85)
-axes[0].set_yscale("log")
-axes[0].set_xlabel("Out-degree (references made)")
-axes[0].set_ylabel("Number of doc_ids (log)")
-axes[0].set_title(f"Out-degree distribution (median={out_med:.0f}, max={out_max:,})")
+# Content vs Metadata (data/)
+labels1 = ["Only content", "content \u2229 metadata", "Only metadata"]
+vals1 = [cov["content_not_in_metadata"], cov["content_in_metadata"], cov["metadata_not_in_content"]]
+colors1 = ["#4C72B0", "#55A868", "#C44E52"]
+bars1 = axes[0].bar(labels1, vals1, color=colors1, edgecolor="white", width=0.6)
+axes[0].set_title("ID Overlap: data/content vs data/metadata")
+axes[0].set_ylabel("Number of IDs")
+for bar, v in zip(bars1, vals1):
+    axes[0].text(bar.get_x() + bar.get_width()/2, v + max(vals1)*0.02,
+                 f"{v:,}", ha="center", fontsize=11, fontweight="bold")
 
-in_s = in_deg["in_degree"]
-in_med, in_max = float(in_s.median()), int(in_s.max())
-in_np = in_s.clip(0, 50).to_numpy()
-in_hist, _ = np.histogram(in_np, bins=out_bins)
-del in_np
-axes[1].bar(out_bins[:-1], in_hist, width=0.9, color="#C44E52", edgecolor="white", alpha=0.85)
-axes[1].set_yscale("log")
-axes[1].set_xlabel("In-degree (references received)")
-axes[1].set_ylabel("Number of other_doc_ids (log)")
-axes[1].set_title(f"In-degree distribution (median={in_med:.0f}, max={in_max:,})")
+# Legacy content vs metadata
+try:
+    # Try using Int64 to save memory if possible
+    leg_c_raw = pl.scan_parquet(FILES["legacy/content"]).select(pl.col("id")).collect().to_series()
+    try:
+        leg_c = set(leg_c_raw.cast(pl.Int64).to_list())
+    except:
+        leg_c = set(leg_c_raw.to_list())
+    
+    leg_m_raw = pl.scan_parquet(FILES["legacy/metadata"]).select(pl.col("id")).collect().to_series()
+    try:
+        leg_m = set(leg_m_raw.cast(pl.Int64).to_list())
+    except:
+        leg_m = set(leg_m_raw.to_list())
+except Exception:
+    leg_c = set()
+    leg_m = set()
+
+val_c_only = len(leg_c - leg_m)
+val_overlap = len(leg_c & leg_m)
+val_m_only = len(leg_m - leg_c)
+
+labels2 = ["Only content", "content \u2229 metadata", "Only metadata"]
+vals2 = [val_c_only, val_overlap, val_m_only]
+bars2 = axes[1].bar(labels2, vals2, color=colors1, edgecolor="white", width=0.6)
+axes[1].set_title("ID Overlap: legacy/content vs legacy/metadata")
+axes[1].set_ylabel("Number of IDs")
+for bar, v in zip(bars2, vals2):
+    axes[1].text(bar.get_x() + bar.get_width()/2, v + max(vals2)*0.02,
+                 f"{v:,}", ha="center", fontsize=11, fontweight="bold")
 
 plt.tight_layout()
 plt.show()
 
-# Top most-referenced documents
-display(Markdown("**📌 Top 10 văn bản được tham chiếu nhiều nhất (in-degree):**"))
-top_in = (
-    in_deg.sort("in_degree", descending=True).head(10)
-    .rename({"other_doc_id": "id"})
-)
-# Join with metadata for context
-meta_mini = pl.scan_parquet(FILES["data/metadata"]).select("id", "so_ky_hieu", "title", "loai_van_ban").collect()
-top_in_info = top_in.join(meta_mini, on="id", how="left")
-display(top_in_info)
 
 # %% [markdown]
 # ---
-# ## 12. Recommendation: data/ vs legacy/
+# ## 7. Phân tích Mạng lưới (Network Analysis)
+# > **Lưu ý**: Tập `legacy` không chứa thông tin về quan hệ giữa các văn bản. Do đó, phần này chỉ được áp dụng trên tập `data`.
 
 # %%
-# === Cell 23b: data vs legacy recommendation ===
-display(Markdown("### 🧠 Recommendation: Which dataset to use?"))
+# === Cell 10: Phân tích Degree (Data only) ===
+display(Markdown("### 7.1. Bậc kết nối (Degree Distribution) - Chỉ tập Data"))
 
-# Compute comparison metrics
-n_data_c = pl.scan_parquet(FILES["data/content"]).select(pl.len()).collect().item()
-n_legacy_c = pl.scan_parquet(FILES["legacy/content"]).select(pl.len()).collect().item()
-n_data_m = pl.scan_parquet(FILES["data/metadata"]).select(pl.len()).collect().item()
-n_legacy_m = pl.scan_parquet(FILES["legacy/metadata"]).select(pl.len()).collect().item()
+out_deg = pl.scan_parquet(FILES["data/relationships"]).group_by("doc_id").agg(pl.len().alias("out_degree")).collect()
+in_deg = pl.scan_parquet(FILES["data/relationships"]).group_by("other_doc_id").agg(pl.len().alias("in_degree")).collect()
 
-schema_data_m = pl.scan_parquet(FILES["data/metadata"]).collect_schema()
-schema_legacy_m = pl.scan_parquet(FILES["legacy/metadata"]).collect_schema()
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+out_s = out_deg["out_degree"]
+out_np = out_s.clip(0, 50).to_numpy()
+out_bins = np.arange(0, 52)
+out_hist, _ = np.histogram(out_np, bins=out_bins)
+axes[0].bar(out_bins[:-1], out_hist, width=0.9, color="#4C72B0")
+axes[0].set_yscale("log")
+axes[0].set_title(f"Out-degree (Tham chiếu đi) - Max: {int(out_s.max())}")
 
-recommendation_table = [
-    {"Criteria": "Content rows", "data/": f"{n_data_c:,}", "legacy/": f"{n_legacy_c:,}", "Winner": "data (primary)"},
-    {"Criteria": "Metadata rows", "data/": f"{n_data_m:,}", "legacy/": f"{n_legacy_m:,}", "Winner": "data (primary)"},
-    {"Criteria": "Metadata columns", "data/": str(len(schema_data_m)), "legacy/": str(len(schema_legacy_m)), "Winner": "data (richer)"},
-    {"Criteria": "Content format", "data/": "HTML (content_html)", "legacy/": "Plain text (content)", "Winner": "data (strip HTML)"},
-    {"Criteria": "Column naming", "data/": "Vietnamese", "legacy/": "English", "Winner": "data (domain-native)"},
-    {"Criteria": "Extra metadata", "data/": "7 extra cols", "legacy/": "legal_sectors", "Winner": "data"},
-    {"Criteria": "Has relationships?", "data/": "Yes", "legacy/": "No", "Winner": "data (unique)"},
-]
-display(pl.DataFrame(recommendation_table))
+in_s = in_deg["in_degree"]
+in_np = in_s.clip(0, 50).to_numpy()
+in_hist, _ = np.histogram(in_np, bins=out_bins)
+axes[1].bar(out_bins[:-1], in_hist, width=0.9, color="#C44E52")
+axes[1].set_yscale("log")
+axes[1].set_title(f"In-degree (Được tham chiếu) - Max: {int(in_s.max())}")
 
-# Dynamic analysis table
-display(Markdown(
-    f"| Aspect | data/ (Primary) | legacy/ (Supplement) |\n"
-    f"|--------|----------------|---------------------|\n"
-    f"| Coverage | {n_data_c:,} docs | {n_legacy_c:,} docs (supplement only) |\n"
-    f"| Content format | HTML → strip to plain text | Plain text (fallback) |\n"
-    f"| Metadata richness | {len(schema_data_m)} cols (primary source) | {len(schema_legacy_m)} cols (supplement `legal_sectors`) |\n"
-    f"| Relationships | Available (data/relationships.parquet) | Not available |"
-))
+plt.tight_layout()
+plt.show()
+
 
 # %% [markdown]
-# **Khuyến nghị:**
-#
-# 1. **Cho RAG**: Dùng `data/content` làm chính (strip HTML → text thuần), kết hợp `data/metadata` cho ngữ cảnh bổ sung
-# 2. **Cho Knowledge Graph**: Dùng `data/relationships` (nguồn duy nhất chứa quan hệ giữa các VB) + `data/metadata` cho node attributes
-# 3. **Chiến lược kết hợp** (khuyến nghị):
-#    - Lấy `data/` làm tập dữ liệu chính (metadata phong phú hơn, có relationships)
-#    - Strip HTML từ `data/content` (`content_html`) để tạo plain text cho RAG
-#    - Dùng `data/relationships` cho các cạnh đồ thị
-#    - Bổ sung từ `legacy/` khi cần: join cột `legal_sectors` qua ID, hoặc lấy content cho các VB thiếu trong `data/`
+# ---
+# ## 8. Phân tích Chuyên sâu: Khoảng trống Dữ liệu (Data Gap)
+
+# %%
+# === Cell 11: Sự thiếu hụt văn bản trọng yếu ===
+display(Markdown("### 8.1. Insight: 365,000+ văn bản bị rò rỉ khỏi tập `data/`"))
+
+legacy_insights = analyze_missing_legacy_insights(FILES["data/metadata"], FILES["legacy/metadata"])
+
+if legacy_insights["total_missing"] > 0:
+    display(Markdown(f"- **Tổng số văn bản chỉ có ở legacy:** `{legacy_insights['total_missing']:,}`"))
+    display(Markdown(f"- **Số văn bản TRỌNG YẾU bị thiếu trong data (Hiến pháp, Bộ luật, Luật, Pháp lệnh):** `{legacy_insights['critical_count']:,}`"))
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # 1. Phân bố loại văn bản trọng yếu
+    crit_df = legacy_insights["critical_counts_by_type"].to_pandas()
+    axes[0].bar(crit_df["legal_type"], crit_df["count"], color="#C44E52")
+    axes[0].set_title(f"449 Văn bản Trọng yếu bị thiếu", fontsize=13, fontweight="bold")
+    for i, v in enumerate(crit_df["count"]):
+        axes[0].text(i, v + max(crit_df["count"])*0.01, f"{v}", ha="center", fontsize=10)
+    
+    # 2. Phân bố năm ban hành của TOÀN BỘ 365k văn bản thiếu
+    year_df = legacy_insights["year_counts"].to_pandas()
+    year_df = year_df[year_df["year"] > 1945].sort_values("year")
+    axes[1].plot(year_df["year"], year_df["count"], marker=".", color="#4C72B0")
+    axes[1].set_title("Năm ban hành của các văn bản bị thiếu", fontsize=13, fontweight="bold")
+    axes[1].set_xlabel("Năm")
+    axes[1].set_ylabel("Số lượng")
+    
+    plt.tight_layout()
+    plt.show()
+    
+    display(Markdown("**Top 15 văn bản trọng yếu bị thiếu:**"))
+    display(legacy_insights["critical_docs_sample"])
+
 
 # %% [markdown]
-# ### Tóm tắt
-#
-# **Cấu trúc dữ liệu:**
-# - 3 bảng chính liên kết qua `id`: **content** <-> **metadata** <-> **relationships**
-# - 2 bộ dữ liệu: `data/` (bản chính, nội dung **HTML**, metadata phong phú, có relationships) và `legacy/` (bản cũ, **text thuần**, bổ sung)
-#
-# **Phát hiện chính:**
-#
-# | # | Phát hiện | Chi tiết |
-# |---|-----------|----------|
-# | 1 | **data/ là nguồn chính** | Metadata phong phú hơn (7 cột extra), có relationships – là nguồn duy nhất cho Knowledge Graph |
-# | 2 | **Format khác nhau** | data/ = **HTML** (`content_html`) → cần strip HTML, legacy/ = **text thuần** (`content`) |
-# | 3 | **Phân bố loại VB** | Một số loại chiếm đa số (Nghị định, Thông tư...) |
-# | 4 | **Trạng thái hiệu lực** | ~57% còn hiệu lực, ~37% hết hiệu lực toàn bộ |
-# | 5 | **Data quality** | `ngay_het_hieu_luc` gần như NULL toàn bộ |
-# | 6 | **content <-> metadata ~1:1** | Hầu hết ID match, rất ít orphan |
-# | 7 | **Temporal trend** | Số lượng VB tăng mạnh từ ~2000, peak gần đây |
-# | 8 | **Network** | Phân bố degree theo power law - một số VB gốc được tham chiếu rất nhiều |
-# | 9 | **Top entities** | Một số người ký & cơ quan ban hành chiếm lượng lớn |
-#
-# **Dữ liệu phù hợp cho:**
-# - **RAG** (Retrieval-Augmented Generation) - strip HTML từ `data/content`, kết hợp `data/metadata`
-# - **Knowledge Graph** - `data/relationships` + `data/metadata` cho nodes & edges
-# - **Legal NLP** - phân loại, tóm tắt, tìm kiếm ngữ nghĩa
-# - **Temporal analysis** - xu hướng lập pháp theo thời gian
+# ---
+# ## 9. Kết luận & Hướng đi
+
+# %% [markdown]
+# ### 🧠 Kết luận: BẮT BUỘC Hợp nhất Data và Legacy
+# 
+# Qua phân tích toàn diện, chúng ta nhận thấy:
+# 1. **Data (bản mới)**: Chứa Metadata cực kỳ chi tiết (tiếng Việt), có nội dung HTML nguyên bản, và đặc biệt là đồ thị quan hệ `relationships`.
+# 2. **Legacy (bản cũ)**: Mặc dù schema kém chi tiết hơn, nhưng lại lưu trữ số lượng văn bản lớn hơn gấp 3 lần (518k vs 153k). Đặc biệt lưu trữ 449 văn bản nền tảng (Hiến pháp, Luật) mà tập `data` đã bỏ sót.
+# 
+# **=> CHIẾN LƯỢC HỢP NHẤT (MERGE STRATEGY):**
+# - **Tập nền tảng:** Sử dụng `data` làm xương sống.
+# - **Gộp bổ sung:** Lọc 365,000+ văn bản bị thiếu từ `legacy`, ánh xạ (map) các cột tiếng Anh sang tiếng Việt để khớp cấu trúc của `data` và gộp vào (Full Outer Join / Concat).
+# - Sau khi gộp, hệ thống sẽ có một "Single Source of Truth" toàn diện để phục vụ hệ thống RAG và Knowledge Graph.
