@@ -1,0 +1,631 @@
+# %% [markdown]
+# <h1 id="setup" style="
+#     padding: 15px; 
+#     background: linear-gradient(90deg, #ff8c00, #ff4500); 
+#     border-left: 5px solid #ff4500; 
+#     border-radius: 4px; 
+#     box-shadow: 2px 2px 10px rgba(0,0,0,0.5); 
+#     color: #ffffff; 
+#     font-size: 1.5em; 
+#     font-weight: bold; 
+#     text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
+#     1. Setup
+# </h1>
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:02.487003Z","iopub.execute_input":"2026-05-24T17:23:02.487236Z","iopub.status.idle":"2026-05-24T17:23:10.186340Z","shell.execute_reply.started":"2026-05-24T17:23:02.487209Z","shell.execute_reply":"2026-05-24T17:23:10.185214Z"}}
+!pip install langchain transformers torch langchain-text-splitters -q
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:48.007995Z","iopub.execute_input":"2026-05-24T17:23:48.008368Z","iopub.status.idle":"2026-05-24T17:23:51.640974Z","shell.execute_reply.started":"2026-05-24T17:23:48.008325Z","shell.execute_reply":"2026-05-24T17:23:51.640051Z"},"jupyter":{"source_hidden":true},"scrolled":true}
+# === Clear RAM ===
+import gc
+
+def clear_all(exclude=None):
+    """
+    Clear CPU + GPU memory
+    """
+    import gc
+    
+    if exclude is None:
+        exclude = []
+
+    # clear globals
+    for name in list(globals().keys()):
+        if name.startswith("_") or name in exclude:
+            continue
+        try:
+            del globals()[name]
+        except:
+            pass
+
+    gc.collect()
+
+    # clear GPU if available
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except:
+        pass
+
+clear_all()
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:57.640513Z","iopub.execute_input":"2026-05-24T17:23:57.641240Z","iopub.status.idle":"2026-05-24T17:24:25.217298Z","shell.execute_reply.started":"2026-05-24T17:23:57.641202Z","shell.execute_reply":"2026-05-24T17:24:25.216343Z"}}
+import re
+import uuid
+from datasets import load_dataset, Features, Value
+from bs4 import BeautifulSoup
+from typing import List, Dict, Any
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import pandas as pd
+import polars as pl
+
+import shutil, os
+
+from kaggle_secrets import UserSecretsClient
+from huggingface_hub import hf_hub_download
+
+# Lấy token từ Kaggle Secrets
+user_secrets = UserSecretsClient()
+hf_token = user_secrets.get_secret("HF_TOKEN")
+
+# Thiết lập biến môi trường
+os.environ["HF_TOKEN"] = hf_token
+
+# Thay 'vietnamese-legal-documents' bằng tên tập dữ liệu chính xác của bạn trên Kaggle
+dataset_path = '/kaggle/input/vietnamese-legal-documents' 
+
+for dirname, _, filenames in os.walk(dataset_path):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+# %% [markdown]
+# <h1 id="setup" style="padding: 15px; background-color: #1a1a1a; border-left: 5px solid #ffcc33; border-radius: 4px; box-shadow: 2px 2px 10px rgba(0,0,0,0.5); color: #ffcc33; font-size: 1.5em; font-weight: bold; text-shadow: 0 0 8px rgba(255, 204, 51, 0.5);">
+#     🚀 1.1. Download Dataset
+# </h1>
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T10:51:45.305887Z","iopub.execute_input":"2026-05-21T10:51:45.306301Z","iopub.status.idle":"2026-05-21T10:52:11.240549Z","shell.execute_reply.started":"2026-05-21T10:51:45.306264Z","shell.execute_reply":"2026-05-21T10:52:11.239173Z"},"jupyter":{"source_hidden":true}}
+# === Legacy ===
+
+repo_id = "th1nhng0/vietnamese-legal-documents" 
+local_dir = "./"
+
+hf_hub_download(
+    repo_id=repo_id,
+    filename="legacy/content.parquet",
+    repo_type="dataset",
+    local_dir=local_dir
+)
+
+hf_hub_download(
+    repo_id=repo_id,
+    filename="legacy/metadata.parquet",
+    repo_type="dataset",
+    local_dir=local_dir
+)
+
+print("Tải thành công! Kiểm tra các file đang có:")
+print(os.listdir("./legacy"))
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T10:52:11.241698Z","iopub.execute_input":"2026-05-21T10:52:11.242006Z","iopub.status.idle":"2026-05-21T10:52:14.733599Z","shell.execute_reply.started":"2026-05-21T10:52:11.241973Z","shell.execute_reply":"2026-05-21T10:52:14.732383Z"},"jupyter":{"source_hidden":true}}
+# === Data ===
+
+REPO_ID = "th1nhng0/vietnamese-legal-documents"
+REPO_TYPE = "dataset"
+LOCAL_DIR = "/kaggle/working"
+
+os.makedirs(LOCAL_DIR, exist_ok=True)
+
+# Tải file metadata và relationships
+for file in ["data/metadata.parquet", "data/relationships.parquet", "data/content.parquet"]:
+    hf_hub_download(
+        repo_id=REPO_ID,
+        filename=file,
+        repo_type=REPO_TYPE,
+        local_dir=LOCAL_DIR,
+        local_dir_use_symlinks=False,
+    )
+    print(f"Đã tải {file}")
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T10:58:07.579816Z","iopub.execute_input":"2026-05-21T10:58:07.580223Z","iopub.status.idle":"2026-05-21T11:03:17.219067Z","shell.execute_reply.started":"2026-05-21T10:58:07.580187Z","shell.execute_reply":"2026-05-21T11:03:17.21335Z"},"jupyter":{"source_hidden":true}}
+# === Download Dataset ===
+
+import zipfile
+import os
+from IPython.display import FileLink, display
+
+# Đường dẫn thư mục chứa các file .parquet
+data_dir = "/kaggle/working"
+zip_path = "/kaggle/working/data_export.zip"
+
+# Nén thư mục data
+with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    for root, _, files in os.walk(data_dir):
+        for file in files:
+            file_path = os.path.join(root, file)
+            arcname = os.path.relpath(file_path, start=os.path.dirname(data_dir))
+            zipf.write(file_path, arcname)
+
+# Hiển thị link tải về
+display(FileLink(zip_path))
+
+# %% [markdown]
+# <h1 id="setup" style="padding: 15px; background-color: #1a1a1a; border-left: 5px solid #ffcc33; border-radius: 4px; box-shadow: 2px 2px 10px rgba(0,0,0,0.5); color: #ffcc33; font-size: 1.5em; font-weight: bold; text-shadow: 0 0 8px rgba(255, 204, 51, 0.5);">
+#     🚀 1.2. Load Dataset
+# </h1>
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:24:59.006874Z","iopub.execute_input":"2026-05-24T17:24:59.007919Z","iopub.status.idle":"2026-05-24T17:25:12.862849Z","shell.execute_reply.started":"2026-05-24T17:24:59.007864Z","shell.execute_reply":"2026-05-24T17:25:12.862001Z"}}
+content = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/content.parquet')
+metadata = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/metadata.parquet')
+# relationships = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/relationships.parquet')
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:25:12.864540Z","iopub.execute_input":"2026-05-24T17:25:12.865567Z","iopub.status.idle":"2026-05-24T17:26:06.182044Z","shell.execute_reply.started":"2026-05-24T17:25:12.865518Z","shell.execute_reply":"2026-05-24T17:26:06.180979Z"}}
+legacy_content = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/content.parquet')
+legacy_metadata = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/metadata.parquet')
+
+# %% [markdown]
+# <h1 id="setup" style="padding: 15px; background-color: #1a1a1a; border-left: 5px solid #ffcc33; border-radius: 4px; box-shadow: 2px 2px 10px rgba(0,0,0,0.5); color: #ffcc33; font-size: 1.5em; font-weight: bold; text-shadow: 0 0 8px rgba(255, 204, 51, 0.5);">
+#     🚀 1.3. Helper Functions
+# </h1>
+
+# %% [code] {"jupyter":{"source_hidden":true},"execution":{"iopub.status.busy":"2026-05-21T12:46:03.41839Z","iopub.execute_input":"2026-05-21T12:46:03.419801Z","iopub.status.idle":"2026-05-21T12:46:03.430144Z","shell.execute_reply.started":"2026-05-21T12:46:03.419758Z","shell.execute_reply":"2026-05-21T12:46:03.429307Z"}}
+# === Preprocess HTML ===
+def preprocess_legal_text(html_content):
+    if not html_content: return ""
+    
+    # 1. Loại bỏ các thẻ không cần thiết
+    soup = BeautifulSoup(html_content, "html.parser")
+    for tag in soup(["title", "script", "style"]):
+        tag.decompose()
+    
+    text = soup.get_text(separator="\n")
+    
+    # 2. Sửa lỗi "Điều X :"
+    text = re.sub(r'(Điều\s+\d+)\s*\n*\s*:', r'\1:', text)
+
+    # 3. Tách dòng
+    raw_lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    if not raw_lines: return ""
+
+    # 4. Logic nối dòng (Merging) có bổ sung điều kiện chặn Header
+    merged_lines = []
+    buffer = raw_lines[0]
+    
+    for i in range(1, len(raw_lines)):
+        curr = raw_lines[i]
+        
+        # Kiểm tra xem dòng hiện tại có phải là Header hoặc Điều khoản không
+        is_curr_header = curr.isupper() and len(curr) > 3
+        is_curr_article = re.match(r'^Điều\s+\d+:', curr)
+        
+        # Điều kiện nối dòng cũ
+        is_split_word = len(buffer) <= 2
+        is_unfinished_sentence = re.search(r'[a-zà-ỹ,;]\s*$', buffer)
+        is_next_lowercase = curr[0].islower() if curr else False
+
+        # SỬA LỖI TẠI ĐÂY: Nếu dòng tiếp theo là Header hoặc Article thì KHÔNG nối
+        if (is_split_word or is_unfinished_sentence or is_next_lowercase) \
+           and not is_curr_header \
+           and not is_curr_article:
+            buffer += " " + curr
+        else:
+            merged_lines.append(buffer)
+            buffer = curr
+            
+    merged_lines.append(buffer)
+
+    # 5. Format cuối cùng
+    final_output = []
+    for line in merged_lines:
+        line = re.sub(r'\s+', ' ', line).strip()
+        
+        is_header = line.isupper() and len(line) > 3
+        is_article = re.match(r'^Điều\s+\d+:', line)
+
+        if is_header or is_article:
+            if final_output and final_output[-1] != "":
+                final_output.append("")
+            final_output.append(line)
+            if is_article:
+                final_output.append("") 
+        else:
+            final_output.append(line)
+
+    result = '\n'.join(final_output)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip()
+
+# %% [markdown]
+# <h1 id="setup" style="
+#     padding: 15px; 
+#     background: linear-gradient(90deg, #ff8c00, #ff4500); 
+#     border-left: 5px solid #ff4500; 
+#     border-radius: 4px; 
+#     box-shadow: 2px 2px 10px rgba(0,0,0,0.5); 
+#     color: #ffffff; 
+#     font-size: 1.5em; 
+#     font-weight: bold; 
+#     text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
+#     2. Merge
+# </h1>
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T15:37:16.954641Z","iopub.execute_input":"2026-05-21T15:37:16.955105Z","iopub.status.idle":"2026-05-21T15:37:18.118679Z","shell.execute_reply.started":"2026-05-21T15:37:16.954984Z","shell.execute_reply":"2026-05-21T15:37:18.117634Z"}}
+import polars as pl
+from IPython.display import display, HTML
+
+# 1. CẤU HÌNH HIỂN THỊ CỰC ĐẠI
+pl.Config.set_tbl_cols(-1)           # Hiện tất cả các cột
+pl.Config.set_fmt_str_lengths(1000)  # Hiện tối đa 1000 ký tự trong mỗi cell
+pl.Config.set_tbl_width_chars(2000)  # Tăng độ rộng bảng để không bị nhảy dòng
+pl.Config.set_tbl_rows(20)           # Số dòng hiển thị
+
+def print_header(title):
+    display(HTML(f"<h2 style='color: #2e7d32; border-bottom: 2px solid #2e7d32; padding-bottom: 5px;'>{title}</h2>"))
+
+# 2. TÌM GIÁ TRỊ CHUNG ĐỂ LÀM MẪU
+common_list = legacy_metadata["document_number"].unique().to_list()
+common_series = metadata.filter(pl.col("so_ky_hieu").is_in(common_list)).select("so_ky_hieu").head(1)
+
+if common_series.height > 0:
+    common_val = common_series.item()
+    id_current = metadata.filter(pl.col("so_ky_hieu") == common_val).select("id").head(1).item()
+    id_legacy = legacy_metadata.filter(pl.col("document_number") == common_val).select("id").head(1).item()
+else:
+    common_val = None
+    id_current = id_legacy = None
+
+# 3. HÀM HIỂN THỊ SAMPLE ROW
+def show_sample(df, name, filter_col=None, filter_val=None):
+    print_header(f"SAMPLE VIEW: {name.upper()}")
+    if filter_col and filter_val is not None:
+        target_dtype = df.schema[filter_col]
+        try:
+            sample_df = df.filter(pl.col(filter_col) == pl.lit(filter_val).cast(target_dtype)).head(1)
+            print(f"Hiển thị bản ghi có {filter_col} = '{filter_val}':")
+        except:
+            sample_df = df.head(1)
+            print(f"Lỗi lọc dữ liệu, hiển thị dòng đầu tiên:")
+    else:
+        sample_df = df.head(1)
+        print(f"Hiển thị dòng đầu tiên:")
+    
+    display(sample_df)
+
+# --- THỰC THI HIỂN THỊ SAMPLE ---
+if common_val:
+    show_sample(metadata, "Metadata Current (Bản mới)", "so_ky_hieu", common_val)
+    show_sample(legacy_metadata, "Metadata Legacy (Bản cũ)", "document_number", common_val)
+    show_sample(content, "Content Current", "id", id_current)
+    show_sample(legacy_content, "Content Legacy", "id", id_legacy)
+else:
+    show_sample(metadata, "Metadata Current")
+    show_sample(legacy_metadata, "Metadata Legacy")
+    show_sample(content, "Content Current")
+    show_sample(legacy_content, "Content Legacy")
+
+# 4. PHÂN TÍCH TRÙNG LẶP ID GIỮA CURRENT VÀ LEGACY
+print_header("ID OVERLAP ANALYSIS (CURRENT vs LEGACY)")
+
+def analyze_ids(df_curr, df_leg, name):
+    curr_ids = set(df_curr["id"].unique())
+    leg_ids = set(df_leg["id"].unique())
+    overlap = len(curr_ids.intersection(leg_ids))
+    
+    display(pl.DataFrame({
+        "Dataset": [name],
+        "Total Current IDs": [len(curr_ids)],
+        "Total Legacy IDs": [len(leg_ids)],
+        "Overlapping IDs (Trùng)": [overlap],
+        "Merge Suggestion": ["Cần drop_duplicates" if overlap > 0 else "Có thể concat trực tiếp"]
+    }))
+
+analyze_ids(metadata, legacy_metadata, "METADATA")
+analyze_ids(content, legacy_content, "CONTENT")
+
+# 5. KIỂM TRA TÍNH NHẤT QUÁN (METADATA vs CONTENT)
+print_header("CONSISTENCY CHECK (METADATA <=> CONTENT)")
+
+def check_orphans(meta, cont, name):
+    meta_ids = set(meta["id"])
+    cont_ids = set(cont["id"])
+    
+    orphans_meta = len(meta_ids - cont_ids)
+    orphans_cont = len(cont_ids - meta_ids)
+    
+    display(pl.DataFrame({
+        "Scope": [name],
+        "Missing in Content": [orphans_meta],
+        "Missing in Metadata": [orphans_cont],
+        "Status": ["OK" if orphans_meta == 0 and orphans_cont == 0 else "Data Gap Detected"]
+    }))
+
+check_orphans(metadata, content, "CURRENT Set")
+check_orphans(legacy_metadata, legacy_content, "LEGACY Set")
+
+# %% [markdown]
+# <h1 id="setup" style="
+#     padding: 15px; 
+#     background: linear-gradient(90deg, #ff8c00, #ff4500); 
+#     border-left: 5px solid #ff4500; 
+#     border-radius: 4px; 
+#     box-shadow: 2px 2px 10px rgba(0,0,0,0.5); 
+#     color: #ffffff; 
+#     font-size: 1.5em; 
+#     font-weight: bold; 
+#     text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
+#     3. EDA
+# </h1>
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T08:34:52.065151Z","iopub.execute_input":"2026-05-21T08:34:52.065473Z","iopub.status.idle":"2026-05-21T08:35:05.443055Z","shell.execute_reply.started":"2026-05-21T08:34:52.065445Z","shell.execute_reply":"2026-05-21T08:35:05.44205Z"}}
+it = iter(dataset)
+num_samples = 1
+
+for i in range(num_samples):
+    sample = next(it)
+    raw_html = sample['content_html']
+    cleaned_text = preprocess_legal_text(raw_html)
+
+    print("\n" + "="*80)
+    print(f" SAMPLE {i+1} - ID: {sample['id']}")
+    print("="*80)
+
+    print("\n👉 [BEFORE - RAW HTML (Trích đoạn 200 ký tự đầu)]:")
+    print(raw_html[:200] + "...") 
+
+    print("\n👉 [AFTER - CLEANED TEXT]:")
+    print("-" * 40)
+    print(cleaned_text)
+    print("-" * 40)
+
+# %% [markdown]
+# <h1 id="setup" style="
+#     padding: 15px; 
+#     background: linear-gradient(90deg, #ff8c00, #ff4500); 
+#     border-left: 5px solid #ff4500; 
+#     border-radius: 4px; 
+#     box-shadow: 2px 2px 10px rgba(0,0,0,0.5); 
+#     color: #ffffff; 
+#     font-size: 1.5em; 
+#     font-weight: bold; 
+#     text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
+#     4. Chunk
+# </h1>
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T08:40:14.36275Z","iopub.execute_input":"2026-05-21T08:40:14.363578Z","iopub.status.idle":"2026-05-21T08:40:28.277211Z","shell.execute_reply.started":"2026-05-21T08:40:14.363544Z","shell.execute_reply":"2026-05-21T08:40:28.276054Z"}}
+def legal_structural_splitter(doc_data: Dict[str, Any], max_chunk_size: int = 1500) -> List[Document]:
+    """
+    Chia văn bản pháp luật thành các chunk độc lập:
+    - Mỗi chunk gồm một hoặc nhiều Điều hoàn chỉnh.
+    - TUYỆT ĐỐI KHÔNG chồng lấn (no overlap).
+    - TUYỆT ĐỐI KHÔNG cắt ngang Điều.
+    - page_content chỉ chứa nội dung gốc.
+    """
+    content = doc_data.get('content_cleaned', '')
+    doc_id = doc_data.get('id', 'N/A')
+    title = doc_data.get('title', 'N/A')
+    so_ky_hieu = doc_data.get('so_ky_hieu', 'N/A')
+
+    # 1. Tách văn bản thành danh sách các đơn vị nội dung gốc (Intro, Điều)
+    pattern = r'(?m)^((?:Chương|Mục|Phần|Điều(?: thứ)?)\s+[IVXLCDM\d]+[a-z]?|[IVXLCDM]+\.)[.:]?\s*(.*)$'
+    matches = list(re.finditer(pattern, content))
+    
+    all_units = []
+    
+    # Lời nói đầu
+    matches = list(re.finditer(pattern, content))
+    all_units = []
+
+    if not matches:
+        # FALLBACK: Nếu không có cấu trúc Điều/La Mã, tách theo đoạn trắng (\n\n)
+        paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
+        for idx, p in enumerate(paragraphs):
+            all_units.append({"raw_text": p, "id_label": f"Para_{idx+1}"})
+    else:
+        # Giữ nguyên logic cũ nhưng dùng Regex mới
+        first_match_start = matches[0].start()
+        intro_text = content[:first_match_start].strip()
+        if intro_text:
+            all_units.append({"raw_text": intro_text, "id_label": "Intro"})
+
+        for i, match in enumerate(matches):
+            h_type = match.group(1).strip()
+            h_title = match.group(2).strip()
+            start = match.end()
+            end = matches[i+1].start() if i+1 < len(matches) else len(content)
+            
+            raw_header = f"{h_type}" + (f" {h_title}" if h_title else "")
+            body = content[start:end].strip()
+            
+            all_units.append({
+                "raw_text": f"{raw_header}\n{body}".strip(),
+                "id_label": h_type
+            })
+            
+    # 2. Gom nhóm vào các Chunk ĐỘC LẬP
+    chunks = []
+    current_chunk_texts = []
+    current_char_count = 0
+    included_labels = []
+
+    for unit in all_units:
+        unit_text = unit["raw_text"]
+        unit_len = len(unit_text)
+        
+        # Nếu thêm unit này vào mà vượt giới hạn (và chunk hiện tại đã có nội dung)
+        if current_char_count + unit_len > max_chunk_size and current_chunk_texts:
+            # Đóng chunk hiện tại
+            final_content = "\n\n".join(current_chunk_texts)
+            metadata = {
+                "id": doc_id,
+                "title": title,
+                "so_ky_hieu": so_ky_hieu,
+                "chunk_type": "legal_independent_chunk",
+                "included_articles": included_labels
+            }
+            chunks.append(Document(page_content=final_content, metadata=metadata))
+            
+            # Reset cho chunk mới
+            current_chunk_texts = []
+            current_char_count = 0
+            included_labels = []
+        
+        # Thêm unit vào buffer của chunk hiện tại
+        current_chunk_texts.append(unit_text)
+        current_char_count += unit_len + 2 # +2 cho dấu nối \n\n
+        included_labels.append(unit["id_label"])
+
+    # Đóng chunk cuối cùng (nếu còn dư)
+    if current_chunk_texts:
+        final_content = "\n\n".join(current_chunk_texts)
+        metadata = {
+            "id": doc_id,
+            "title": title,
+            "so_ky_hieu": so_ky_hieu,
+            "chunk_type": "legal_independent_chunk",
+            "included_articles": included_labels
+        }
+        chunks.append(Document(page_content=final_content, metadata=metadata))
+
+    return chunks
+    
+# =================================================================
+# 2. CHẠY VÀ HIỂN THỊ TOÀN BỘ NỘI DUNG
+# =================================================================
+
+for sample in content.take(1):
+    doc_info = {
+        "id": sample.get('id'),
+        "title": sample.get('title'),
+        "so_ky_hieu": sample.get('so_ky_hieu'),
+        "content_cleaned": preprocess_legal_text(sample['content_html']) # Hàm clean HTML của bạn
+    }
+
+    final_chunks = legal_structural_splitter(doc_info, max_chunk_size=1500)
+
+    print("\n" + "="*80)
+    print(f"🔥 KẾT QUẢ CHUNK CHO: {doc_info['content_cleaned']}")
+    print(f"📦 Tổng số chunk tạo ra: {len(final_chunks)}")
+    print("="*80)
+
+    for i, chunk in enumerate(final_chunks):
+        print(f"\n[CHUNK {i+1} - Loại: {chunk.metadata['chunk_type']}]")
+        print("-" * 40)
+        print(chunk.page_content) # In toàn bộ nội dung chunk
+        print("-" * 40)
+
+    print("\n\n")
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T08:40:28.27851Z","iopub.execute_input":"2026-05-21T08:40:28.278824Z","iopub.status.idle":"2026-05-21T08:40:42.780979Z","shell.execute_reply.started":"2026-05-21T08:40:28.278786Z","shell.execute_reply":"2026-05-21T08:40:42.779437Z"}}
+import unicodedata
+import pandas as pd
+
+def norm_text(text):
+    """Hàm bổ trợ để chuẩn hóa font Tiếng Việt và xóa khoảng trắng thừa"""
+    if not text: return ""
+    return unicodedata.normalize('NFC', str(text)).strip()
+
+print("⏳ Đang lập chỉ mục Metadata để tra cứu...")
+
+loai_van_ban_feature = metadata.features["loai_van_ban"]
+is_class_label = hasattr(loai_van_ban_feature, "int2str")
+
+meta_lookup = {}
+for row in metadata:
+    # FIX 1: Luôn ép ID về string để đảm bảo khớp giữa 2 bảng dữ liệu
+    doc_id = str(row["id"])
+    raw_type = row.get("loai_van_ban")
+    
+    if is_class_label and isinstance(raw_type, int):
+        label = loai_van_ban_feature.int2str(raw_type)
+    else:
+        label = str(raw_type)
+    
+    # FIX 2: Chuẩn hóa Unicode NFC để tránh lỗi "Luật" (NFC) != "Luật" (NFD)
+    meta_lookup[doc_id] = {
+        "loai_van_ban": norm_text(label),
+        "title": row.get("title"),
+        "so_ky_hieu": row.get("so_ky_hieu")
+    }
+
+print(f"✅ Đã lập chỉ mục xong {len(meta_lookup)} tài liệu.")
+
+# =================================================================
+# 2. CHỈNH SỬA DANH SÁCH TARGET (Đã bọc trong chuẩn hóa)
+# =================================================================
+target_types = [norm_text(t) for t in [
+    "Quyết định", "Sắc lệnh", "Nghị quyết", "Thông tư", 
+    "Chỉ thị", "Nghị định", "Luật", "Công văn"
+]]
+
+# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T08:40:42.782423Z","iopub.execute_input":"2026-05-21T08:40:42.782745Z","iopub.status.idle":"2026-05-21T08:40:57.670888Z","shell.execute_reply.started":"2026-05-21T08:40:42.782715Z","shell.execute_reply":"2026-05-21T08:40:57.670131Z"}}
+
+# =================================================================
+# 3. QUÉT content VÀ CHẠY THỬ NGHIỆM
+# =================================================================
+samples_found = {}
+print("\n⏳ Đang quét content stream để tìm mẫu đại diện...")
+
+for item in content:
+    # FIX 3: Ép ID của content về string để lookup
+    doc_id = str(item["id"])
+    doc_meta = meta_lookup.get(doc_id)
+    
+    if doc_meta:
+        doc_type = doc_meta["loai_van_ban"]
+        
+        # Kiểm tra khớp loại văn bản
+        if doc_type in target_types and doc_type not in samples_found:
+            samples_found[doc_type] = {
+                "id": doc_id,
+                "title": doc_meta["title"],
+                "so_ky_hieu": doc_meta["so_ky_hieu"],
+                "content_html": item["content_html"]
+            }
+            print(f" -> Đã tìm thấy: {doc_type}")
+            
+        if len(samples_found) == len(target_types):
+            break
+
+# 4. XỬ LÝ VÀ HIỂN THỊ KẾT QUẢ
+if not samples_found:
+    print("❌ Vẫn không tìm thấy mẫu nào! Hãy kiểm tra print(meta_lookup) xem ID có dạng gì.")
+else:
+    print(f"✅ Đã lấy đủ {len(samples_found)} mẫu. Bắt đầu quá trình chunking...\n")
+    
+    results_summary = []
+    for doc_type, data in samples_found.items():
+        # 1. Tiền xử lý văn bản
+        content_cleaned = preprocess_legal_text(data['content_html'])
+        doc_info = {**data, "content_cleaned": content_cleaned, "loai_van_ban": doc_type}
+        
+        # HIỂN THỊ VĂN BẢN TRƯỚC KHI CHUNK
+        print("="*80)
+        print(f"📄 VĂN BẢN GỐC (ĐÃ CLEAN) - LOẠI: {doc_type.upper()}")
+        print("-" * 30)
+        print(content_cleaned) 
+        print("-" * 30)
+        
+        # 2. Thực hiện chunking
+        chunks = legal_structural_splitter(doc_info, max_chunk_size=1500)
+        
+        results_summary.append({
+            "Loại văn bản": doc_type,
+            "Số lượng chunks": len(chunks),
+            "Chunk types": list(set([c.metadata.get('chunk_type', 'N/A') for c in chunks]))
+        })
+        
+        # 3. HIỂN THỊ TẤT CẢ CÁC CHUNK
+        print(f"\n🔥 DANH SÁCH {len(chunks)} CHUNKS CHO: {doc_type.upper()}")
+        
+        for i, chunk in enumerate(chunks):
+            chunk_type = chunk.metadata.get('chunk_type', 'unknown')
+            print(f"\n📍 [CHUNK {i+1}/{len(chunks)}] - Type: {chunk_type}")
+            print(f"--- Nội dung chunk ---")
+            print(chunk.page_content)
+            print("-" * 40)
+
+        print("="*80 + "\n")
+
+    # Hiển thị bảng tổng hợp cuối cùng
+    summary_df = pd.DataFrame(results_summary)
+    display(summary_df)
