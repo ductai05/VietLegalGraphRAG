@@ -156,7 +156,7 @@ display(FileLink(zip_path))
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:24:59.006874Z","iopub.execute_input":"2026-05-24T17:24:59.007919Z","iopub.status.idle":"2026-05-24T17:25:12.862849Z","shell.execute_reply.started":"2026-05-24T17:24:59.007864Z","shell.execute_reply":"2026-05-24T17:25:12.862001Z"}}
 content = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/content.parquet')
 metadata = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/metadata.parquet')
-# relationships = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/relationships.parquet')
+relationships = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/relationships.parquet')
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:25:12.864540Z","iopub.execute_input":"2026-05-24T17:25:12.865567Z","iopub.status.idle":"2026-05-24T17:26:06.182044Z","shell.execute_reply.started":"2026-05-24T17:25:12.865518Z","shell.execute_reply":"2026-05-24T17:26:06.180979Z"}}
 legacy_content = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/content.parquet')
@@ -341,6 +341,217 @@ def check_orphans(meta, cont, name):
 
 check_orphans(metadata, content, "CURRENT Set")
 check_orphans(legacy_metadata, legacy_content, "LEGACY Set")
+
+# %% [code]
+# === MERGE: legacy làm gốc, bổ sung dữ liệu từ data ===
+# Không join theo id vì EDA cho thấy id giữa 2 nguồn không cùng không gian định danh.
+OUTPUT_DIR = "/kaggle/working/preprocessed"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+COL_MAP = {
+    "so_ky_hieu": "document_number",
+    "title": "title",
+    "loai_van_ban": "legal_type",
+    "co_quan_ban_hanh": "issuing_authority",
+    "ngay_ban_hanh": "issuance_date",
+    "ngay_co_hieu_luc": "effect_date",
+    "ngay_het_hieu_luc": "effectless_date",
+    "tinh_trang_hieu_luc": "effect_status",
+    "nguoi_ky": "signers",
+}
+
+def _clean_expr(col):
+    x = pl.col(col).cast(pl.Utf8, strict=False).str.replace_all(r"\s+", " ").str.strip_chars()
+    return pl.when(x == "").then(None).otherwise(x)
+
+def _date_expr(col):
+    x = _clean_expr(col)
+    return pl.coalesce(
+        x.str.strptime(pl.Date, "%d/%m/%Y", strict=False),
+        x.str.strptime(pl.Date, "%Y-%m-%d", strict=False),
+    ).dt.strftime("%Y-%m-%d")
+
+def _ensure_cols(df, cols):
+    for c in cols:
+        if c not in df.columns:
+            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(c))
+    return df
+
+def _add_key(df, cols):
+    df = df.with_columns([_clean_expr(c).str.to_lowercase().alias(f"__k_{c}") for c in cols])
+    key_parts = [pl.col(f"__k_{c}") for c in cols]
+    has_key = pl.all_horizontal([p.is_not_null() for p in key_parts])
+    return df.with_columns(
+        pl.when(has_key).then(pl.concat_str(key_parts, separator="||")).otherwise(None).alias("join_key")
+    ).drop([f"__k_{c}" for c in cols])
+
+legacy_cols = [
+    "id", "document_number", "title", "legal_type", "legal_sectors",
+    "issuing_authority", "issuance_date", "effect_date", "effectless_date",
+    "effect_status", "signers",
+]
+legacy_metadata_std = _ensure_cols(legacy_metadata, legacy_cols).select(legacy_cols)
+legacy_text_cols = [c for c in legacy_cols if c not in ["id", "issuance_date", "effect_date", "effectless_date"]]
+legacy_metadata_std = legacy_metadata_std.with_columns(
+    pl.col("id").cast(pl.Int64, strict=False),
+    *[_clean_expr(c).alias(c) for c in legacy_text_cols],
+    _date_expr("issuance_date").alias("issuance_date"),
+    _date_expr("effect_date").alias("effect_date"),
+    _date_expr("effectless_date").alias("effectless_date"),
+)
+
+data_extra_cols = ["nguon_thu_thap", "ngay_dang_cong_bao", "nganh", "linh_vuc", "chuc_danh", "pham_vi", "thong_tin_ap_dung"]
+data_text_cols = [c for c in COL_MAP.values() if c not in ["issuance_date", "effect_date", "effectless_date"]]
+data_extra_text_cols = [c for c in data_extra_cols if c != "ngay_dang_cong_bao"]
+metadata_std = metadata.rename({k: v for k, v in COL_MAP.items() if k in metadata.columns})
+metadata_std = _ensure_cols(metadata_std, ["id", *COL_MAP.values(), *data_extra_cols]).select(["id", *COL_MAP.values(), *data_extra_cols])
+metadata_std = metadata_std.with_columns(
+    pl.col("id").cast(pl.Int64, strict=False).alias("data_id"),
+    *[_clean_expr(c).alias(c) for c in data_text_cols],
+    *[_clean_expr(c).alias(c) for c in data_extra_text_cols],
+    _date_expr("issuance_date").alias("issuance_date"),
+    _date_expr("effect_date").alias("effect_date"),
+    _date_expr("effectless_date").alias("effectless_date"),
+    _date_expr("ngay_dang_cong_bao").alias("ngay_dang_cong_bao"),
+).drop("id")
+
+JOIN_COLS = ["document_number", "issuance_date"]
+legacy_keyed = _add_key(legacy_metadata_std, JOIN_COLS)
+data_keyed = _add_key(metadata_std, JOIN_COLS)
+
+# Chỉ nhận key one-to-one để tránh nhân dòng hoặc match sai với các số ký hiệu trùng nhiều nơi.
+valid_keys = (
+    legacy_keyed.group_by("join_key").agg(pl.len().alias("n_legacy"))
+    .join(data_keyed.group_by("join_key").agg(pl.len().alias("n_data")), on="join_key", how="inner")
+    .filter((pl.col("join_key").is_not_null()) & (pl.col("n_legacy") == 1) & (pl.col("n_data") == 1))
+    .select("join_key")
+)
+
+data_for_join = data_keyed.join(valid_keys, on="join_key", how="inner").select(
+    "join_key", "data_id",
+    *[pl.col(c).alias(f"data_{c}") for c in COL_MAP.values()],
+    *data_extra_cols,
+)
+
+merged_metadata_raw = legacy_keyed.join(data_for_join, on="join_key", how="left")
+
+crosswalk = merged_metadata_raw.filter(pl.col("data_id").is_not_null()).select(
+    pl.col("id").alias("legacy_id"), "data_id", "join_key"
+)
+
+merged_metadata = merged_metadata_raw.select(
+    "id",
+    pl.coalesce("data_document_number", "document_number").alias("document_number"),
+    pl.coalesce("data_title", "title").alias("title"),
+    pl.coalesce("data_legal_type", "legal_type").alias("legal_type"),
+    "legal_sectors",
+    pl.coalesce("data_issuing_authority", "issuing_authority").alias("issuing_authority"),
+    pl.coalesce("data_issuance_date", "issuance_date").alias("issuance_date"),
+    pl.coalesce("data_effect_date", "effect_date").alias("effect_date"),
+    pl.coalesce("data_effectless_date", "effectless_date").alias("effectless_date"),
+    pl.coalesce("data_effect_status", "effect_status").alias("effect_status"),
+    pl.coalesce("data_signers", "signers").alias("signers"),
+    *data_extra_cols,
+    pl.when(pl.col("data_id").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
+)
+
+data_content = content.select(
+    pl.col("id").cast(pl.Int64, strict=False).alias("data_id"),
+    "content_html",
+).unique(subset=["data_id"], keep="first")
+merged_content = (
+    legacy_content.with_columns(pl.col("id").cast(pl.Int64, strict=False))
+    .join(crosswalk.rename({"legacy_id": "id"}), on="id", how="left")
+    .join(data_content, on="data_id", how="left")
+    .select(
+        "id",
+        pl.coalesce("content_html", "content").alias("content"),
+        pl.when(pl.col("content_html").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
+    )
+)
+
+merged_metadata.write_parquet(f"{OUTPUT_DIR}/merged_metadata.parquet")
+merged_content.write_parquet(f"{OUTPUT_DIR}/merged_content.parquet")
+crosswalk.write_parquet(f"{OUTPUT_DIR}/data_to_legacy_crosswalk.parquet")
+
+display(pl.DataFrame({
+    "metric": ["legacy rows", "data rows", "matched one-to-one rows", "merged metadata rows"],
+    "value": [legacy_metadata.height, metadata.height, crosswalk.height, merged_metadata.height],
+}))
+
+# %% [code]
+# === MERGE RELATIONSHIPS: remap data_id → legacy_id ===
+# relationships dùng doc_id/other_doc_id thuộc không gian ID của data.
+# Cần remap sang legacy_id qua crosswalk để khớp với merged output.
+
+rels = relationships.with_columns(
+    pl.col("doc_id").cast(pl.Int64, strict=False),
+    pl.col("other_doc_id").cast(pl.Int64, strict=False),
+)
+
+# Bảng lookup: data_id → legacy_id
+src_lookup = crosswalk.select(
+    pl.col("data_id").alias("doc_id"),
+    pl.col("legacy_id").alias("src_legacy_id"),
+)
+tgt_lookup = crosswalk.select(
+    pl.col("data_id").alias("other_doc_id"),
+    pl.col("legacy_id").alias("tgt_legacy_id"),
+)
+
+# Remap: ưu tiên legacy_id, fallback giữ data_id gốc
+merged_rels = (
+    rels
+    .join(src_lookup, on="doc_id", how="left")
+    .join(tgt_lookup, on="other_doc_id", how="left")
+    .with_columns(
+        pl.coalesce("src_legacy_id", "doc_id").alias("doc_id_final"),
+        pl.coalesce("tgt_legacy_id", "other_doc_id").alias("other_doc_id_final"),
+        pl.when(pl.col("src_legacy_id").is_not_null())
+          .then(pl.lit("remapped")).otherwise(pl.lit("original")).alias("src_status"),
+        pl.when(pl.col("tgt_legacy_id").is_not_null())
+          .then(pl.lit("remapped")).otherwise(pl.lit("original")).alias("tgt_status"),
+    )
+)
+
+# Lọc: chỉ giữ edges mà CẢ HAI đầu tồn tại trong merged output
+valid_ids = merged_metadata["id"].to_list()
+merged_rels_valid = merged_rels.filter(
+    pl.col("doc_id_final").is_in(valid_ids) & pl.col("other_doc_id_final").is_in(valid_ids)
+)
+
+# Loại self-loop + dedup
+merged_rels_clean = (
+    merged_rels_valid
+    .filter(pl.col("doc_id_final") != pl.col("other_doc_id_final"))
+    .select(
+        pl.col("doc_id_final").alias("doc_id"),
+        pl.col("other_doc_id_final").alias("other_doc_id"),
+        "relationship",
+    )
+    .unique(subset=["doc_id", "other_doc_id", "relationship"])
+)
+
+merged_rels_clean.write_parquet(f"{OUTPUT_DIR}/merged_relationships.parquet")
+
+display(pl.DataFrame({
+    "metric": [
+        "original edges",
+        "edges after remap",
+        "edges both ends valid",
+        "edges final (dedup, no self-loop)",
+        "src remapped",
+        "tgt remapped",
+    ],
+    "value": [
+        relationships.height,
+        merged_rels.height,
+        merged_rels_valid.height,
+        merged_rels_clean.height,
+        merged_rels.filter(pl.col("src_status") == "remapped").height,
+        merged_rels.filter(pl.col("tgt_status") == "remapped").height,
+    ],
+}))
 
 # %% [markdown]
 # <h1 id="setup" style="
