@@ -83,70 +83,69 @@ for dirname, _, filenames in os.walk(dataset_path):
 #     🚀 1.1. Download Dataset
 # </h1>
 
-# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T10:51:45.305887Z","iopub.execute_input":"2026-05-21T10:51:45.306301Z","iopub.status.idle":"2026-05-21T10:52:11.240549Z","shell.execute_reply.started":"2026-05-21T10:51:45.306264Z","shell.execute_reply":"2026-05-21T10:52:11.239173Z"},"jupyter":{"source_hidden":true}}
+# %% [code]
 # === Legacy ===
+# Không cần tải lại vì dataset đã được import qua Kaggle input.
 
-repo_id = "th1nhng0/vietnamese-legal-documents" 
-local_dir = "./"
+# repo_id = "th1nhng0/vietnamese-legal-documents"
+# local_dir = "./"
 
-hf_hub_download(
-    repo_id=repo_id,
-    filename="legacy/content.parquet",
-    repo_type="dataset",
-    local_dir=local_dir
-)
+# hf_hub_download(
+#     repo_id=repo_id,
+#     filename="legacy/content.parquet",
+#     repo_type="dataset",
+#     local_dir=local_dir
+# )
 
-hf_hub_download(
-    repo_id=repo_id,
-    filename="legacy/metadata.parquet",
-    repo_type="dataset",
-    local_dir=local_dir
-)
+# hf_hub_download(
+#     repo_id=repo_id,
+#     filename="legacy/metadata.parquet",
+#     repo_type="dataset",
+#     local_dir=local_dir
+# )
 
-print("Tải thành công! Kiểm tra các file đang có:")
-print(os.listdir("./legacy"))
+# print("Tải thành công! Kiểm tra các file đang có:")
+# print(os.listdir("./legacy"))
 
-# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T10:52:11.241698Z","iopub.execute_input":"2026-05-21T10:52:11.242006Z","iopub.status.idle":"2026-05-21T10:52:14.733599Z","shell.execute_reply.started":"2026-05-21T10:52:11.241973Z","shell.execute_reply":"2026-05-21T10:52:14.732383Z"},"jupyter":{"source_hidden":true}}
+# %% [code]
 # === Data ===
+# Không cần tải lại vì dataset đã được import qua Kaggle input.
 
-REPO_ID = "th1nhng0/vietnamese-legal-documents"
-REPO_TYPE = "dataset"
-LOCAL_DIR = "/kaggle/working"
+# REPO_ID = "th1nhng0/vietnamese-legal-documents"
+# REPO_TYPE = "dataset"
+# LOCAL_DIR = "/kaggle/working"
 
-os.makedirs(LOCAL_DIR, exist_ok=True)
+# os.makedirs(LOCAL_DIR, exist_ok=True)
 
-# Tải file metadata và relationships
-for file in ["data/metadata.parquet", "data/relationships.parquet", "data/content.parquet"]:
-    hf_hub_download(
-        repo_id=REPO_ID,
-        filename=file,
-        repo_type=REPO_TYPE,
-        local_dir=LOCAL_DIR,
-        local_dir_use_symlinks=False,
-    )
-    print(f"Đã tải {file}")
+# for file in ["data/metadata.parquet", "data/relationships.parquet", "data/content.parquet"]:
+#     hf_hub_download(
+#         repo_id=REPO_ID,
+#         filename=file,
+#         repo_type=REPO_TYPE,
+#         local_dir=LOCAL_DIR,
+#         local_dir_use_symlinks=False,
+#     )
+#     print(f"Đã tải {file}")
 
-# %% [code] {"execution":{"iopub.status.busy":"2026-05-21T10:58:07.579816Z","iopub.execute_input":"2026-05-21T10:58:07.580223Z","iopub.status.idle":"2026-05-21T11:03:17.219067Z","shell.execute_reply.started":"2026-05-21T10:58:07.580187Z","shell.execute_reply":"2026-05-21T11:03:17.21335Z"},"jupyter":{"source_hidden":true}}
+# %% [code]
 # === Download Dataset ===
+# Không cần export zip trong pipeline preprocessing.
 
-import zipfile
-import os
-from IPython.display import FileLink, display
+# import zipfile
+# import os
+# from IPython.display import FileLink, display
 
-# Đường dẫn thư mục chứa các file .parquet
-data_dir = "/kaggle/working"
-zip_path = "/kaggle/working/data_export.zip"
+# data_dir = "/kaggle/working"
+# zip_path = "/kaggle/working/data_export.zip"
 
-# Nén thư mục data
-with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-    for root, _, files in os.walk(data_dir):
-        for file in files:
-            file_path = os.path.join(root, file)
-            arcname = os.path.relpath(file_path, start=os.path.dirname(data_dir))
-            zipf.write(file_path, arcname)
+# with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+#     for root, _, files in os.walk(data_dir):
+#         for file in files:
+#             file_path = os.path.join(root, file)
+#             arcname = os.path.relpath(file_path, start=os.path.dirname(data_dir))
+#             zipf.write(file_path, arcname)
 
-# Hiển thị link tải về
-display(FileLink(zip_path))
+# display(FileLink(zip_path))
 
 # %% [markdown]
 # <h1 id="setup" style="padding: 15px; background-color: #1a1a1a; border-left: 5px solid #ffcc33; border-radius: 4px; box-shadow: 2px 2px 10px rgba(0,0,0,0.5); color: #ffcc33; font-size: 1.5em; font-weight: bold; text-shadow: 0 0 8px rgba(255, 204, 51, 0.5);">
@@ -455,10 +454,16 @@ merged_metadata = merged_metadata_raw.select(
     pl.when(pl.col("data_id").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
 )
 
-data_content = content.select(
-    pl.col("id").cast(pl.Int64, strict=False).alias("data_id"),
-    "content_html",
-).unique(subset=["data_id"], keep="first")
+# Tối ưu RAM: chỉ giữ lại các dòng content có data_id đã match được trong crosswalk
+data_content = (
+    content
+    .filter(pl.col("id").cast(pl.Int64, strict=False).is_in(crosswalk["data_id"]))
+    .select(
+        pl.col("id").cast(pl.Int64, strict=False).alias("data_id"),
+        "content_html",
+    )
+    .unique(subset=["data_id"], keep="first")
+)
 merged_content = (
     legacy_content.with_columns(pl.col("id").cast(pl.Int64, strict=False))
     .join(crosswalk.rename({"legacy_id": "id"}), on="id", how="left")
@@ -469,6 +474,12 @@ merged_content = (
         pl.when(pl.col("content_html").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
     )
 )
+
+# Giải phóng RAM cho legacy_content sau khi merge xong
+del legacy_content
+import gc
+gc.collect()
+
 
 merged_metadata.write_parquet(f"{OUTPUT_DIR}/merged_metadata.parquet")
 merged_content.write_parquet(f"{OUTPUT_DIR}/merged_content.parquet")
@@ -499,24 +510,22 @@ tgt_lookup = crosswalk.select(
     pl.col("legacy_id").alias("tgt_legacy_id"),
 )
 
-# Remap: ưu tiên legacy_id, fallback giữ data_id gốc
-merged_rels = (
+# Remap nghiêm ngặt: chỉ giữ edges khi cả hai đầu đều map thành công qua crosswalk
+# Sử dụng inner join thay vì left join + coalesce để tránh lỗi trùng ID ngẫu nhiên giữa 2 không gian
+merged_rels_strict = (
     rels
-    .join(src_lookup, on="doc_id", how="left")
-    .join(tgt_lookup, on="other_doc_id", how="left")
-    .with_columns(
-        pl.coalesce("src_legacy_id", "doc_id").alias("doc_id_final"),
-        pl.coalesce("tgt_legacy_id", "other_doc_id").alias("other_doc_id_final"),
-        pl.when(pl.col("src_legacy_id").is_not_null())
-          .then(pl.lit("remapped")).otherwise(pl.lit("original")).alias("src_status"),
-        pl.when(pl.col("tgt_legacy_id").is_not_null())
-          .then(pl.lit("remapped")).otherwise(pl.lit("original")).alias("tgt_status"),
-    )
+    .join(src_lookup, on="doc_id", how="inner")
+    .join(tgt_lookup, on="other_doc_id", how="inner")
+    .select([
+        pl.col("src_legacy_id").alias("doc_id_final"),
+        pl.col("tgt_legacy_id").alias("other_doc_id_final"),
+        "relationship"
+    ])
 )
 
 # Lọc: chỉ giữ edges mà CẢ HAI đầu tồn tại trong merged output
 valid_ids = merged_metadata["id"].to_list()
-merged_rels_valid = merged_rels.filter(
+merged_rels_valid = merged_rels_strict.filter(
     pl.col("doc_id_final").is_in(valid_ids) & pl.col("other_doc_id_final").is_in(valid_ids)
 )
 
@@ -537,19 +546,15 @@ merged_rels_clean.write_parquet(f"{OUTPUT_DIR}/merged_relationships.parquet")
 display(pl.DataFrame({
     "metric": [
         "original edges",
-        "edges after remap",
-        "edges both ends valid",
+        "edges after strict map (both ends valid)",
         "edges final (dedup, no self-loop)",
-        "src remapped",
-        "tgt remapped",
+        "dropped edges (unmapped or self-loop)",
     ],
     "value": [
         relationships.height,
-        merged_rels.height,
-        merged_rels_valid.height,
+        merged_rels_strict.height,
         merged_rels_clean.height,
-        merged_rels.filter(pl.col("src_status") == "remapped").height,
-        merged_rels.filter(pl.col("tgt_status") == "remapped").height,
+        relationships.height - merged_rels_clean.height,
     ],
 }))
 
@@ -568,11 +573,9 @@ display(pl.DataFrame({
 # </h1>
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-21T08:34:52.065151Z","iopub.execute_input":"2026-05-21T08:34:52.065473Z","iopub.status.idle":"2026-05-21T08:35:05.443055Z","shell.execute_reply.started":"2026-05-21T08:34:52.065445Z","shell.execute_reply":"2026-05-21T08:35:05.44205Z"}}
-it = iter(dataset)
 num_samples = 1
 
-for i in range(num_samples):
-    sample = next(it)
+for i, sample in enumerate(content.head(num_samples).to_dicts()):
     raw_html = sample['content_html']
     cleaned_text = preprocess_legal_text(raw_html)
 
@@ -581,7 +584,7 @@ for i in range(num_samples):
     print("="*80)
 
     print("\n👉 [BEFORE - RAW HTML (Trích đoạn 200 ký tự đầu)]:")
-    print(raw_html[:200] + "...") 
+    print(raw_html[:200] + "...")
 
     print("\n👉 [AFTER - CLEANED TEXT]:")
     print("-" * 40)
@@ -703,12 +706,12 @@ def legal_structural_splitter(doc_data: Dict[str, Any], max_chunk_size: int = 15
 # 2. CHẠY VÀ HIỂN THỊ TOÀN BỘ NỘI DUNG
 # =================================================================
 
-for sample in content.take(1):
+for sample in content.head(1).to_dicts():
     doc_info = {
         "id": sample.get('id'),
-        "title": sample.get('title'),
-        "so_ky_hieu": sample.get('so_ky_hieu'),
-        "content_cleaned": preprocess_legal_text(sample['content_html']) # Hàm clean HTML của bạn
+        "title": sample.get('title', 'N/A'),
+        "so_ky_hieu": sample.get('so_ky_hieu', 'N/A'),
+        "content_cleaned": preprocess_legal_text(sample['content_html'])
     }
 
     final_chunks = legal_structural_splitter(doc_info, max_chunk_size=1500)
@@ -737,21 +740,12 @@ def norm_text(text):
 
 print("⏳ Đang lập chỉ mục Metadata để tra cứu...")
 
-loai_van_ban_feature = metadata.features["loai_van_ban"]
-is_class_label = hasattr(loai_van_ban_feature, "int2str")
-
 meta_lookup = {}
-for row in metadata:
-    # FIX 1: Luôn ép ID về string để đảm bảo khớp giữa 2 bảng dữ liệu
+for row in metadata.select(["id", "loai_van_ban", "title", "so_ky_hieu"]).iter_rows(named=True):
     doc_id = str(row["id"])
     raw_type = row.get("loai_van_ban")
-    
-    if is_class_label and isinstance(raw_type, int):
-        label = loai_van_ban_feature.int2str(raw_type)
-    else:
-        label = str(raw_type)
-    
-    # FIX 2: Chuẩn hóa Unicode NFC để tránh lỗi "Luật" (NFC) != "Luật" (NFD)
+    label = "" if raw_type is None else str(raw_type)
+
     meta_lookup[doc_id] = {
         "loai_van_ban": norm_text(label),
         "title": row.get("title"),
@@ -776,67 +770,80 @@ target_types = [norm_text(t) for t in [
 samples_found = {}
 print("\n⏳ Đang quét content stream để tìm mẫu đại diện...")
 
-for item in content:
-    # FIX 3: Ép ID của content về string để lookup
-    doc_id = str(item["id"])
-    doc_meta = meta_lookup.get(doc_id)
-    
-    if doc_meta:
-        doc_type = doc_meta["loai_van_ban"]
-        
-        # Kiểm tra khớp loại văn bản
-        if doc_type in target_types and doc_type not in samples_found:
-            samples_found[doc_type] = {
-                "id": doc_id,
-                "title": doc_meta["title"],
-                "so_ky_hieu": doc_meta["so_ky_hieu"],
-                "content_html": item["content_html"]
-            }
-            print(f" -> Đã tìm thấy: {doc_type}")
-            
-        if len(samples_found) == len(target_types):
-            break
+target_ids_by_type = {}
+for row in metadata.select(["id", "loai_van_ban", "title", "so_ky_hieu"]).iter_rows(named=True):
+    doc_id = str(row["id"])
+    doc_type = norm_text(row.get("loai_van_ban"))
+
+    if doc_type in target_types and doc_type not in target_ids_by_type:
+        target_ids_by_type[doc_type] = {
+            "id": doc_id,
+            "title": row.get("title"),
+            "so_ky_hieu": row.get("so_ky_hieu"),
+        }
+
+    if len(target_ids_by_type) == len(target_types):
+        break
+
+if target_ids_by_type:
+    target_ids = [data["id"] for data in target_ids_by_type.values()]
+    content_samples = {
+        str(row["id"]): row["content_html"]
+        for row in (
+            content
+            .with_columns(pl.col("id").cast(pl.Utf8, strict=False).alias("id_str"))
+            .filter(pl.col("id_str").is_in(target_ids))
+            .select(["id", "content_html"])
+            .iter_rows(named=True)
+        )
+    }
+
+    for doc_type, data in target_ids_by_type.items():
+        content_html = content_samples.get(data["id"])
+        if content_html is None:
+            continue
+
+        samples_found[doc_type] = {**data, "content_html": content_html}
+        print(f" -> Đã tìm thấy: {doc_type}")
 
 # 4. XỬ LÝ VÀ HIỂN THỊ KẾT QUẢ
+MAX_PREVIEW_CHARS = 2000
+MAX_CHUNKS_TO_DISPLAY = 3
+
 if not samples_found:
     print("❌ Vẫn không tìm thấy mẫu nào! Hãy kiểm tra print(meta_lookup) xem ID có dạng gì.")
 else:
     print(f"✅ Đã lấy đủ {len(samples_found)} mẫu. Bắt đầu quá trình chunking...\n")
-    
+
     results_summary = []
     for doc_type, data in samples_found.items():
-        # 1. Tiền xử lý văn bản
         content_cleaned = preprocess_legal_text(data['content_html'])
         doc_info = {**data, "content_cleaned": content_cleaned, "loai_van_ban": doc_type}
-        
-        # HIỂN THỊ VĂN BẢN TRƯỚC KHI CHUNK
-        print("="*80)
-        print(f"📄 VĂN BẢN GỐC (ĐÃ CLEAN) - LOẠI: {doc_type.upper()}")
-        print("-" * 30)
-        print(content_cleaned) 
-        print("-" * 30)
-        
-        # 2. Thực hiện chunking
         chunks = legal_structural_splitter(doc_info, max_chunk_size=1500)
-        
+
         results_summary.append({
             "Loại văn bản": doc_type,
             "Số lượng chunks": len(chunks),
             "Chunk types": list(set([c.metadata.get('chunk_type', 'N/A') for c in chunks]))
         })
-        
-        # 3. HIỂN THỊ TẤT CẢ CÁC CHUNK
-        print(f"\n🔥 DANH SÁCH {len(chunks)} CHUNKS CHO: {doc_type.upper()}")
-        
-        for i, chunk in enumerate(chunks):
+
+        print("="*80)
+        print(f"📄 VĂN BẢN GỐC (ĐÃ CLEAN) - LOẠI: {doc_type.upper()}")
+        print("-" * 30)
+        print(content_cleaned[:MAX_PREVIEW_CHARS] + ("..." if len(content_cleaned) > MAX_PREVIEW_CHARS else ""))
+        print("-" * 30)
+        print(f"\n🔥 DANH SÁCH {len(chunks)} CHUNKS CHO: {doc_type.upper()} — hiển thị {min(len(chunks), MAX_CHUNKS_TO_DISPLAY)} chunk đầu")
+
+        for i, chunk in enumerate(chunks[:MAX_CHUNKS_TO_DISPLAY]):
             chunk_type = chunk.metadata.get('chunk_type', 'unknown')
+            chunk_text = chunk.page_content
             print(f"\n📍 [CHUNK {i+1}/{len(chunks)}] - Type: {chunk_type}")
-            print(f"--- Nội dung chunk ---")
-            print(chunk.page_content)
+            print("--- Nội dung chunk ---")
+            print(chunk_text[:MAX_PREVIEW_CHARS] + ("..." if len(chunk_text) > MAX_PREVIEW_CHARS else ""))
             print("-" * 40)
 
         print("="*80 + "\n")
+        del content_cleaned, doc_info, chunks
 
-    # Hiển thị bảng tổng hợp cuối cùng
     summary_df = pd.DataFrame(results_summary)
     display(summary_df)
