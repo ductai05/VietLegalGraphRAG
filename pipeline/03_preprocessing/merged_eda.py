@@ -9,9 +9,12 @@
 
 # %% [code]
 import os
+import re
+import warnings
 from pathlib import Path
 
 import polars as pl
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from IPython.display import display, Markdown
 
 pl.Config.set_tbl_cols(-1)
@@ -22,6 +25,95 @@ pl.Config.set_tbl_width_chars(240)
 
 def md(text: str):
     display(Markdown(text))
+
+
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+HTML_TAG_RE = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
+LEGAL_BREAK_RE = re.compile(r"(?=\b(?:Căn cứ|Xét|Theo đề nghị|QUYẾT ĐỊNH|Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Phần\s+[IVXLCDM\d]+)\b)")
+
+
+def _looks_like_html(text):
+    return bool(HTML_TAG_RE.search(text[:5000]))
+
+
+def _strip_html_fast(text):
+    try:
+        soup = BeautifulSoup(text, "lxml")
+    except Exception:
+        soup = BeautifulSoup(text, "html.parser")
+    for tag in soup(["title", "script", "style"]):
+        tag.decompose()
+    return soup.get_text(separator="\n")
+
+
+def _legal_raw_lines(text):
+    text = re.sub(r"\r\n?", "\n", text)
+    text = re.sub(r"(Điều\s+\d+)\s*\n*\s*:", r"\1:", text)
+    text = re.sub(r"\s+(?=(?:Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Phần\s+[IVXLCDM\d]+)\b)", "\n", text)
+    lines = []
+    for chunk in text.split("\n"):
+        chunk = re.sub(r"[ \t\f\v]+", " ", chunk).strip()
+        if not chunk:
+            continue
+        parts = [part.strip() for part in LEGAL_BREAK_RE.split(chunk) if part.strip()]
+        lines.extend(parts or [chunk])
+    return lines
+
+
+def _format_legal_lines(raw_lines):
+    if not raw_lines:
+        return ""
+
+    merged_lines = []
+    buffer = raw_lines[0]
+
+    for curr in raw_lines[1:]:
+        is_curr_header = curr.isupper() and len(curr) > 3
+        is_curr_article = re.match(r"^Điều\s+\d+:", curr)
+        is_curr_structural = re.match(r"^(?:Chương|Mục|Phần)\s+[IVXLCDM\d]+", curr)
+        is_buffer_header = buffer.isupper() and len(buffer) > 3
+        is_buffer_article = re.match(r"^Điều\s+\d+:", buffer)
+        is_buffer_structural = re.match(r"^(?:Chương|Mục|Phần)\s+[IVXLCDM\d]+", buffer)
+        is_split_word = len(buffer) <= 2
+        is_unfinished_sentence = re.search(r"[a-zà-ỹ,;]\s*$", buffer)
+        is_next_lowercase = curr[0].islower() if curr else False
+
+        if (is_split_word or is_unfinished_sentence or is_next_lowercase) and not is_curr_header and not is_curr_article and not is_curr_structural and not is_buffer_header and not is_buffer_article and not is_buffer_structural:
+            buffer += " " + curr
+        else:
+            merged_lines.append(buffer)
+            buffer = curr
+
+    merged_lines.append(buffer)
+
+    final_output = []
+    for line in merged_lines:
+        line = re.sub(r"\s+", " ", line).strip()
+        is_header = line.isupper() and len(line) > 3
+        is_article = re.match(r"^Điều\s+\d+:", line)
+        is_structural = re.match(r"^(?:Chương|Mục|Phần)\s+[IVXLCDM\d]+", line)
+
+        if is_header or is_article or is_structural:
+            if final_output and final_output[-1] != "":
+                final_output.append("")
+            final_output.append(line)
+            if is_article:
+                final_output.append("")
+        else:
+            final_output.append(line)
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(final_output)).strip()
+
+
+def preprocess_legal_text(content):
+    if content is None:
+        return ""
+    text = str(content).strip()
+    if not text:
+        return ""
+    if _looks_like_html(text):
+        text = _strip_html_fast(text)
+    return _format_legal_lines(_legal_raw_lines(text))
 
 
 def find_dataset_root() -> Path:
@@ -386,7 +478,7 @@ display(sample_content_compare)
 # %% [markdown]
 # ## 6. Validate merged content lineage
 #
-# `merged_content.id` giữ legacy ID. Nếu có mapping trong crosswalk thì content ưu tiên `data/content.content_html`; nếu không có thì giữ `legacy/content.content`.
+# `merged_content.id` giữ legacy ID. Nếu có mapping trong crosswalk thì content ưu tiên `data/content.content_html`; nếu không có thì giữ `legacy/content.content`. Nội dung được clean từ HTML/text trước khi ghi output.
 
 # %% [code]
 merged_content_sig = scan("merged_content").select(
@@ -395,31 +487,36 @@ merged_content_sig = scan("merged_content").select(
     pl.col("content").str.len_chars().alias("content_len"),
     pl.col("content").hash().alias("content_hash"),
 )
-legacy_content_sig = scan("legacy_content").select(
+legacy_content_raw = scan("legacy_content").select(
     pl.col("id").cast(pl.Int64, strict=False),
-    pl.col("content").str.len_chars().alias("legacy_len"),
-    pl.col("content").hash().alias("legacy_hash"),
+    pl.col("content").alias("legacy_content"),
 )
-data_content_sig = (
+data_content_raw = (
     scan("data_content")
     .select(
         pl.col("id").cast(pl.Int64, strict=False).alias("data_id"),
-        pl.col("content_html").str.len_chars().alias("data_len"),
-        pl.col("content_html").hash().alias("data_hash"),
+        pl.col("content_html"),
         pl.col("content_html").is_not_null().alias("has_data_content"),
     )
     .unique(subset=["data_id"], keep="first")
 )
 
 rebuilt_content_sig = (
-    legacy_content_sig
+    legacy_content_raw
     .join(crosswalk.rename({"legacy_id": "id"}), on="id", how="left")
-    .join(data_content_sig, on="data_id", how="left")
+    .join(data_content_raw, on="data_id", how="left")
     .select(
         "id",
         pl.when(pl.col("has_data_content") == True).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
-        pl.coalesce("data_len", "legacy_len").alias("content_len"),
-        pl.coalesce("data_hash", "legacy_hash").alias("content_hash"),
+        pl.coalesce("content_html", "legacy_content")
+        .map_elements(preprocess_legal_text, return_dtype=pl.Utf8)
+        .alias("rebuilt_content"),
+    )
+    .select(
+        "id",
+        "source",
+        pl.col("rebuilt_content").str.len_chars().alias("content_len"),
+        pl.col("rebuilt_content").hash().alias("content_hash"),
     )
 )
 

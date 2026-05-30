@@ -13,7 +13,7 @@
 # </h1>
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:02.487003Z","iopub.execute_input":"2026-05-24T17:23:02.487236Z","iopub.status.idle":"2026-05-24T17:23:10.186340Z","shell.execute_reply.started":"2026-05-24T17:23:02.487209Z","shell.execute_reply":"2026-05-24T17:23:10.185214Z"}}
-!pip install langchain transformers torch langchain-text-splitters -q
+!pip install langchain transformers torch langchain-text-splitters beautifulsoup4 lxml pyarrow -q
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:48.007995Z","iopub.execute_input":"2026-05-24T17:23:48.008368Z","iopub.status.idle":"2026-05-24T17:23:51.640974Z","shell.execute_reply.started":"2026-05-24T17:23:48.008325Z","shell.execute_reply":"2026-05-24T17:23:51.640051Z"},"jupyter":{"source_hidden":true},"scrolled":true}
 # === Clear RAM ===
@@ -49,15 +49,19 @@ def clear_all(exclude=None):
 clear_all()
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:57.640513Z","iopub.execute_input":"2026-05-24T17:23:57.641240Z","iopub.status.idle":"2026-05-24T17:24:25.217298Z","shell.execute_reply.started":"2026-05-24T17:23:57.641202Z","shell.execute_reply":"2026-05-24T17:24:25.216343Z"}}
+import hashlib
 import re
 import uuid
+import warnings
 from datasets import load_dataset, Features, Value
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from typing import List, Dict, Any
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import pandas as pd
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 import shutil, os
 
@@ -153,13 +157,20 @@ for dirname, _, filenames in os.walk(dataset_path):
 # </h1>
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:24:59.006874Z","iopub.execute_input":"2026-05-24T17:24:59.007919Z","iopub.status.idle":"2026-05-24T17:25:12.862849Z","shell.execute_reply.started":"2026-05-24T17:24:59.007864Z","shell.execute_reply":"2026-05-24T17:25:12.862001Z"}}
-content = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/content.parquet')
-metadata = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/metadata.parquet')
-relationships = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/relationships.parquet')
+DATA_CONTENT_PATH = '/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/content.parquet'
+DATA_METADATA_PATH = '/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/metadata.parquet'
+DATA_RELATIONSHIPS_PATH = '/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/data/relationships.parquet'
+LEGACY_CONTENT_PATH = '/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/content.parquet'
+LEGACY_METADATA_PATH = '/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/metadata.parquet'
+STOP_AFTER_PREPROCESSING = True
+
+content = pl.read_parquet(DATA_CONTENT_PATH)
+metadata = pl.read_parquet(DATA_METADATA_PATH)
+relationships = pl.read_parquet(DATA_RELATIONSHIPS_PATH)
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:25:12.864540Z","iopub.execute_input":"2026-05-24T17:25:12.865567Z","iopub.status.idle":"2026-05-24T17:26:06.182044Z","shell.execute_reply.started":"2026-05-24T17:25:12.865518Z","shell.execute_reply":"2026-05-24T17:26:06.180979Z"}}
-legacy_content = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/content.parquet')
-legacy_metadata = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-legal-documents/legacy/metadata.parquet')
+legacy_content = pl.read_parquet(LEGACY_CONTENT_PATH)
+legacy_metadata = pl.read_parquet(LEGACY_METADATA_PATH)
 
 # %% [markdown]
 # <h1 id="setup" style="padding: 15px; background-color: #1a1a1a; border-left: 5px solid #ffcc33; border-radius: 4px; box-shadow: 2px 2px 10px rgba(0,0,0,0.5); color: #ffcc33; font-size: 1.5em; font-weight: bold; text-shadow: 0 0 8px rgba(255, 204, 51, 0.5);">
@@ -168,71 +179,93 @@ legacy_metadata = pl.read_parquet('/kaggle/input/datasets/brdh7940/vietnamese-le
 
 # %% [code] {"jupyter":{"source_hidden":true},"execution":{"iopub.status.busy":"2026-05-21T12:46:03.41839Z","iopub.execute_input":"2026-05-21T12:46:03.419801Z","iopub.status.idle":"2026-05-21T12:46:03.430144Z","shell.execute_reply.started":"2026-05-21T12:46:03.419758Z","shell.execute_reply":"2026-05-21T12:46:03.429307Z"}}
 # === Preprocess HTML ===
-def preprocess_legal_text(html_content):
-    if not html_content: return ""
-    
-    # 1. Loại bỏ các thẻ không cần thiết
-    soup = BeautifulSoup(html_content, "html.parser")
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+HTML_TAG_RE = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
+LEGAL_BREAK_RE = re.compile(r"(?=\b(?:Căn cứ|Xét|Theo đề nghị|QUYẾT ĐỊNH|Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Phần\s+[IVXLCDM\d]+)\b)")
+
+
+def _looks_like_html(text):
+    return bool(HTML_TAG_RE.search(text[:5000]))
+
+
+def _strip_html_fast(text):
+    try:
+        soup = BeautifulSoup(text, "lxml")
+    except Exception:
+        soup = BeautifulSoup(text, "html.parser")
     for tag in soup(["title", "script", "style"]):
         tag.decompose()
-    
-    text = soup.get_text(separator="\n")
-    
-    # 2. Sửa lỗi "Điều X :"
-    text = re.sub(r'(Điều\s+\d+)\s*\n*\s*:', r'\1:', text)
+    return soup.get_text(separator="\n")
 
-    # 3. Tách dòng
-    raw_lines = [line.strip() for line in text.split('\n') if line.strip()]
-    
-    if not raw_lines: return ""
 
-    # 4. Logic nối dòng (Merging) có bổ sung điều kiện chặn Header
+def _legal_raw_lines(text):
+    text = re.sub(r"\r\n?", "\n", text)
+    text = re.sub(r"(Điều\s+\d+)\s*\n*\s*:", r"\1:", text)
+    text = re.sub(r"\s+(?=(?:Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Phần\s+[IVXLCDM\d]+)\b)", "\n", text)
+    lines = []
+    for chunk in text.split("\n"):
+        chunk = re.sub(r"[ \t\f\v]+", " ", chunk).strip()
+        if not chunk:
+            continue
+        parts = [part.strip() for part in LEGAL_BREAK_RE.split(chunk) if part.strip()]
+        lines.extend(parts or [chunk])
+    return lines
+
+
+def _format_legal_lines(raw_lines):
+    if not raw_lines:
+        return ""
+
     merged_lines = []
     buffer = raw_lines[0]
-    
-    for i in range(1, len(raw_lines)):
-        curr = raw_lines[i]
-        
-        # Kiểm tra xem dòng hiện tại có phải là Header hoặc Điều khoản không
+
+    for curr in raw_lines[1:]:
         is_curr_header = curr.isupper() and len(curr) > 3
-        is_curr_article = re.match(r'^Điều\s+\d+:', curr)
-        
-        # Điều kiện nối dòng cũ
+        is_curr_article = re.match(r"^Điều\s+\d+:", curr)
+        is_curr_structural = re.match(r"^(?:Chương|Mục|Phần)\s+[IVXLCDM\d]+", curr)
+        is_buffer_header = buffer.isupper() and len(buffer) > 3
+        is_buffer_article = re.match(r"^Điều\s+\d+:", buffer)
+        is_buffer_structural = re.match(r"^(?:Chương|Mục|Phần)\s+[IVXLCDM\d]+", buffer)
         is_split_word = len(buffer) <= 2
-        is_unfinished_sentence = re.search(r'[a-zà-ỹ,;]\s*$', buffer)
+        is_unfinished_sentence = re.search(r"[a-zà-ỹ,;]\s*$", buffer)
         is_next_lowercase = curr[0].islower() if curr else False
 
-        # SỬA LỖI TẠI ĐÂY: Nếu dòng tiếp theo là Header hoặc Article thì KHÔNG nối
-        if (is_split_word or is_unfinished_sentence or is_next_lowercase) \
-           and not is_curr_header \
-           and not is_curr_article:
+        if (is_split_word or is_unfinished_sentence or is_next_lowercase) and not is_curr_header and not is_curr_article and not is_curr_structural and not is_buffer_header and not is_buffer_article and not is_buffer_structural:
             buffer += " " + curr
         else:
             merged_lines.append(buffer)
             buffer = curr
-            
+
     merged_lines.append(buffer)
 
-    # 5. Format cuối cùng
     final_output = []
     for line in merged_lines:
-        line = re.sub(r'\s+', ' ', line).strip()
-        
+        line = re.sub(r"\s+", " ", line).strip()
         is_header = line.isupper() and len(line) > 3
-        is_article = re.match(r'^Điều\s+\d+:', line)
+        is_article = re.match(r"^Điều\s+\d+:", line)
+        is_structural = re.match(r"^(?:Chương|Mục|Phần)\s+[IVXLCDM\d]+", line)
 
-        if is_header or is_article:
+        if is_header or is_article or is_structural:
             if final_output and final_output[-1] != "":
                 final_output.append("")
             final_output.append(line)
             if is_article:
-                final_output.append("") 
+                final_output.append("")
         else:
             final_output.append(line)
 
-    result = '\n'.join(final_output)
-    result = re.sub(r'\n{3,}', '\n\n', result)
-    return result.strip()
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(final_output)).strip()
+
+
+def preprocess_legal_text(content):
+    if content is None:
+        return ""
+    text = str(content).strip()
+    if not text:
+        return ""
+    if _looks_like_html(text):
+        text = _strip_html_fast(text)
+    return _format_legal_lines(_legal_raw_lines(text))
 
 # %% [markdown]
 # <h1 id="setup" style="
@@ -384,6 +417,126 @@ def _add_key(df, cols):
         pl.when(has_key).then(pl.concat_str(key_parts, separator="||")).otherwise(None).alias("join_key")
     ).drop([f"__k_{c}" for c in cols])
 
+LEGAL_TYPE_MAP = {
+    "Decision": "Quyết định",
+    "Quyết định": "Quyết định",
+    "Official Dispatch": "Công văn",
+    "Công văn": "Công văn",
+    "Resolution": "Nghị quyết",
+    "Nghị quyết": "Nghị quyết",
+    "Nghị Quyết": "Nghị quyết",
+    "Announcement": "Thông báo",
+    "Thông báo": "Thông báo",
+    "Kế hoạch": "Kế hoạch",
+    "Directive": "Chỉ thị",
+    "Chỉ thị": "Chỉ thị",
+    "Circular": "Thông tư",
+    "Thông tư": "Thông tư",
+    "Joint circular": "Thông tư liên tịch",
+    "Thông tư liên tịch": "Thông tư liên tịch",
+    "Instruction": "Hướng dẫn",
+    "Integrated document": "Văn bản hợp nhất",
+    "Văn bản hợp nhất": "Văn bản hợp nhất",
+    "Official Telegram": "Công điện",
+    "National Treaty": "Điều ước quốc tế",
+    "Treaty": "Điều ước quốc tế",
+    "Convention": "Công ước",
+    "Công ước": "Công ước",
+    "Agreement": "Hiệp định",
+    "Hiệp định": "Hiệp định",
+    "Protocal": "Nghị định thư",
+    "Nghị định thư": "Nghị định thư",
+    "Decree of Government": "Nghị định",
+    "Nghị định": "Nghị định",
+    "Order": "Lệnh",
+    "Lệnh": "Lệnh",
+    "Decree-Order": "Sắc lệnh",
+    "Sắc lệnh": "Sắc lệnh",
+    "Decree-Law": "Sắc luật",
+    "Sắc luật": "Sắc luật",
+    "Law": "Luật",
+    "Luật": "Luật",
+    "Statute": "Quy chế",
+    "Bộ luật": "Bộ luật",
+    "Ordinance": "Pháp lệnh",
+    "Pháp lệnh": "Pháp lệnh",
+    "Regulation": "Quy định",
+    "Standing Rules": "Điều lệ",
+    "Constitution": "Hiến pháp",
+    "Other Documents": "Văn bản khác",
+    "Văn bản khác": "Văn bản khác",
+    "Documents about WTO": "Văn bản WTO",
+    "WTO Documents": "Văn bản WTO",
+    "WTO_Undertaken by Vietnam": "Cam kết WTO của Việt Nam",
+    "Văn bản liên quan": "Văn bản liên quan",
+    "Tiêu chuẩn Việt Nam": "Tiêu chuẩn Việt Nam",
+    "Tiêu chuẩn ngành": "Tiêu chuẩn ngành",
+    "Tiêu chuẩn XDVN": "Tiêu chuẩn xây dựng Việt Nam",
+    "Nghị quyết liên tịch": "Nghị quyết liên tịch",
+    "Thông tư liên bộ": "Thông tư liên bộ",
+    "Chương trình": "Chương trình",
+    "Báo cáo": "Báo cáo",
+}
+
+LEGAL_SECTOR_MAP = {
+    "Administrative apparatus": "Bộ máy hành chính",
+    "Taxes - Fees - Charges": "Thuế, phí, lệ phí",
+    "Government finance": "Tài chính nhà nước",
+    "Culture - Society": "Văn hóa - xã hội",
+    "Export & Import": "Xuất nhập khẩu",
+    "Natural resources – Environment": "Tài nguyên - môi trường",
+    "Construction – Urban Planning": "Xây dựng - đô thị",
+    "Trade": "Thương mại",
+    "Real estate": "Bất động sản",
+    "Sports - Health": "Thể thao - y tế",
+    "Education": "Giáo dục",
+    "Transport": "Giao thông vận tải",
+    "Business": "Doanh nghiệp",
+    "Employment - Wages": "Lao động - tiền lương",
+    "Investment": "Đầu tư",
+    "Information technology": "Công nghệ thông tin",
+    "Other": "Khác",
+    "Accounting - Audit": "Kế toán - kiểm toán",
+    "Civil rights": "Quyền dân sự",
+    "Banking - Finance": "Ngân hàng - tài chính",
+    "Insurance": "Bảo hiểm",
+    "Legal services": "Dịch vụ pháp lý",
+    "Administrative violations": "Vi phạm hành chính",
+    "Proceedings": "Tố tụng",
+    "Criminal liability": "Trách nhiệm hình sự",
+    "Intellectual property": "Sở hữu trí tuệ",
+    "Securities": "Chứng khoán",
+}
+
+EFFECT_STATUS_MAP = {
+    "In effect": "Còn hiệu lực",
+    "Còn hiệu lực": "Còn hiệu lực",
+    "Expired": "Hết hiệu lực",
+    "Hết hiệu lực toàn bộ": "Hết hiệu lực",
+    "No longer applicable": "Hết hiệu lực",
+    "Không còn phù hợp": "Hết hiệu lực",
+    "Hết hiệu lực một phần": "Hết hiệu lực một phần",
+    "Ngưng hiệu lực": "Ngưng hiệu lực",
+    "Ngưng hiệu lực một phần": "Ngưng hiệu lực một phần",
+    "Chưa có hiệu lực": "Chưa có hiệu lực",
+    "Unknown": None,
+    "Chưa xác định": None,
+    "Undetermined": None,
+}
+
+
+def _map_dict_expr(col, mapping):
+    return pl.col(col).replace_strict(mapping, default=pl.col(col))
+
+
+def _normalize_legal_sectors_expr(col):
+    return pl.col(col).map_elements(
+        lambda value: None if value is None else ", ".join(
+            dict.fromkeys(LEGAL_SECTOR_MAP.get(part.strip(), part.strip()) for part in str(value).split(",") if part.strip())
+        ),
+        return_dtype=pl.Utf8,
+    )
+
 legacy_cols = [
     "id", "document_number", "title", "legal_type", "legal_sectors",
     "issuing_authority", "issuance_date", "effect_date", "effectless_date",
@@ -438,12 +591,33 @@ crosswalk = merged_metadata_raw.filter(pl.col("data_id").is_not_null()).select(
     pl.col("id").alias("legacy_id"), "data_id", "join_key"
 )
 
-merged_metadata = merged_metadata_raw.select(
-    "id",
+DATA_ONLY_ID_OFFSET = 10_000_000_000
+matched_data_ids = crosswalk.select("data_id")
+
+data_only_keyed = data_keyed.join(matched_data_ids, on="data_id", how="anti")
+
+legacy_lineage = merged_metadata_raw.select(
+    pl.col("id").alias("merged_id"),
+    pl.col("id").alias("legacy_id"),
+    "data_id",
+    "join_key",
+    pl.when(pl.col("data_id").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
+)
+data_only_lineage = data_only_keyed.select(
+    (pl.lit(DATA_ONLY_ID_OFFSET) + pl.col("data_id")).alias("merged_id"),
+    pl.lit(None).cast(pl.Int64).alias("legacy_id"),
+    "data_id",
+    "join_key",
+    pl.lit("data").alias("source"),
+)
+document_lineage = pl.concat([legacy_lineage, data_only_lineage], how="vertical_relaxed")
+
+legacy_merged_metadata = merged_metadata_raw.select(
+    pl.col("id"),
     pl.coalesce("data_document_number", "document_number").alias("document_number"),
     pl.coalesce("data_title", "title").alias("title"),
     pl.coalesce("data_legal_type", "legal_type").alias("legal_type"),
-    "legal_sectors",
+    pl.coalesce("linh_vuc", "nganh", "legal_sectors").alias("legal_sectors"),
     pl.coalesce("data_issuing_authority", "issuing_authority").alias("issuing_authority"),
     pl.coalesce("data_issuance_date", "issuance_date").alias("issuance_date"),
     pl.coalesce("data_effect_date", "effect_date").alias("effect_date"),
@@ -454,79 +628,200 @@ merged_metadata = merged_metadata_raw.select(
     pl.when(pl.col("data_id").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
 )
 
-# Tối ưu RAM: chỉ giữ lại các dòng content có data_id đã match được trong crosswalk
-data_content = (
-    content
-    .filter(pl.col("id").cast(pl.Int64, strict=False).is_in(crosswalk["data_id"]))
-    .select(
-        pl.col("id").cast(pl.Int64, strict=False).alias("data_id"),
-        "content_html",
-    )
-    .unique(subset=["data_id"], keep="first")
-)
-merged_content = (
-    legacy_content.with_columns(pl.col("id").cast(pl.Int64, strict=False))
-    .join(crosswalk.rename({"legacy_id": "id"}), on="id", how="left")
-    .join(data_content, on="data_id", how="left")
-    .select(
-        "id",
-        pl.coalesce("content_html", "content").alias("content"),
-        pl.when(pl.col("content_html").is_not_null()).then(pl.lit("legacy+data")).otherwise(pl.lit("legacy")).alias("source"),
-    )
+data_only_metadata = data_only_keyed.select(
+    (pl.lit(DATA_ONLY_ID_OFFSET) + pl.col("data_id")).alias("id"),
+    "document_number",
+    "title",
+    "legal_type",
+    pl.coalesce("linh_vuc", "nganh").alias("legal_sectors"),
+    "issuing_authority",
+    "issuance_date",
+    "effect_date",
+    "effectless_date",
+    "effect_status",
+    "signers",
+    *data_extra_cols,
+    pl.lit("data").alias("source"),
 )
 
-# Giải phóng RAM cho legacy_content sau khi merge xong
-del legacy_content
+merged_metadata = pl.concat([legacy_merged_metadata, data_only_metadata], how="vertical_relaxed").with_columns(
+    _map_dict_expr("legal_type", LEGAL_TYPE_MAP).alias("legal_type"),
+    _normalize_legal_sectors_expr("legal_sectors").alias("legal_sectors"),
+    _map_dict_expr("effect_status", EFFECT_STATUS_MAP).alias("effect_status"),
+)
+
+# Tối ưu RAM/CPU: ghi candidate content ra parquet tạm, clean mỗi document tối đa một lần.
+metadata_rank = merged_metadata.select(
+    "id",
+    "source",
+    pl.sum_horizontal([pl.col(c).is_not_null().cast(pl.Int32) for c in merged_metadata.columns if c != "id"]).alias("metadata_non_nulls"),
+)
+metadata_source_by_id = {row["id"]: row["source"] for row in metadata_rank.select("id", "source").iter_rows(named=True)}
+metadata_score_by_id = {row["id"]: row["metadata_non_nulls"] for row in metadata_rank.select("id", "metadata_non_nulls").iter_rows(named=True)}
+data_to_merged = {
+    row["data_id"]: (row["merged_id"], row["source"])
+    for row in document_lineage.filter(pl.col("data_id").is_not_null()).select("data_id", "merged_id", "source").iter_rows(named=True)
+}
+
+
+def _normalize_legacy_content(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _flush_rows(writer, rows, schema):
+    if rows:
+        writer.write_table(pa.Table.from_pylist(rows, schema=schema))
+        rows.clear()
+
+
+CHUNK_SIZE = 2000
+candidate_path = f"{OUTPUT_DIR}/content_candidates.parquet"
+content_out_path = f"{OUTPUT_DIR}/merged_content.parquet"
+content_schema = pa.schema([
+    ("id", pa.int64()),
+    ("content", pa.string()),
+    ("source", pa.string()),
+])
+
+candidate_writer = pq.ParquetWriter(candidate_path, content_schema, compression="zstd")
+buffer = []
+data_candidate_merged_ids = set()
+try:
+    for batch in pq.ParquetFile(DATA_CONTENT_PATH).iter_batches(batch_size=CHUNK_SIZE, columns=["id", "content_html"]):
+        for row in batch.to_pylist():
+            data_id = None if row["id"] is None else int(row["id"])
+            target = data_to_merged.get(data_id)
+            if target is None:
+                continue
+            merged_id, source = target
+            normalized_content = preprocess_legal_text(row["content_html"])
+            if not normalized_content:
+                continue
+            data_candidate_merged_ids.add(merged_id)
+            buffer.append({"id": merged_id, "content": normalized_content, "source": source})
+            if len(buffer) >= CHUNK_SIZE:
+                _flush_rows(candidate_writer, buffer, content_schema)
+
+    for batch in pq.ParquetFile(LEGACY_CONTENT_PATH).iter_batches(batch_size=CHUNK_SIZE, columns=["id", "content"]):
+        for row in batch.to_pylist():
+            doc_id = None if row["id"] is None else int(row["id"])
+            if metadata_source_by_id.get(doc_id) is None or doc_id in data_candidate_merged_ids:
+                continue
+            normalized_content = _normalize_legacy_content(row["content"])
+            if not normalized_content:
+                continue
+            buffer.append({"id": doc_id, "content": normalized_content, "source": "legacy"})
+            if len(buffer) >= CHUNK_SIZE:
+                _flush_rows(candidate_writer, buffer, content_schema)
+
+    _flush_rows(candidate_writer, buffer, content_schema)
+finally:
+    candidate_writer.close()
+
+best_by_hash = {}
+for batch in pq.ParquetFile(candidate_path).iter_batches(batch_size=CHUNK_SIZE):
+    for row in batch.to_pylist():
+        doc_id = row["id"]
+        content_hash = hashlib.sha256(row["content"].encode("utf-8")).hexdigest()
+        source_priority = {"legacy": 0, "data": 1, "legacy+data": 2}.get(row["source"], 0)
+        candidate = (metadata_score_by_id.get(doc_id, 0), source_priority, -doc_id, doc_id, row["source"])
+        if content_hash not in best_by_hash or candidate > best_by_hash[content_hash]:
+            best_by_hash[content_hash] = candidate
+
+winning_content_keys = {(item[3], content_hash) for content_hash, item in best_by_hash.items()}
+valid_content_ids = {doc_id for doc_id, _ in winning_content_keys}
+valid_merged_ids = pl.DataFrame({"id": list(valid_content_ids)}, schema={"id": pl.Int64})
+merged_metadata = merged_metadata.join(valid_merged_ids, on="id", how="inner")
+document_lineage = document_lineage.join(valid_merged_ids.rename({"id": "merged_id"}), on="merged_id", how="inner")
+crosswalk = crosswalk.join(
+    document_lineage.filter(pl.col("legacy_id").is_not_null() & pl.col("data_id").is_not_null()).select("legacy_id", "data_id"),
+    on=["legacy_id", "data_id"],
+    how="inner",
+)
+
+merged_metadata.write_parquet(f"{OUTPUT_DIR}/merged_metadata.parquet")
+crosswalk.write_parquet(f"{OUTPUT_DIR}/data_to_legacy_crosswalk.parquet")
+document_lineage.write_parquet(f"{OUTPUT_DIR}/document_lineage.parquet")
+
+output_writer = pq.ParquetWriter(content_out_path, content_schema, compression="zstd")
+buffer = []
+try:
+    for batch in pq.ParquetFile(candidate_path).iter_batches(batch_size=CHUNK_SIZE):
+        for row in batch.to_pylist():
+            content_hash = hashlib.sha256(row["content"].encode("utf-8")).hexdigest()
+            if (row["id"], content_hash) not in winning_content_keys:
+                continue
+            buffer.append(row)
+            if len(buffer) >= CHUNK_SIZE:
+                _flush_rows(output_writer, buffer, content_schema)
+    _flush_rows(output_writer, buffer, content_schema)
+finally:
+    output_writer.close()
+
+merged_content = pl.scan_parquet(content_out_path).select("id", "source")
+
+# Giải phóng RAM cho content sau khi merge xong
+for name in ["content", "legacy_content", "best_by_hash", "buffer", "data_candidate_merged_ids"]:
+    if name in globals():
+        del globals()[name]
 import gc
 gc.collect()
 
-
-merged_metadata.write_parquet(f"{OUTPUT_DIR}/merged_metadata.parquet")
-merged_content.write_parquet(f"{OUTPUT_DIR}/merged_content.parquet")
-crosswalk.write_parquet(f"{OUTPUT_DIR}/data_to_legacy_crosswalk.parquet")
-
 display(pl.DataFrame({
-    "metric": ["legacy rows", "data rows", "matched one-to-one rows", "merged metadata rows"],
-    "value": [legacy_metadata.height, metadata.height, crosswalk.height, merged_metadata.height],
+    "metric": [
+        "legacy rows",
+        "data rows",
+        "matched one-to-one rows after content filter",
+        "data-only rows after content filter",
+        "merged metadata rows",
+    ],
+    "value": [
+        legacy_metadata.height,
+        metadata.height,
+        crosswalk.height,
+        document_lineage.filter(pl.col("source") == "data").height,
+        merged_metadata.height,
+    ],
 }))
 
 # %% [code]
-# === MERGE RELATIONSHIPS: remap data_id → legacy_id ===
+# === MERGE RELATIONSHIPS: remap data_id → merged_id ===
 # relationships dùng doc_id/other_doc_id thuộc không gian ID của data.
-# Cần remap sang legacy_id qua crosswalk để khớp với merged output.
+# Cần remap sang merged_id qua document_lineage để giữ cả matched và data-only.
 
 rels = relationships.with_columns(
     pl.col("doc_id").cast(pl.Int64, strict=False),
     pl.col("other_doc_id").cast(pl.Int64, strict=False),
 )
 
-# Bảng lookup: data_id → legacy_id
-src_lookup = crosswalk.select(
+# Bảng lookup đầy đủ: data_id → merged_id, gồm cả matched và data-only.
+src_lookup = document_lineage.filter(pl.col("data_id").is_not_null()).select(
     pl.col("data_id").alias("doc_id"),
-    pl.col("legacy_id").alias("src_legacy_id"),
+    pl.col("merged_id").alias("src_merged_id"),
 )
-tgt_lookup = crosswalk.select(
+tgt_lookup = document_lineage.filter(pl.col("data_id").is_not_null()).select(
     pl.col("data_id").alias("other_doc_id"),
-    pl.col("legacy_id").alias("tgt_legacy_id"),
+    pl.col("merged_id").alias("tgt_merged_id"),
 )
 
-# Remap nghiêm ngặt: chỉ giữ edges khi cả hai đầu đều map thành công qua crosswalk
-# Sử dụng inner join thay vì left join + coalesce để tránh lỗi trùng ID ngẫu nhiên giữa 2 không gian
+# Remap nghiêm ngặt: chỉ giữ edges khi cả hai đầu đều tồn tại trong merged output.
 merged_rels_strict = (
     rels
     .join(src_lookup, on="doc_id", how="inner")
     .join(tgt_lookup, on="other_doc_id", how="inner")
     .select([
-        pl.col("src_legacy_id").alias("doc_id_final"),
-        pl.col("tgt_legacy_id").alias("other_doc_id_final"),
+        pl.col("src_merged_id").alias("doc_id_final"),
+        pl.col("tgt_merged_id").alias("other_doc_id_final"),
         "relationship"
     ])
 )
 
 # Lọc: chỉ giữ edges mà CẢ HAI đầu tồn tại trong merged output
-valid_ids = merged_metadata["id"].to_list()
-merged_rels_valid = merged_rels_strict.filter(
-    pl.col("doc_id_final").is_in(valid_ids) & pl.col("other_doc_id_final").is_in(valid_ids)
+valid_ids = merged_metadata.select("id")
+merged_rels_valid = (
+    merged_rels_strict
+    .join(valid_ids.rename({"id": "doc_id_final"}), on="doc_id_final", how="semi")
+    .join(valid_ids.rename({"id": "other_doc_id_final"}), on="other_doc_id_final", how="semi")
 )
 
 # Loại self-loop + dedup
@@ -557,6 +852,9 @@ display(pl.DataFrame({
         relationships.height - merged_rels_clean.height,
     ],
 }))
+
+if STOP_AFTER_PREPROCESSING:
+    raise SystemExit("Preprocessing outputs written; stopping before EDA/chunk demo cells.")
 
 # %% [markdown]
 # <h1 id="setup" style="
