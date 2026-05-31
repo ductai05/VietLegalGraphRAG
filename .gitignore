@@ -10,10 +10,10 @@ venv
 # Data - ignore content, keep folder structure
 /data/*
 !/data/raw/
-/data/raw/*
+# /data/raw/*
 !/data/raw/README.md
 !/data/preprocessed/
-/data/preprocessed/*
+# /data/preprocessed/*
 !/data/preprocessed/README.md
 
 # Python
