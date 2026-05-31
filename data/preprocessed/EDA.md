@@ -1,74 +1,68 @@
-# CLEANED EDA: Tập dữ liệu pháp luật Việt Nam (sau tiền xử lý)
-
-> Báo cáo này mô tả trạng thái dữ liệu **sau khi tiền xử lý**:
->
-> - Loại bỏ trùng lặp nội dung (theo `id`)
-> - Chỉ giữ lại văn bản **còn hiệu lực** (`effect_status = "Còn hiệu lực"`)
-> - Xoá cột `thong_tin_ap_dung` (100% null)
-> - Đồng bộ `content`, `metadata`, `relationships` theo tập `id` còn lại
-
----
+# Báo cáo EDA – Dữ liệu văn bản pháp luật Việt Nam (Đã làm sạch)
 
 ## 1. Tổng quan
 
-| Thuộc tính                     | Giá trị                                                              |
-| ------------------------------ | -------------------------------------------------------------------- |
-| **Miền**                       | Pháp luật Việt Nam                                                   |
-| **Mục đích**                   | Hybrid RAG (dense vector + keyword + LightRAG) cho hỏi đáp pháp luật |
-| **Số văn bản (còn hiệu lực)**  | **348,623**                                                          |
-| **Số metadata records**        | 348,623                                                              |
-| **Số quan hệ (relationships)** | **61,700** (sau lọc theo active docs)                                |
-| **Khoảng thời gian**           | 1924-08-25 → 2026-03-25                                              |
-| **Định dạng lưu trữ**          | Parquet (3 files)                                                    |
+| Thuộc tính                   | Giá trị                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Lĩnh vực**                 | Pháp luật Việt Nam                                                                              |
+| **Mục đích**                 | Xây dựng hệ thống Hybrid RAG (tìm kiếm dense vector + từ khóa + LightRAG) cho hỏi đáp pháp luật |
+| **Số lượng văn bản**         | 353.746 (sau khi lọc hiệu lực và loại bỏ trùng lặp)                                             |
+| **Số lượng metadata**        | 353.746                                                                                         |
+| **Số lượng quan hệ (edges)** | 138.656                                                                                         |
+| **Khoảng thời gian**         | 1924-08-25 → 2026-03-25                                                                         |
+| **Định dạng lưu trữ**        | Parquet (3 files) – đã được join và lọc                                                         |
+
+> **Ghi chú**: So với dữ liệu thô (564.136 văn bản), tập dữ liệu sạch nhỏ hơn **37,3%** do loại bỏ văn bản hết hiệu lực, trùng lặp và cột rỗng hoàn toàn.
 
 ---
 
-## 2. Cấu trúc file (sau lọc)
+## 2. Cấu trúc file sau khi làm sạch
 
-| File                          | Số dòng | Cột | Dung lượng (ước) |
-| ----------------------------- | ------- | --- | ---------------- |
-| `content_clean.parquet`       | 348,623 | 3   | ~6.1 MB          |
-| `metadata_clean.parquet`      | 348,623 | 18  | ~160 MB          |
-| `relationships_clean.parquet` | 61,700  | 3   | ~2.3 MB          |
+| File                        | Số dòng | Số cột | Dung lượng (ước lượng) |
+| --------------------------- | ------- | ------ | ---------------------- |
+| `content` (DataFrame)       | 353.746 | 3      | ~5.691 MB              |
+| `metadata` (DataFrame)      | 353.746 | 18     | ~161 MB                |
+| `relationships` (DataFrame) | 138.656 | 3      | ~5,1 MB                |
 
-> **Ghi chú**: Dung lượng giảm mạnh do chỉ giữ lại văn bản còn hiệu lực.
+- **Cột bị xóa**: `thong_tin_ap_dung` (100% null)
+- **Dữ liệu thừa (duplicate ID)**: Đã loại bỏ hoàn toàn (0 duplicate ID)
 
 ---
 
-## 3. Schema các bảng
+## 3. Schemas
 
 ### 3.1 `content`
 
 | Cột       | Kiểu   | Null | Mô tả                                  |
 | --------- | ------ | ---- | -------------------------------------- |
-| `id`      | Int64  | 0    | Khóa chính, liên kết với metadata      |
-| `content` | String | 0    | Toàn văn văn bản pháp luật             |
+| `id`      | Int64  | 0    | Khóa chính, liên kết với `metadata.id` |
+| `content` | String | 0    | Toàn bộ nội dung văn bản               |
 | `source`  | String | 0    | Nguồn: `legacy`, `legacy+data`, `data` |
 
 ### 3.2 `metadata`
 
-Đã loại bỏ cột `thong_tin_ap_dung` (100% null).
+| Cột                  | Kiểu   | Null % | Mô tả                                                 |
+| -------------------- | ------ | ------ | ----------------------------------------------------- |
+| `id`                 | Int64  | 0,0%   | Khóa chính                                            |
+| `document_number`    | String | 0,0%   | Số hiệu văn bản (VD: `34/2025/QĐ-UBND`)               |
+| `title`              | String | 0,0%   | Tiêu đề                                               |
+| `legal_type`         | String | ~0,0%  | Loại văn bản (Quyết định, Công văn, …)                |
+| `legal_sectors`      | String | 2,47%  | Lĩnh vực pháp lý (multi-value, phân cách `, `)        |
+| `issuing_authority`  | String | 0,04%  | Cơ quan ban hành                                      |
+| `issuance_date`      | String | 0,0%   | Ngày ban hành (`YYYY-MM-DD`)                          |
+| `effect_date`        | String | 0,0%\* | Ngày có hiệu lực                                      |
+| `effectless_date`    | String | 97,57% | Ngày hết hiệu lực (hầu hết null vì đang còn hiệu lực) |
+| `effect_status`      | String | 0,0%   | Trạng thái hiệu lực                                   |
+| `signers`            | String | 0,12%  | Người ký                                              |
+| `nguon_thu_thap`     | String | 90,17% | Nguồn thu thập                                        |
+| `ngay_dang_cong_bao` | String | 95,25% | Ngày đăng công báo                                    |
+| `nganh`              | String | 89,29% | Ngành                                                 |
+| `linh_vuc`           | String | 94,91% | Lĩnh vực                                              |
+| `chuc_danh`          | String | 81,98% | Chức danh người ký                                    |
+| `pham_vi`            | String | 83,44% | Phạm vi áp dụng                                       |
+| `source`             | String | 0,0%   | Nguồn: `legacy`, `legacy+data`, `data`                |
 
-| Cột                  | Null % | Mô tả                                                 |
-| -------------------- | ------ | ----------------------------------------------------- |
-| `id`                 | 0%     | Khóa chính                                            |
-| `document_number`    | 0%     | Số hiệu văn bản                                       |
-| `title`              | 0%     | Tiêu đề                                               |
-| `legal_type`         | ~0%    | Loại văn bản (Quyết định, Công văn, ...)              |
-| `legal_sectors`      | 2.39%  | Lĩnh vực pháp lý (đa giá trị, cách `, `)              |
-| `issuing_authority`  | 0.06%  | Cơ quan ban hành                                      |
-| `issuance_date`      | 0%     | Ngày ban hành (`YYYY-MM-DD`)                          |
-| `effect_date`        | 0.24%  | Ngày có hiệu lực                                      |
-| `effectless_date`    | 97.81% | Ngày hết hiệu lực (hầu hết null vì đang còn hiệu lực) |
-| `effect_status`      | 0%     | Chỉ có `Còn hiệu lực`                                 |
-| `signers`            | 0.1%   | Người ký                                              |
-| `nguon_thu_thap`     | 90.82% | Nguồn thu thập                                        |
-| `ngay_dang_cong_bao` | 95.61% | Ngày đăng công báo                                    |
-| `nganh`              | 90.12% | Ngành                                                 |
-| `linh_vuc`           | 95.41% | Lĩnh vực                                              |
-| `chuc_danh`          | 83.18% | Chức danh người ký                                    |
-| `pham_vi`            | 84.59% | Phạm vi áp dụng                                       |
-| `source`             | 0%     | Nguồn gốc dữ liệu                                     |
+> `effect_date` có 0 null trong thực tế, nhưng do preprocess lọc theo `effect_status` nên toàn bộ văn bản đều có `effect_date` hợp lệ.
 
 ### 3.3 `relationships`
 
@@ -80,247 +74,236 @@
 
 ---
 
-## 4. Chất lượng dữ liệu
+## 4. Chất lượng dữ liệu sau làm sạch
 
 ### 4.1 Trùng lặp
 
-- **Không còn duplicate** `id` trong `content` (đã xử lý `unique(subset=['id'])`)
-- **Không còn `content` trùng lặp chính xác** giữa các `id` khác nhau
+- **Không còn ID trùng lặp** trong `content` (đã dùng `unique(subset=["id"])`)
+- **0 dòng trùng lặp nội dung** với cùng ID – an toàn tuyệt đối
 
 ### 4.2 Null fields đáng chú ý
 
-- Các cột `effectless_date`, `ngay_dang_cong_bao`, `linh_vuc`, `nganh`, `nguon_thu_thap` có tỷ lệ null > 90% → **không nên dùng làm bộ lọc chính**.
-- `legal_sectors` chỉ null 2.39% → **rất tốt cho filtering/tagging**.
-- Các cột core (`id`, `title`, `document_number`, `legal_type`, `issuance_date`) **không null**.
+- Các cột có tỉ lệ null > 80% (`effectless_date`, `ngay_dang_cong_bao`, `linh_vuc`, `nguon_thu_thap`, `nganh`, `chuc_danh`, `pham_vi`) được giữ lại nhưng **không nên dùng làm bộ lọc chính**; chỉ dùng khi có dữ liệu.
+- Các cột core (`id`, `title`, `document_number`, `legal_type`, `issuance_date`, `effect_status`, `source`) **0% null** – rất tốt.
+- Cột `legal_sectors` chỉ null 2,47% → có thể dùng rộng rãi.
 
-### 4.3 Đồng bộ ID
+### 4.3 ID alignment
 
-- `content.id` và `metadata.id` hoàn toàn trùng khớp (348,623 IDs)
-- Toàn bộ các `doc_id` và `other_doc_id` trong `relationships` đều tồn tại trong metadata (29,276 unique nodes)
+- `content.id` và `metadata.id` khớp hoàn toàn: 353.746 IDs.
+- `relationships` chứa **40.604 node duy nhất**, tất cả đều tồn tại trong metadata.
 
 ---
 
-## 5. Phân tích nội dung
+## 5. Phân tích nội dung (`content`)
 
-### 5.1 Phân phối độ dài văn bản (số ký tự)
+### 5.1 Phân bố độ dài (ký tự)
 
-| Thống kê     | Giá trị   |
-| ------------ | --------- |
-| Trung bình   | 12,824    |
-| Trung vị     | 4,687     |
-| tứ phân vị 1 | 2,194     |
-| tứ phân vị 3 | 12,899    |
-| Nhỏ nhất     | 9         |
-| Lớn nhất     | 4,585,077 |
+| Bucket       | Số lượng    | %          | Nhận xét                     |
+| ------------ | ----------- | ---------- | ---------------------------- |
+| < 500 chars  | 560         | 0,16%      | Rất ngắn (có thể là tiêu đề) |
+| 500 – 2K     | 75.005      | 21,20%     | Ngắn                         |
+| 2K – 5K      | 106.314     | 30,06%     | Trung bình – ngắn            |
+| **5K – 20K** | **113.415** | **32,06%** | **Phổ biến nhất**            |
+| 20K – 100K   | 53.439      | 15,11%     | Dài                          |
+| > 100K       | 5.013       | 1,42%      | Rất dài (hơn 100.000 ký tự)  |
 
-**Phân bố theo nhóm độ dài:**
+| Thống kê          | Giá trị                   |
+| ----------------- | ------------------------- |
+| Số lượng          | 353.746                   |
+| Độ dài trung bình | 13.030 ký tự              |
+| Trung vị (p50)    | 4.749 ký tự               |
+| p75               | 13.113 ký tự              |
+| Giá trị lớn nhất  | 4.585.077 ký tự (~4,4 MB) |
 
-| Nhóm         | Số văn bản  | %         |
-| ------------ | ----------- | --------- |
-| < 500 ký tự  | 527         | 0.15%     |
-| 500 – 2K     | 74,734      | 21.4%     |
-| 2K – 5K      | 105,316     | 30.2%     |
-| **5K – 20K** | **111,466** | **32.0%** |
-| 20K – 100K   | 51,809      | 14.9%     |
-| > 100K       | 4,771       | 1.37%     |
+> **Ý nghĩa cho RAG**: Khoảng 77% văn bản có độ dài từ 500 đến 20.000 ký tự. Cần chunking với `chunk_size ≈ 512–1024 token`, `overlap ≈ 128 token`. Với ~5.000 văn bản dài >100K, nên áp dụng hierarchical chunking (theo điều/khoản).
 
-> ⚠️ **Hệ quả cho RAG**: Hơn 60% văn bản có độ dài từ 2K–20K ký tự. Chiến lược chunking phù hợp:
->
-> - `chunk_size ≈ 512–1024 tokens`, `overlap ≈ 128 tokens` cho phần lớn văn bản.
-> - Với văn bản > 100K (~4.8k văn bản) cần chunking phân cấp (hierarchical chunking).
+### 5.2 Phân bố nguồn dữ liệu (`source`)
 
-### 5.2 Phân bố nguồn (`source`)
-
-**Trong `content`:**
-
-| Nguồn         | Số lượng | %     |
-| ------------- | -------- | ----- |
-| `legacy`      | 295,791  | 84.8% |
-| `legacy+data` | 33,108   | 9.5%  |
-| `data`        | 19,724   | 5.7%  |
-
-**Trong `metadata`** (tương tự, có sai lệch nhỏ do đồng bộ):
-
-| Nguồn         | Số lượng | %     |
-| ------------- | -------- | ----- |
-| `legacy`      | 288,745  | 82.8% |
-| `legacy+data` | 40,154   | 11.5% |
-| `data`        | 19,724   | 5.7%  |
+| Nguồn         | Số lượng | %      |
+| ------------- | -------- | ------ |
+| `legacy`      | 296.526  | 83,83% |
+| `legacy+data` | 36.295   | 10,26% |
+| `data`        | 20.925   | 5,91%  |
 
 ---
 
 ## 6. Phân tích metadata
 
-### 6.1 Loại văn bản (`legal_type`)
+### 6.1 Loại văn bản (`legal_type`) – top 10
 
-| Loại văn bản       | Số lượng | %     |
-| ------------------ | -------- | ----- |
-| **Quyết định**     | 166,759  | 47.8% |
-| **Công văn**       | 122,284  | 35.1% |
-| Nghị quyết         | 27,732   | 8.0%  |
-| Chỉ thị            | 10,879   | 3.1%  |
-| Thông tư           | 8,338    | 2.4%  |
-| Nghị định          | 2,531    | 0.7%  |
-| Thông báo          | 1,729    | 0.5%  |
-| Hướng dẫn          | 1,600    | 0.5%  |
-| Thông tư liên tịch | 1,570    | 0.5%  |
-| Điều ước quốc tế   | 1,239    | 0.4%  |
-| Còn lại (10 loại)  | ~4,000   | 1.1%  |
+| Loại văn bản         | Số lượng | %      |
+| -------------------- | -------- | ------ |
+| Quyết định           | 168.708  | 47,70% |
+| Công văn             | 122.286  | 34,57% |
+| Nghị quyết           | 28.870   | 8,16%  |
+| Chỉ thị              | 10.890   | 3,08%  |
+| Thông tư             | 9.600    | 2,71%  |
+| Kế hoạch             | 3.868    | 1,09%  |
+| Thông báo            | 3.044    | 0,86%  |
+| Hướng dẫn            | 1.396    | 0,39%  |
+| Nghị định            | 1.295    | 0,37%  |
+| Quyết định (cá biệt) | 652      | 0,18%  |
 
-### 6.2 Hiệu lực (`effect_status`)
+> So với dữ liệu thô: tỉ lệ **Công văn** tăng lên (34,6% so với 22,1%) do nhiều công văn còn hiệu lực. **Luật** chỉ còn 212 văn bản (0,06%) – hầu hết luật bị hết hiệu lực hoặc nằm ngoài bộ lọc.
 
-**Chỉ có một giá trị:** `Còn hiệu lực` (348,623 văn bản)
+### 6.2 Trạng thái hiệu lực (`effect_status`)
 
-> ✅ **RAG implication**: Toàn bộ corpus đều đang có hiệu lực, không cần filter thêm. Có thể an toàn trả lời các câu hỏi về quy định hiện hành.
+| Trạng thái              | Số lượng | %      |
+| ----------------------- | -------- | ------ |
+| Còn hiệu lực            | 348.623  | 98,55% |
+| Hết hiệu lực một phần   | 5.121    | 1,45%  |
+| Ngưng hiệu lực một phần | 2        | <0,01% |
 
-### 6.3 Phân bố theo năm (top 20)
+- **Không còn** văn bản "Hết hiệu lực", "Ngưng hiệu lực" hay "Chưa có hiệu lực" – đã bị lọc.
+- Vẫn giữ lại một lượng nhỏ văn bản "một phần" (có thể do chúng vẫn còn giá trị tham khảo cho một số điều khoản).
 
-| Năm  | Số văn bản |
-| ---- | ---------- |
-| 2026 | 2,987      |
-| 2025 | 30,462     |
-| 2024 | 25,035     |
-| 2023 | 21,806     |
-| 2022 | 18,253     |
-| 2021 | 19,097     |
-| 2020 | 17,580     |
-| 2019 | 15,304     |
-| 2018 | 15,077     |
-| 2017 | 17,157     |
-| 2016 | 17,279     |
-| 2015 | 14,109     |
-| 2014 | 16,346     |
-| 2013 | 15,986     |
-| 2012 | 12,513     |
-| 2011 | 10,386     |
-| 2010 | 10,244     |
-| 2009 | 9,488      |
-| 2008 | 10,148     |
-| 2007 | 8,374      |
+> **Khuyến nghị**: Với mục đích trả lời pháp luật hiện hành, nên ưu tiên lọc `effect_status == 'Còn hiệu lực'` (348k văn bản). Nếu muốn chính xác tuyệt đối, có thể lọc thêm bỏ "Hết hiệu lực một phần".
 
-> **Nhận xét**: Lượng văn bản còn hiệu lực cao nhất rơi vào các năm 2021–2026, phản ánh sự cập nhật liên tục. Các văn bản từ năm 2000 trở về trước vẫn còn hiệu lực nhưng với số lượng ít hơn.
+### 6.3 Phân bố theo năm ban hành (top 20)
 
-### 6.4 Cơ quan ban hành hàng đầu (`issuing_authority`)
+| Năm  | Số lượng |
+| ---- | -------- |
+| 2026 | 2.988    |
+| 2025 | 30.672   |
+| 2024 | 25.394   |
+| 2023 | 22.111   |
+| 2022 | 18.623   |
+| 2021 | 17.705   |
+| 2020 | 16.326   |
+| 2019 | 15.778   |
+| 2018 | 14.921   |
+| 2017 | 13.648   |
+| 2016 | 13.334   |
+| 2015 | 12.715   |
+| 2014 | 11.423   |
+| 2013 | 11.279   |
+| 2012 | 10.941   |
+| 2011 | 10.547   |
+| 2010 | 10.365   |
+| 2009 | 9.607    |
+| 2008 | 10.258   |
+| 2007 | 8.480    |
 
-| Cơ quan                 | Số văn bản |
-| ----------------------- | ---------- |
-| Tổng cục Thuế           | 22,634     |
-| Tổng cục Hải quan       | 19,983     |
-| Thủ tướng Chính phủ     | 15,108     |
-| Văn phòng Chính phủ     | 12,301     |
-| Bộ Tài chính            | 11,620     |
-| Bộ Xây dựng             | 8,334      |
-| Bộ Nông nghiệp và PTNT  | 6,444      |
-| Thành phố Hà Nội        | 5,567      |
-| Cục thuế TP Hà Nội      | 5,367      |
-| Cục Thuế TP Hồ Chí Minh | 5,160      |
-| Bộ Y tế                 | 4,960      |
-| Chính phủ               | 4,493      |
+- Tập trung mạnh vào **2015–2025** (chiếm ~70% dữ liệu)
+- Văn bản từ trước 2000 vẫn còn khoảng 4.000 văn bản (chủ yếu là các nghị quyết, quyết định còn hiệu lực dài hạn)
 
-### 6.5 Lĩnh vực pháp lý (`legal_sectors`)
+### 6.4 Cơ quan ban hành hàng đầu
 
-- **Tỷ lệ non-null**: 97.6% (340,274/348,623)
-- **Số lượng tag unique** (sau khi tách chuỗi): **1,508**
-- **Top tag xuất hiện nhiều nhất**:
+| Cơ quan               | Số lượng |
+| --------------------- | -------- |
+| Tổng cục Thuế         | 22.634   |
+| Tổng cục Hải quan     | 19.985   |
+| Thủ tướng Chính phủ   | 15.184   |
+| Văn phòng Chính phủ   | 12.305   |
+| Bộ Tài chính          | 11.894   |
+| Bộ Xây dựng           | 6.614    |
+| Bộ Nông nghiệp & PTNT | 6.427    |
+| Bộ Y tế               | 5.434    |
+| Bộ Công thương        | 3.399    |
+| Thành phố Hồ Chí Minh | 3.828    |
 
-| Tag                | Số lần xuất hiện |
-| ------------------ | ---------------- |
-| Bộ máy hành chính  | 92,401           |
-| phí                | 51,225           |
-| lệ phí             | 50,572           |
-| Thuế               | 50,572           |
-| Xuất nhập khẩu     | 29,752           |
-| Tài chính nhà nước | 27,444           |
-| Văn hóa - xã hội   | 26,943           |
-| Xây dựng - đô thị  | 23,972           |
-| Thương mại         | 20,394           |
-| Thể thao - y tế    | 20,330           |
+### 6.5 Lĩnh vực pháp lý (`legal_sectors`) – tách multi-value
 
-> **Lưu ý**: Tag `phí`, `lệ phí`, `Thuế` xuất phát từ việc tách chuỗi `"Thuế - lệ phí"`. Có thể gộp lại thành `Thuế - lệ phí` để tránh trùng lặp.
+Sau khi tách chuỗi phân cách bằng `, `, có **1.583 lĩnh vực duy nhất**. Top 10:
 
----
-
-## 7. Đồ thị quan hệ (Relationships)
-
-### 7.1 Thống kê tổng quan
-
-| Thông số                    | Giá trị |
-| --------------------------- | ------- |
-| Tổng số cạnh                | 61,700  |
-| Số node duy nhất (`doc_id`) | 29,276  |
-| Số node trong graph         | 29,276  |
-| Tất cả node đều có metadata | ✅ Có   |
-| Out-degree trung bình       | 2.36    |
-| Out-degree trung vị         | 2       |
-| Out-degree lớn nhất         | 71      |
-
-### 7.2 Phân bố loại quan hệ
-
-| Loại quan hệ                                 | Số cạnh | %     |
-| -------------------------------------------- | ------- | ----- |
-| **Văn bản căn cứ**                           | 47,676  | 77.3% |
-| Văn bản dẫn chiếu                            | 7,473   | 12.1% |
-| Văn bản được HD, QĐ chi tiết                 | 2,424   | 3.9%  |
-| Văn bản HD, QĐ chi tiết                      | 2,422   | 3.9%  |
-| Văn bản bổ sung / được bổ sung               | 1,181   | 1.9%  |
-| Văn bản hết hiệu lực / quy định hết hiệu lực | 396     | 0.6%  |
-| Các loại khác                                | ~128    | 0.2%  |
-
-> **LightRAG implication**: Quan hệ `Văn bản căn cứ` chiếm ưu thế tuyệt đối → có thể xây dựng **dependency graph** mạnh mẽ. Các quan hệ sửa đổi/hết hiệu lực tuy ít nhưng rất quan trọng cho version tracking.
-
-### 7.3 Các văn bản có nhiều quan hệ nhất
-
-| `doc_id` | Số quan hệ |
-| -------- | ---------- |
-| 38522    | 71         |
-| 268473   | 59         |
-| 96988    | 52         |
-| 13988    | 40         |
-| 45434    | 36         |
-| 141479   | 36         |
+| Lĩnh vực              | Số lần xuất hiện |
+| --------------------- | ---------------- |
+| Bộ máy hành chính     | 92.673           |
+| Thuế                  | 50.667           |
+| Lệ phí                | 50.667           |
+| Phí                   | 51.413           |
+| Xuất nhập khẩu        | 29.783           |
+| Tài chính nhà nước    | 24.540           |
+| Xây dựng – đô thị     | 19.318           |
+| Thương mại            | 18.964           |
+| Đầu tư                | 15.446           |
+| Lao động – tiền lương | 12.765           |
 
 ---
 
-## 8. Khuyến nghị cho Hybrid RAG Pipeline
+## 7. Đồ thị quan hệ (`relationships`)
+
+| Chỉ số                            | Giá trị              |
+| --------------------------------- | -------------------- |
+| Tổng số cạnh                      | 138.656              |
+| Số node nguồn duy nhất (`doc_id`) | 38.183               |
+| Tổng số node (src + dst)          | 40.604               |
+| Tất cả node đều có metadata       | ✅ Đúng              |
+| Bậc trung bình (out-degree)       | 3,63                 |
+| Bậc trung vị                      | 2                    |
+| Bậc lớn nhất                      | 201 (doc_id = 12979) |
+
+### Phân bố loại quan hệ
+
+| Loại quan hệ                   | Số lượng | %      |
+| ------------------------------ | -------- | ------ |
+| Văn bản căn cứ                 | 98.479   | 71,03% |
+| Văn bản dẫn chiếu              | 12.266   | 8,85%  |
+| Văn bản được HD, QĐ chi tiết   | 5.493    | 3,96%  |
+| Văn bản HD, QĐ chi tiết        | 5.475    | 3,95%  |
+| Văn bản bổ sung                | 4.270    | 3,08%  |
+| Văn bản sửa đổi / được sửa đổi | ~1.788   | 1,29%  |
+| Văn bản bãi bỏ / được bãi bỏ   | ~736     | 0,53%  |
+| Văn bản quy định hết hiệu lực  | 192      | 0,14%  |
+| Văn bản hết hiệu lực           | 184      | 0,13%  |
+| Khác (liên quan, đình chỉ, …)  | ~10.000  | 7,2%   |
+
+> **Quan trọng**: Loại "Văn bản căn cứ" chiếm 71% – phản ánh mạnh mẽ mạng lưới phụ thuộc pháp lý. Rất giá trị cho graph traversal trong LightRAG.
+
+---
+
+## 8. Đề xuất cho Hybrid RAG Pipeline (cập nhật)
 
 ### 8.1 Tiền xử lý (đã hoàn thành)
 
 ```python
-# Đã thực hiện:
-content = content.unique(subset=["id"])
+# Các bước đã thực hiện
+content = content.unique(subset=["id"])   # loại duplicate
 metadata = metadata.drop("thong_tin_ap_dung")
-metadata = metadata.filter(pl.col("effect_status") == "Còn hiệu lực")
-# Đồng bộ relationships
+metadata = metadata[~metadata["effect_status"].isin(INACTIVE_STATUSES)]
+# Đồng bộ content & relationships với active_ids
 ```
 
-```
+**Lưu ý**: Vẫn còn 5.123 văn bản có `effect_status` là "Hết hiệu lực một phần"/"Ngưng hiệu lực một phần". Tuỳ theo yêu cầu nghiệp vụ, có thể lọc tiếp hoặc gắn nhãn trong metadata.
 
 ### 8.2 Chiến lược chunking
 
-| Độ dài văn bản | Chiến lược                                         |
-| -------------- | -------------------------------------------------- |
-| < 2K ký tự     | Không chunk, dùng nguyên document                  |
-| 2K – 20K       | Chunk 512–1024 tokens, overlap 128 tokens          |
-| 20K – 100K     | Recursive chunking theo điều/khoản                 |
-| > 100K         | Hierarchical chunking (section → article → clause) |
+| Độ dài văn bản | Chiến lược                                     |
+| -------------- | ---------------------------------------------- |
+| < 2.000 ký tự  | Giữ nguyên document (không chunk)              |
+| 2K – 20K       | Chunk 512–1024 token, overlap 128 token        |
+| 20K – 100K     | Recursive chunking theo cấu trúc (Điều, Khoản) |
+| > 100K         | Hierarchical chunking (Chương → Điều → Khoản)  |
 
-### 8.3 Các trường metadata hữu ích cho filtering/retrieval
+### 8.3 Các trường metadata nên index cho filtering
 
-- `legal_type` – lọc theo loại văn bản
-- `issuing_authority` – lọc theo cơ quan ban hành
-- `issuance_date` – lọc theo khoảng thời gian
-- `legal_sectors` (cần split `", "`) – lọc theo lĩnh vực
+- `legal_type` – filter theo loại văn bản
+- `issuing_authority` – filter theo cơ quan
+- `issuance_date` – range filter theo thời gian
+- `effect_status` – lọc văn bản còn hiệu lực (hoặc loại bỏ "một phần")
+- `legal_sectors` – filter theo lĩnh vực (cần split multi-value)
+- `source` – nếu muốn ưu tiên nguồn `data` hoặc `legacy+data`
 
-### 8.4 Tích hợp LightRAG với đồ thị quan hệ
+### 8.4 Tích hợp LightRAG với đồ thị đã làm sạch
 
-- Dùng `relationships_clean.parquet` làm edge list
-- Node attributes lấy từ `metadata_clean` (title, legal_type, issuance_date)
-- Loại `Văn bản căn cứ` là primary edge cho graph traversal
-- Các loại `Văn bản hết hiệu lực`, `Văn bản sửa đổi` (dù số lượng ít) nên được bảo toàn để hỗ trợ truy vấn lịch sử phiên bản.
+- Dùng `relationships` trực tiếp làm edge list (138.656 cạnh)
+- Gán node attributes từ `metadata` (title, legal_type, effect_status, issuance_date)
+- Ưu tiên sử dụng cạnh **"Văn bản căn cứ"** làm primary edge cho graph traversal
+- Các cạnh "Văn bản hết hiệu lực" / "Văn bản sửa đổi" tuy số lượng nhỏ nhưng rất quan trọng để **chain versioning** của văn bản (ví dụ: tìm văn bản mới nhất thay thế)
 
 ---
 
-**Báo cáo được sinh từ:**
-`content_clean.parquet`, `metadata_clean.parquet`, `relationships_clean.parquet`
-**Ngày tạo:** 2026-05-31
-```
+## 9. Kết luận
+
+Dữ liệu sau preprocess đạt chất lượng tốt:
+
+- **Toàn vẹn ID**, không trùng lặp
+- **Tập trung vào văn bản còn hiệu lực** (>98%)
+- **Đồ thị quan hệ** thu nhỏ nhưng vẫn giữ được cấu trúc căn cứ pháp lý quan trọng
+- **Phân bố độ dài** phù hợp với chunking tiêu chuẩn
+
+Hệ thống Hybrid RAG có thể xây dựng trực tiếp trên 353.746 văn bản, với metadata phong phú và đồ thị quan hệ có hướng sẵn sàng cho LightRAG.
+
+---
+
+_Báo cáo được tạo từ kết quả preprocess thực tế – dữ liệu sạch, sẵn sàng cho pipeline._
