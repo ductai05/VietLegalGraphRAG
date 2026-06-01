@@ -66,7 +66,9 @@ _ROMAN = r"(?:XIV|XIII|XII|XIX|XVIII|XVII|XVI|XV|XI|IX|VIII|VII|VI|IV|III|II|XX|
 RE_ROMAN_SECTION_INLINE = re.compile(rf"^\s*({_ROMAN})\s+[A-ZÀ-Ỵ]")
 RE_ROMAN_SECTION_STANDALONE = re.compile(rf"^\s*({_ROMAN})\s*$")
 
-RE_FOOTER = re.compile(r"(?im)^\s*(Nơi nhận\s*[:\-].*)$", re.DOTALL)
+RE_FOOTER = re.compile(
+    r"(?is)(?:^|\s)(Nơi\s+nhận\s*[:\-].*)$",
+)
 
 # Embedded sub-document headers (e.g. attached regulations/bylaws inside a Nghị quyết).
 # Treated as "part"-level heading so subsequent Điều numbers get a disambiguated section_path.
@@ -95,6 +97,35 @@ RE_INLINE_ARTICLE_AFTER_PAREN = re.compile(
 RE_INLINE_ARTICLE_AFTER_COLON = re.compile(
     r"(?<=[:\：])\s+(Điều\s+\d+[a-zA-Z]?)\s*([\.\:])\s*",
     re.IGNORECASE,
+)
+# OCR một dòng: "...đính kèm. Điều 2. Sở Nông nghiệp..."
+RE_INLINE_ARTICLE_AFTER_PERIOD = re.compile(
+    r"(?<=\.)\s+(Điều\s+\d+[a-zA-Z]?)\s*([\.\:])\s*",
+    re.IGNORECASE,
+)
+
+RE_ANNEX_BLOCK_START = re.compile(
+    r"\b(DANH\s+MỤC|PHỤ\s+LỤC)\b",
+    re.IGNORECASE,
+)
+
+# Footer trên cùng dòng với thân văn bản (không có xuống dòng trước "Nơi nhận")
+RE_FOOTER_INLINE = re.compile(
+    r"(?<=[./])\s+(Nơi\s+nhận\s*[:\-])",
+    re.IGNORECASE,
+)
+
+# Bắt đầu lưới bảng pipe OCR: "| 1 |", "| A | Lĩnh vực", ...
+RE_PIPE_GRID_ROW = re.compile(
+    r"\s+\|\s+(?:\d{1,4}|[IVXLCDM]{1,6}|[A-ZÀ-Ỵ])\s+\|",
+    re.IGNORECASE,
+)
+
+# Khoản Arabic đầu dòng / inline (Chỉ thị, Nghị quyết không có Điều: 1. … 2. … 3. …)
+RE_NUMBERED_CLAUSE_HEADING = re.compile(r"^\s*(\d{1,2})\.\s+(.{3,})$")
+RE_NUMBERED_CLAUSE_BODY_START = re.compile(r"^[A-ZÀ-ỴĐ]")
+RE_INLINE_NUMBERED_CLAUSE = re.compile(
+    r"(?<=[.;:\)）])\s+(\d{1,2})\.\s+(?=[A-ZÀ-ỴĐ])",
 )
 
 
@@ -130,6 +161,10 @@ _SENTENCE_SPLIT_PROTECTED: Dict[str, str] = {
 # [A-ZÀ-Ỵ] bao gồm ASCII uppercase + toàn bộ uppercase có dấu tiếng Việt (Đ, Ă, Ơ, …).
 _RE_AUTO_ABBREV = re.compile(r"([A-ZÀ-Ỵ]{2,})\.")
 _AUTO_ABBREV_PH = "<adot>"   # placeholder khác với <dot> để tránh collision khi restore
+
+# Khoản đánh số 1. 2. 3. — không cắt tại dấu chấm khi split câu (Chỉ thị, Nghị quyết, …).
+_CLAUSE_NUMBER_PH = "<cdot>"
+_RE_CLAUSE_NUMBER = re.compile(r"(\b\d{1,2})\.\s+(?=[A-ZÀ-ỴĐ])")
 
 # --------------- Chữ ký cuối văn bản ---------------
 # Thêm chức danh mới tại đây mà không cần sửa _extract_footer.
@@ -211,18 +246,72 @@ class LegalTextNormalizer:
         text = re.sub(r"\s*\|\s*", " | ", text)
         text = re.sub(r"[ \t]{2,}", " ", text)
 
+        text = LegalTextNormalizer._explode_mixed_prose_and_tables(text)
         text = LegalTextNormalizer._explode_flattened_pipe_tables(text)
         text = LegalTextNormalizer._explode_inline_articles(text)
+        text = LegalTextNormalizer._explode_inline_numbered_clauses(text)
 
         return text.strip()
+
+    @staticmethod
+    def _explode_mixed_prose_and_tables(text: str) -> str:
+        """Tách phụ lục/danh mục, footer và lưới bảng khỏi thân văn bản trên cùng một dòng OCR."""
+        text = RE_FOOTER_INLINE.sub(r"\n\1", text)
+
+        def split_annex(m: re.Match) -> str:
+            return "\n" + m.group(0)
+
+        text = re.sub(
+            r"(?<=[)])\s+(?=(?:DANH\s+MỤC|PHỤ\s+LỤC)\b)",
+            split_annex,
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"(?<=\.)\s+(?=(?:DANH\s+MỤC|PHỤ\s+LỤC)\b)",
+            split_annex,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        new_lines: List[str] = []
+        for line in text.split("\n"):
+            if (
+                len(line) > 400
+                and line.count("|") >= 3
+                and _line_has_legal_prose_markers(line)
+            ):
+                grid = RE_PIPE_GRID_ROW.search(line)
+                annex = RE_ANNEX_BLOCK_START.search(line)
+                split_at = None
+                if annex and annex.start() > 80:
+                    split_at = annex.start()
+                elif grid and grid.start() > 80:
+                    split_at = grid.start()
+                if split_at is not None:
+                    head = line[:split_at].strip()
+                    tail = line[split_at:].strip()
+                    if head:
+                        new_lines.append(head)
+                    if tail:
+                        new_lines.append(tail)
+                    continue
+            new_lines.append(line)
+        return "\n".join(new_lines)
 
     @staticmethod
     def _explode_inline_articles(text: str) -> str:
         """Tách Điều nằm giữa đoạn (sau dấu chấm / xuống dòng / dấu hai chấm) thành dòng heading riêng."""
         text = RE_INLINE_ARTICLE_AFTER_COLON.sub(r"\n\1\2 ", text)
+        text = RE_INLINE_ARTICLE_AFTER_PERIOD.sub(r"\n\1\2 ", text)
         text = RE_INLINE_ARTICLE_AFTER_NEWLINE.sub(r"\n\1\2 ", text)
         text = RE_INLINE_ARTICLE_AFTER_PAREN.sub(r"\n\1\2 ", text)
         return text
+
+    @staticmethod
+    def _explode_inline_numbered_clauses(text: str) -> str:
+        """Tách khoản 1. 2. 3. nằm giữa đoạn (OCR một dòng) thành dòng riêng."""
+        return RE_INLINE_NUMBERED_CLAUSE.sub(r"\n\1. ", text)
 
     @staticmethod
     def _explode_flattened_pipe_tables(text: str) -> str:
@@ -303,20 +392,78 @@ def truncate(value: Optional[str], max_len: int) -> Optional[str]:
     return value[:max_len - 3] + "..."
 
 
+def _pipe_line_stats(line: str) -> Tuple[int, float, int]:
+    """(pipe_count, avg_segment_len, max_segment_len)"""
+    segments = [seg.strip() for seg in line.split("|") if seg.strip()]
+    if not segments:
+        return line.count("|"), float(len(line)), len(line)
+    lengths = [len(seg) for seg in segments]
+    return line.count("|"), sum(lengths) / len(lengths), max(lengths)
+
+
+def _line_has_legal_prose_markers(line: str) -> bool:
+    """Đánh dấu thân văn bản — không khớp 'Quyết định' trong tên thủ tục bảng."""
+    if re.search(r"\b(Điều\s+\d+[a-zA-Z]?|Căn\s+cứ)\b", line, re.IGNORECASE):
+        return True
+    return bool(
+        re.search(
+            r"(?:^|[.;:]\s*)"
+            r"(QUYẾT\s*ĐỊNH|CHỈ\s*THỊ|NGHỊ\s*QUYẾT|THÔNG\s*TƯ|CÔNG\s*VĂN)\b",
+            line,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_pipe_grid_row(line: str) -> bool:
+    """Hàng lưới OCR: | STT | nội dung | ..."""
+    s = line.strip()
+    if s.count("|") < 2:
+        return False
+    return bool(
+        re.match(
+            r"^\|?\s*(?:\d{1,4}|[IVXLCDM]{1,6}|[A-ZÀ-Ỵ])\s+\|",
+            s,
+            re.IGNORECASE,
+        )
+    )
+
+
 def is_probably_table_line(line: str) -> bool:
     s = line.strip()
     if not s:
         return False
-    if s.count("|") >= 2:
-        # Guard: long lines with few pipes are inline separators (e.g. letterhead
-        # "BỘ XÂY DỰNG | CƠ QUAN | Hà Nội"), not table rows.
-        avg_segment_len = len(s) / (s.count("|") + 1)
-        if avg_segment_len > 200:
-            return False
+
+    if re.search(r"\bSỐ\s*TT\b", s, re.IGNORECASE) and re.search(
+        r"\bTHỦ\s*TỤC\b", s, re.IGNORECASE
+    ):
         return True
-    if re.search(r"\bSỐ\s*TT\b", s, re.IGNORECASE) and re.search(r"\bTHỦ\s*TỤC\b", s, re.IGNORECASE):
+
+    if _is_pipe_grid_row(s):
         return True
-    return False
+
+    pipe_count, avg_segment_len, max_segment_len = _pipe_line_stats(s)
+    if pipe_count < 2:
+        return False
+
+    # Letterhead / chữ ký: ít cột pipe, có đoạn prose dài — không phải hàng bảng.
+    if pipe_count <= 8 and max_segment_len > 150:
+        return False
+
+    # Thân văn bản (Điều, căn cứ, …) lẫn vài pipe letterhead — giữ prose.
+    if _line_has_legal_prose_markers(s) and pipe_count <= 10 and max_segment_len > 80:
+        return False
+
+    # Lưới bảng OCR: nhiều pipe hoặc ô ngắn đều nhau.
+    if pipe_count >= 6 and avg_segment_len <= 120:
+        return True
+    if pipe_count >= 10:
+        return True
+
+    if avg_segment_len > 200:
+        return False
+
+    return pipe_count >= 2 and avg_segment_len <= 200
 
 
 def split_sentences_vi(text: str) -> List[str]:
@@ -327,6 +474,8 @@ def split_sentences_vi(text: str) -> List[str]:
     # Bước 2: bảo vệ tự động mọi chuỗi ALLCAPS ≥2 ký tự trước dấu chấm
     # (UBND., TW., CP., NĐ., HĐND., VKSND., … — không cần liệt kê từng cái).
     s = _RE_AUTO_ABBREV.sub(r"\1" + _AUTO_ABBREV_PH, s)
+    # Bước 3: bảo vệ khoản đánh số (1. Chủ tịch …) — tránh cắt sau "1."
+    s = _RE_CLAUSE_NUMBER.sub(r"\1" + _CLAUSE_NUMBER_PH + " ", s)
 
     parts = re.split(r"(?<=[.!?;:])\s+(?=[A-ZÀ-Ỵ0-9Đ])", s)
     out = []
@@ -336,6 +485,8 @@ def split_sentences_vi(text: str) -> List[str]:
             p = p.replace(v, k)
         # Khôi phục bước 2
         p = p.replace(_AUTO_ABBREV_PH, ".")
+        # Khôi phục bước 3
+        p = p.replace(_CLAUSE_NUMBER_PH, ".")
         p = p.strip()
         if p:
             out.append(p)
@@ -471,6 +622,17 @@ class VietnameseLegalChunker:
         body = text[:m.start()].strip()
         footer = m.group(1).strip()
 
+        # OCR: phụ lục/danh mục đính kèm sau khối chữ ký trong cùng "footer"
+        annex_m = RE_ANNEX_BLOCK_START.search(footer)
+        if annex_m and annex_m.start() > 0:
+            body = f"{body}\n\n{footer[annex_m.start():].strip()}".strip()
+            footer = footer[:annex_m.start()].strip()
+        else:
+            grid_m = RE_PIPE_GRID_ROW.search(footer)
+            if grid_m and grid_m.start() > 20:
+                body = f"{body}\n\n{footer[grid_m.start():].strip()}".strip()
+                footer = footer[:grid_m.start()].strip()
+
         blocks = []
 
         sig_pos = None
@@ -553,6 +715,21 @@ class VietnameseLegalChunker:
                 current_lines.append("")
                 continue
 
+            annex_split = self._split_annex_heading_line(line)
+            if annex_split:
+                annex_heading, remainder = annex_split
+                if in_table:
+                    flush_table()
+                flush_current()
+                current_type, current_level = self._apply_heading_to_state(
+                    annex_heading, state
+                )
+                current_path = current_section_path()
+                if remainder:
+                    line = remainder
+                else:
+                    continue
+
             if is_probably_table_line(line):
                 if not in_table:
                     flush_current()
@@ -564,56 +741,16 @@ class VietnameseLegalChunker:
             if in_table:
                 flush_table()
 
-            heading = self._parse_heading(line)
+            in_dieu = bool(
+                state.get("article")
+                and str(state["article"]["id"]).lower().startswith("điều")
+            )
+            heading = self._parse_heading(line, in_article=in_dieu)
             if heading:
                 flush_current()
-
-                h_type = heading["type"]
-                h_id = heading["id"]
-                h_title = heading["title"]
-
-                if h_type == "appendix":
-                    state.update({
-                        "appendix": {"id": h_id, "title": h_title},
-                        "part": None,
-                        "chapter": None,
-                        "section": None,
-                        "article": None,
-                        "major_field": None,
-                        "sub_field": None,
-                    })
-                    current_type, current_level = "appendix", "appendix"
-
-                elif h_type == "part":
-                    state.update({
-                        "part": {"id": h_id, "title": h_title},
-                        "chapter": None,
-                        "section": None,
-                        "article": None,
-                    })
-                    current_type, current_level = "part", "part"
-
-                elif h_type == "chapter":
-                    state.update({
-                        "chapter": {"id": h_id, "title": h_title},
-                        "section": None,
-                        "article": None,
-                    })
-                    current_type, current_level = "chapter", "chapter"
-
-                elif h_type == "section":
-                    state.update({
-                        "section": {"id": h_id, "title": h_title},
-                        "article": None,
-                    })
-                    current_type, current_level = "section", "section"
-
-                elif h_type == "article":
-                    state.update({
-                        "article": {"id": h_id, "title": h_title},
-                    })
-                    current_type, current_level = "article", "article"
-
+                current_type, current_level = self._apply_heading_to_state(
+                    heading, state
+                )
                 current_path = current_section_path()
                 current_lines.append(line)
                 continue
@@ -673,7 +810,94 @@ class VietnameseLegalChunker:
             i += 1
         return out
 
-    def _parse_heading(self, line: str) -> Optional[Dict[str, str]]:
+    def _split_annex_heading_line(
+        self, line: str
+    ) -> Optional[Tuple[Dict[str, str], str]]:
+        """Tách tiêu đề Phụ lục/Danh mục khỏi phần bảng pipe còn lại trên cùng dòng."""
+        m = re.match(
+            r"^\s*(Phụ\s+lục|PHỤ\s+LỤC)\s*[:\-]?\s*(.*)$",
+            line,
+            re.IGNORECASE,
+        )
+        if m:
+            rest = m.group(2).strip()
+            return {
+                "type": "appendix",
+                "id": "Phụ lục",
+                "title": truncate(rest or line, self.config.max_section_title_chars),
+            }, rest
+
+        m = re.match(
+            r"^\s*(DANH\s+MỤC)\b\s*(.*)$",
+            line,
+            re.IGNORECASE,
+        )
+        if m:
+            rest = m.group(2).strip()
+            return {
+                "type": "part",
+                "id": "DANH MỤC",
+                "title": truncate(rest or line, self.config.max_section_title_chars),
+            }, rest
+
+        return None
+
+    def _apply_heading_to_state(
+        self,
+        heading: Dict[str, str],
+        state: Dict[str, Any],
+    ) -> Tuple[str, str]:
+        h_type = heading["type"]
+        h_id = heading["id"]
+        h_title = heading["title"]
+
+        if h_type == "appendix":
+            state.update({
+                "appendix": {"id": h_id, "title": h_title},
+                "part": None,
+                "chapter": None,
+                "section": None,
+                "article": None,
+                "major_field": None,
+                "sub_field": None,
+            })
+            return "appendix", "appendix"
+
+        if h_type == "part":
+            state.update({
+                "part": {"id": h_id, "title": h_title},
+                "chapter": None,
+                "section": None,
+                "article": None,
+                "major_field": None,
+                "sub_field": None,
+            })
+            return "part", "part"
+
+        if h_type == "chapter":
+            state.update({
+                "chapter": {"id": h_id, "title": h_title},
+                "section": None,
+                "article": None,
+            })
+            return "chapter", "chapter"
+
+        if h_type == "section":
+            state.update({
+                "section": {"id": h_id, "title": h_title},
+                "article": None,
+            })
+            return "section", "section"
+
+        if h_type == "article":
+            state.update({
+                "article": {"id": h_id, "title": h_title},
+            })
+            return "article", "article"
+
+        return "preamble", "document"
+
+    def _parse_heading(self, line: str, in_article: bool = False) -> Optional[Dict[str, str]]:
         for typ, pat, label in [
             ("appendix", RE_APPENDIX, "Phụ lục"),
             ("part", RE_PART, "Phần"),
@@ -699,6 +923,20 @@ class VietnameseLegalChunker:
                 "title": None,
             }
 
+        m = re.match(
+            r"^\s*(DANH\s+MỤC|PHỤ\s+LỤC)\b\s*(.*)$",
+            line,
+            re.IGNORECASE,
+        )
+        if m:
+            block_name = re.sub(r"\s+", " ", m.group(1)).strip().upper()
+            title = (m.group(2) or "").strip() or None
+            return {
+                "type": "part",
+                "id": block_name,
+                "title": truncate(title, self.config.max_section_title_chars),
+            }
+
         m = RE_ARTICLE.match(line)
         if m:
             number = m.group(2)
@@ -708,6 +946,16 @@ class VietnameseLegalChunker:
                 "id": f"Điều {number}",
                 "title": truncate(title, self.config.max_section_title_chars),
             }
+
+        # Khoản 1. 2. 3. cấp văn bản (Chỉ thị, Nghị quyết không có Điều) — không nhầm khoản trong Điều.
+        if not in_article:
+            m = RE_NUMBERED_CLAUSE_HEADING.match(line)
+            if m and RE_NUMBERED_CLAUSE_BODY_START.match(m.group(2).strip()):
+                return {
+                    "type": "article",
+                    "id": f"Khoản {m.group(1)}",
+                    "title": truncate(m.group(2).strip(), self.config.max_section_title_chars),
+                }
 
         return None
 
@@ -944,16 +1192,24 @@ class VietnameseLegalChunker:
 
     def _looks_like_procedure_table(self, text: str) -> bool:
         lower = text.lower()
-        if any(kw in lower for kw in _TTHC_DETECT_KEYWORDS):
-            return True
+        if not any(kw in lower for kw in _TTHC_DETECT_KEYWORDS):
+            return False
 
         rows = self._parse_pipe_rows(text)
+        if not rows:
+            return True
+
+        for row in rows[:8]:
+            joined = " ".join(row).lower()
+            if any(kw in joined for kw in _TTHC_HEADER_KEYWORDS):
+                return True
+
         numeric_rows = 0
         for cells in rows:
             cells2 = [c for c in cells if c.strip()]
             if len(cells2) >= 2 and re.match(r"^\d{1,4}$", cells2[0].strip()):
                 numeric_rows += 1
-        return numeric_rows >= 3
+        return numeric_rows >= 3 and "thủ tục" in lower
 
     def _parse_pipe_rows(self, table_text: str) -> List[List[str]]:
         rows = []
@@ -1454,8 +1710,13 @@ class VietnameseLegalChunker:
 
     @staticmethod
     def _chunk_type_for_split(block_type: str) -> str:
-        """Prose split của block không phải Điều → fallback_text (CHUNKING_STRATEGY §8)."""
-        if block_type in {"article", "clause_group"}:
+        """Giữ chunk_type gốc khi prose-split; chỉ block không có vai trò rõ → fallback_text."""
+        _preserve = {
+            "preamble", "legal_basis", "article", "clause_group",
+            "appendix", "appendix_group", "appendix_subgroup",
+            "part", "chapter", "section",
+        }
+        if block_type in _preserve:
             return block_type
         return "fallback_text"
 
