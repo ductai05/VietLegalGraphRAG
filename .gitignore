@@ -6,6 +6,7 @@
 .env
 .venv
 venv
+Learning.md
 
 # Data - ignore content, keep folder structure
 /data/*

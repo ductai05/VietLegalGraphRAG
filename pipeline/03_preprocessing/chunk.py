@@ -25,7 +25,6 @@ class ChunkingConfig:
     max_section_title_chars: int = 180
 
     parse_procedure_tables: bool = True
-    emit_parent_chunks: bool = False
 
 
 CONFIG = ChunkingConfig()
@@ -37,28 +36,6 @@ CONFIG = ChunkingConfig()
 
 RE_WHITESPACE = re.compile(r"[ \t]+")
 RE_MULTI_NEWLINE = re.compile(r"\n{3,}")
-
-RE_DOC_NUMBER = re.compile(
-    r"(?im)\b(?:Số|Số hiệu|Quyết định số|Nghị định số|Thông tư số|Nghị quyết số|Công văn số)"
-    r"\s*[:\-]?\s*([0-9]{1,4}(?:/[0-9]{4})?/[A-ZĐ0-9\-.]+|[0-9]{1,6}/[A-ZĐ0-9\-.]+|[0-9]{1,6})"
-)
-
-RE_DATE_VN = re.compile(
-    r"(?i)\bngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})\b"
-)
-
-RE_DOC_TYPE = re.compile(
-    r"(?im)^\s*(QUYẾT ĐỊNH|NGHỊ ĐỊNH|THÔNG TƯ|NGHỊ QUYẾT|CÔNG VĂN|CHỈ THỊ|LUẬT|BỘ LUẬT|KẾ HOẠCH|QUY CHẾ|THÔNG BÁO)\b"
-)
-
-RE_TITLE_HINT = re.compile(r"(?im)\b(?:V/v|Về việc|Về)\s*[:\-]?\s*(.+)$")
-
-RE_AGENCY_LINE = re.compile(
-    r"(?im)^\s*((?:ỦY BAN NHÂN DÂN|HỘI ĐỒNG NHÂN DÂN|CHÍNH PHỦ|THỦ TƯỚNG CHÍNH PHỦ|"
-    r"BỘ\s+[A-ZÀ-Ỵ\s]+|TỔNG CỤC\s+[A-ZÀ-Ỵ\s]+|CỤC\s+[A-ZÀ-Ỵ\s]+|"
-    r"SỞ\s+[A-ZÀ-Ỵ\s]+|TÒA ÁN NHÂN DÂN|VIỆN KIỂM SÁT NHÂN DÂN)"
-    r"(?:\s+[A-ZÀ-Ỵ\s]+)?)\s*$"
-)
 
 RE_APPENDIX = re.compile(
     r"^\s*(PHỤ\s+LỤC|Phụ\s+lục)\s*([IVXLCDM]+|\d+)?(?:\s*[:.\-–]\s*(.*))?$",
@@ -81,15 +58,131 @@ RE_ARTICLE = re.compile(
     re.IGNORECASE
 )
 RE_CLAUSE = re.compile(r"^\s*(\d+)\.\s+")
-RE_POINT = re.compile(r"^\s*([a-zđ])\)\s+", re.IGNORECASE)
+
+# Roman numeral section headers inside long articles (e.g. fee-schedule tables extracted
+# without pipe separators).  Only uppercase to avoid false matches on content words.
+# Matches: "II Chi cho..." or "VIII\n..." (standalone numeral on its own line).
+_ROMAN = r"(?:XIV|XIII|XII|XIX|XVIII|XVII|XVI|XV|XI|IX|VIII|VII|VI|IV|III|II|XX|X|V)"
+RE_ROMAN_SECTION_INLINE = re.compile(rf"^\s*({_ROMAN})\s+[A-ZÀ-Ỵ]")
+RE_ROMAN_SECTION_STANDALONE = re.compile(rf"^\s*({_ROMAN})\s*$")
 
 RE_FOOTER = re.compile(r"(?im)^\s*(Nơi nhận\s*[:\-].*)$", re.DOTALL)
 
-RE_LEGAL_REFS = [
-    re.compile(r"\b(?:Luật|Bộ luật|Nghị định|Thông tư|Quyết định|Nghị quyết|Công văn|Chỉ thị)\s+(?:số\s+)?\d+(?:/\d+)?/[A-ZĐ0-9\-.]+", re.IGNORECASE),
-    re.compile(r"\b(?:Luật|Bộ luật)\s+[A-ZÀ-Ỵa-zà-ỹ\s,]+?\s+năm\s+\d{4}", re.IGNORECASE),
-    re.compile(r"\b(?:Điều|Khoản|Điểm)\s+\d+[a-zA-Z]?\b", re.IGNORECASE),
+# Embedded sub-document headers (e.g. attached regulations/bylaws inside a Nghị quyết).
+# Treated as "part"-level heading so subsequent Điều numbers get a disambiguated section_path.
+RE_REGULATION_BLOCK = re.compile(
+    r"^\s*(QUY\s*ĐỊNH|QUY\s*CHẾ|NỘI\s*QUY|ĐIỀU\s*LỆ|QUY\s*TẮC"
+    r"|BẢNG\s*GIÁ|DANH\s*MỤC|PHƯƠNG\s*ÁN|ĐỀ\s*ÁN|CHƯƠNG\s*TRÌNH)\s*$",
+    re.IGNORECASE,
+)
+
+# Khối văn bản đính kèm (QUY ĐỊNH kèm Nghị quyết, …) — dùng khi gộp header với Điều đầu.
+REGULATION_PART_IDS = frozenset({
+    "QUY ĐỊNH", "QUY CHẾ", "NỘI QUY", "ĐIỀU LỆ", "QUY TẮC",
+    "BẢNG GIÁ", "DANH MỤC", "PHƯƠNG ÁN", "ĐỀ ÁN", "CHƯƠNG TRÌNH",
+})
+
+# Điều không ở đầu dòng (OCR): "...HĐND)\n. Điều 2. Phạm vi..."
+RE_INLINE_ARTICLE_AFTER_NEWLINE = re.compile(
+    r"\n\s*\.\s*(Điều\s+\d+[a-zA-Z]?)\s*([\.\:])\s*",
+    re.IGNORECASE,
+)
+RE_INLINE_ARTICLE_AFTER_PAREN = re.compile(
+    r"(?<=[)])\s*\.\s+(Điều\s+\d+[a-zA-Z]?)\s*([\.\:])\s*",
+    re.IGNORECASE,
+)
+# OCR: "QUYẾT ĐỊNH: Điều 1. Phê duyệt..." — tiêu đề kết luận + Điều trên cùng dòng
+RE_INLINE_ARTICLE_AFTER_COLON = re.compile(
+    r"(?<=[:\：])\s+(Điều\s+\d+[a-zA-Z]?)\s*([\.\:])\s*",
+    re.IGNORECASE,
+)
+
+
+# ============================================================
+# 2b. GENERALIZABLE CONSTANTS  (mở rộng tại đây, không sửa logic)
+# ============================================================
+
+# --------------- Tách câu ---------------
+# Viết tắt hỗn hợp hoa-thường / 1 ký tự: không bị bảo vệ bởi auto-protect ALLCAPS.
+# Viết tắt ALLCAPS ≥2 ký tự (UBND, TW, CP, NĐ, QĐ, HĐND, …) được bảo vệ tự động
+# bởi _RE_AUTO_ABBREV bên dưới — không cần liệt kê ở đây.
+_SENTENCE_SPLIT_PROTECTED: Dict[str, str] = {
+    # Đơn vị hành chính 1 ký tự
+    "P.": "P<dot>",
+    "Q.": "Q<dot>",
+    "H.": "H<dot>",
+    # Học hàm / học vị hỗn hợp hoa-thường
+    "ThS.": "ThS<dot>",
+    "PGS.": "PGS<dot>",
+    "TS.": "TS<dot>",
+    "GS.": "GS<dot>",
+    "BS.": "BS<dot>",
+    "KS.": "KS<dot>",
+    "CN.": "CN<dot>",
+    "LS.": "LS<dot>",
+    # Viết tắt thông dụng hỗn hợp / nhiều dấu chấm
+    "v.v.": "vv<dot>",
+    "v.v": "vv2<dot>",
+    "Đ/c.": "Dc<dot>",
+}
+
+# Bảo vệ tự động mọi chuỗi ALLCAPS ≥2 ký tự trước dấu chấm (UBND., TW., NĐ., …).
+# [A-ZÀ-Ỵ] bao gồm ASCII uppercase + toàn bộ uppercase có dấu tiếng Việt (Đ, Ă, Ơ, …).
+_RE_AUTO_ABBREV = re.compile(r"([A-ZÀ-Ỵ]{2,})\.")
+_AUTO_ABBREV_PH = "<adot>"   # placeholder khác với <dot> để tránh collision khi restore
+
+# --------------- Chữ ký cuối văn bản ---------------
+# Thêm chức danh mới tại đây mà không cần sửa _extract_footer.
+_SIG_PATTERNS: List[str] = [
+    r"\bKT\.\s+",
+    r"\bTM\.\s+",
+    r"\bCHỦ\s+TỊCH\b",
+    r"\bPHÓ\s+CHỦ\s+TỊCH\b",
+    r"\bBỘ\s+TRƯỞNG\b",
+    r"\bTHỨ\s+TRƯỞNG\b",
+    r"\bTỔNG\s+GIÁM\s+ĐỐC\b",
+    r"\bGIÁM\s+ĐỐC\b",
+    r"\bPHÓ\s+GIÁM\s+ĐỐC\b",
+    r"\bTỔNG\s+CỤC\s+TRƯỞNG\b",
+    r"\bCỤC\s+TRƯỞNG\b",
+    r"\bVỤ\s+TRƯỞNG\b",
+    r"\bCHÁNH\s+VĂN\s+PHÒNG\b",
+    r"\bTRƯỞNG\s+BAN\b",
+    r"\bHIỆU\s+TRƯỞNG\b",
+    r"\bTRƯỞNG\s+PHÒNG\b",
+    r"\bVIỆN\s+TRƯỞNG\b",
+    r"\bCHÁNH\s+ÁN\b",
+    r"\bTHỦ\s+TRƯỞNG\b",
+    r"\bTRƯỞNG\s+CƠ\s+QUAN\b",
 ]
+
+# --------------- Bảng thủ tục hành chính (TTHC) ---------------
+# Từ khóa nhận diện bảng TTHC — thêm loại bảng mới tại đây.
+_TTHC_DETECT_KEYWORDS: frozenset = frozenset({
+    "thủ tục hành chính", "tên thủ tục", "tthc",
+})
+# Từ khóa nhận diện hàng tiêu đề bảng TTHC.
+_TTHC_HEADER_KEYWORDS: frozenset = frozenset({
+    "thủ tục", "tên thủ tục", "số tt", "số thứ tự",
+})
+# Từ khóa nhận diện hàng header/separator cần bỏ qua khi parse record.
+_TTHC_HEADER_REJECT_KEYWORDS: frozenset = frozenset({
+    "tên thủ tục", "số tt", "ghi chú", "số thứ tự",
+})
+# Pattern nhận diện cột phân nhóm lĩnh vực trong bảng (sub-field rows).
+_TABLE_SUBFIELD_PATTERNS: List[str] = [
+    r"(Lĩnh\s+vực\s*[:\-]?\s*.+)",
+    r"(Ngành\s*[:\-]?\s*.+)",
+]
+
+# --------------- Tiêu đề nhóm trong phụ lục ---------------
+# Từ khóa phân biệt dòng heading nhóm lĩnh vực (I. LĨNH VỰC TƯ PHÁP)
+# với dòng dữ liệu bình thường khi cả hai đều bắt đầu bằng Roman numeral.
+# Thêm domain keyword mới tại đây.
+_APPENDIX_HEADING_KEYWORDS: frozenset = frozenset({
+    "TTHC", "LĨNH VỰC", "NHÓM LĨNH VỰC", "THỦ TỤC HÀNH CHÍNH",
+    "NGÀNH", "PHÂN NHÓM", "LOẠI",
+})
 
 
 # ============================================================
@@ -119,8 +212,17 @@ class LegalTextNormalizer:
         text = re.sub(r"[ \t]{2,}", " ", text)
 
         text = LegalTextNormalizer._explode_flattened_pipe_tables(text)
+        text = LegalTextNormalizer._explode_inline_articles(text)
 
         return text.strip()
+
+    @staticmethod
+    def _explode_inline_articles(text: str) -> str:
+        """Tách Điều nằm giữa đoạn (sau dấu chấm / xuống dòng / dấu hai chấm) thành dòng heading riêng."""
+        text = RE_INLINE_ARTICLE_AFTER_COLON.sub(r"\n\1\2 ", text)
+        text = RE_INLINE_ARTICLE_AFTER_NEWLINE.sub(r"\n\1\2 ", text)
+        text = RE_INLINE_ARTICLE_AFTER_PAREN.sub(r"\n\1\2 ", text)
+        return text
 
     @staticmethod
     def _explode_flattened_pipe_tables(text: str) -> str:
@@ -134,7 +236,7 @@ class LegalTextNormalizer:
                     s
                 )
                 s = re.sub(
-                    r"\s+(?=(?:PHỤ\s+LỤC|I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.)\s+[A-ZÀ-Ỵ])",
+                    rf"\s+(?=(?:PHỤ\s+LỤC|{_ROMAN}\.)\s+[A-ZÀ-Ỵ])",
                     "\n",
                     s
                 )
@@ -145,135 +247,43 @@ class LegalTextNormalizer:
 
 
 # ============================================================
-# 4. METADATA EXTRACTOR
+# 4. DOCUMENT METADATA (from metadata.parquet, join by doc id)
 # ============================================================
 
-class MetadataExtractor:
-    @staticmethod
-    def extract(text: str, source: str = "unknown") -> Dict[str, Any]:
-        header = "\n".join(text.split("\n")[:40])
+METADATA_PREFIX_FIELDS = (
+    "title",
+    "legal_type",
+    "document_number",
+    "issuing_authority",
+    "issuance_date",
+    "effect_status",
+    "linh_vuc",
+)
 
-        metadata: Dict[str, Any] = {
-            "doc_number": None,
-            "issued_date": None,
-            "agency": None,
-            "doc_type": None,
-            "title": None,
-            "source": source,
-            "quality_flags": [],
-        }
 
-        num_match = RE_DOC_NUMBER.search(header)
-        if num_match:
-            metadata["doc_number"] = num_match.group(1).strip()
+def coerce_document_metadata(record: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Chuẩn hóa một dòng metadata.parquet cho prefix ngữ cảnh khi embed."""
+    if not record:
+        return {}
+    out: Dict[str, Any] = {}
+    for key in METADATA_PREFIX_FIELDS:
+        val = record.get(key)
+        if val is not None and str(val).strip():
+            out[key] = str(val).strip()
+    return out
 
-        date_match = RE_DATE_VN.search(header)
-        if date_match:
-            d, m, y = date_match.groups()
-            metadata["issued_date"] = f"{d.zfill(2)}/{m.zfill(2)}/{y}"
 
-        type_match = RE_DOC_TYPE.search(header)
-        if type_match:
-            metadata["doc_type"] = type_match.group(1).strip().upper()
-
-        agency = MetadataExtractor._extract_agency(header)
-        if agency:
-            metadata["agency"] = agency
-
-        title = MetadataExtractor._extract_title(header, metadata["doc_type"])
-        if title:
-            metadata["title"] = title
-
-        if not metadata["doc_number"]:
-            metadata["quality_flags"].append("missing_doc_number")
-        if not metadata["doc_type"]:
-            metadata["quality_flags"].append("missing_doc_type")
-        if not metadata["agency"]:
-            metadata["quality_flags"].append("missing_agency")
-        if not metadata["title"]:
-            metadata["quality_flags"].append("missing_title")
-
-        return metadata
-
-    @staticmethod
-    def _extract_agency(header: str) -> Optional[str]:
-        ignore = {
-            "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
-            "ĐỘC LẬP - TỰ DO - HẠNH PHÚC",
-            "Độc lập - Tự do - Hạnh phúc",
-        }
-
-        for line in header.split("\n")[:25]:
-            clean = line.strip(" |")
-            if not clean or clean.upper() in {x.upper() for x in ignore}:
-                continue
-
-            left = clean.split("|")[0].strip()
-            m = RE_AGENCY_LINE.match(left)
-            if m:
-                return m.group(1).strip()
-
-            m = RE_AGENCY_LINE.match(clean)
-            if m:
-                return m.group(1).strip()
-
-        return None
-
-    @staticmethod
-    def _extract_title(header: str, doc_type: Optional[str]) -> Optional[str]:
-        title_match = RE_TITLE_HINT.search(header)
-        if title_match:
-            title = title_match.group(1).strip()
-            return MetadataExtractor._clean_title(title)
-
-        lines = [x.strip(" |") for x in header.split("\n") if x.strip(" |")]
-        for i, line in enumerate(lines[:20]):
-            if doc_type and doc_type in line.upper():
-                candidates = []
-                for nxt in lines[i + 1:i + 5]:
-                    upper = nxt.upper()
-                    if upper.startswith("CĂN CỨ"):
-                        break
-                    if "SỐ:" in upper or "NGÀY" in upper:
-                        continue
-                    if len(nxt) >= 12:
-                        candidates.append(nxt)
-                if candidates:
-                    return MetadataExtractor._clean_title(" ".join(candidates))
-
-        return None
-
-    @staticmethod
-    def _clean_title(title: str) -> str:
-        title = re.sub(r"\s+", " ", title).strip(" .;-")
-        if len(title) > 350:
-            title = title[:347] + "..."
-        return title
+def metadata_lookup_from_dataframe(metadata_df, id_col: str = "id") -> Dict[Any, Dict[str, Any]]:
+    """Map doc id → metadata dict (Polars hoặc pandas DataFrame)."""
+    try:
+        records = metadata_df.to_dicts()
+    except AttributeError:
+        records = metadata_df.to_dict(orient="records")
+    return {rec[id_col]: coerce_document_metadata(rec) for rec in records}
 
 
 # ============================================================
-# 5. REFERENCE EXTRACTOR
-# ============================================================
-
-class ReferenceExtractor:
-    @staticmethod
-    def extract(text: str) -> List[str]:
-        refs = []
-        for pat in RE_LEGAL_REFS:
-            refs.extend([m.group(0).strip() for m in pat.finditer(text)])
-
-        seen: set = set()
-        out = []
-        for r in refs:
-            key = r.lower()
-            if key not in seen:
-                seen.add(key)
-                out.append(r)
-        return out[:50]
-
-
-# ============================================================
-# 6. UTILS
+# 5. UTILS
 # ============================================================
 
 def stable_hash(value: str, length: int = 16) -> str:
@@ -298,6 +308,11 @@ def is_probably_table_line(line: str) -> bool:
     if not s:
         return False
     if s.count("|") >= 2:
+        # Guard: long lines with few pipes are inline separators (e.g. letterhead
+        # "BỘ XÂY DỰNG | CƠ QUAN | Hà Nội"), not table rows.
+        avg_segment_len = len(s) / (s.count("|") + 1)
+        if avg_segment_len > 200:
+            return False
         return True
     if re.search(r"\bSỐ\s*TT\b", s, re.IGNORECASE) and re.search(r"\bTHỦ\s*TỤC\b", s, re.IGNORECASE):
         return True
@@ -305,26 +320,60 @@ def is_probably_table_line(line: str) -> bool:
 
 
 def split_sentences_vi(text: str) -> List[str]:
-    protected = {
-        "TP.": "TP<dot>",
-        "UBND.": "UBND<dot>",
-        "HĐND.": "HDND<dot>",
-        "P.": "P<dot>",
-        "Q.": "Q<dot>",
-    }
     s = text
-    for k, v in protected.items():
+    # Bước 1: bảo vệ viết tắt hỗn hợp / 1 ký tự trong danh sách tường minh.
+    for k, v in _SENTENCE_SPLIT_PROTECTED.items():
         s = s.replace(k, v)
+    # Bước 2: bảo vệ tự động mọi chuỗi ALLCAPS ≥2 ký tự trước dấu chấm
+    # (UBND., TW., CP., NĐ., HĐND., VKSND., … — không cần liệt kê từng cái).
+    s = _RE_AUTO_ABBREV.sub(r"\1" + _AUTO_ABBREV_PH, s)
 
     parts = re.split(r"(?<=[.!?;:])\s+(?=[A-ZÀ-Ỵ0-9Đ])", s)
     out = []
     for p in parts:
-        for k, v in protected.items():
+        # Khôi phục bước 1
+        for k, v in _SENTENCE_SPLIT_PROTECTED.items():
             p = p.replace(v, k)
+        # Khôi phục bước 2
+        p = p.replace(_AUTO_ABBREV_PH, ".")
         p = p.strip()
         if p:
             out.append(p)
     return out
+
+
+def is_orphan_amount_line(line: str) -> bool:
+    """Dòng chỉ là mức tiền (đuôi bảng biểu OCR) — không dùng làm overlap."""
+    s = line.strip()
+    if not s:
+        return False
+    if re.fullmatch(r"-?[\d.,]+\s*000(?:\.\d{3})*", s):
+        return True
+    if re.fullmatch(r"-?[\d.,]{4,18}", s) and "." in s:
+        return True
+    return False
+
+
+def strip_leading_orphan_amounts(text: str) -> str:
+    lines = text.split("\n")
+    while lines and is_orphan_amount_line(lines[0]):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def strip_trailing_orphan_amounts(text: str) -> str:
+    lines = text.split("\n")
+    while lines and is_orphan_amount_line(lines[-1]):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def clauses_use_roman_sections(clauses: List[str]) -> bool:
+    for clause in clauses:
+        first = clause.split("\n", 1)[0].strip()
+        if RE_ROMAN_SECTION_INLINE.match(first) or RE_ROMAN_SECTION_STANDALONE.match(first):
+            return True
+    return False
 
 
 def smart_overlap(text: str, max_chars: int) -> str:
@@ -365,6 +414,7 @@ class VietnameseLegalChunker:
         doc_id: Any,
         content: str,
         source: str = "unknown",
+        doc_metadata: Optional[Dict[str, Any]] = None,
         config: ChunkingConfig = CONFIG,
     ):
         self.doc_id = str(doc_id)
@@ -373,12 +423,9 @@ class VietnameseLegalChunker:
         self.config = config
 
         self.normalized_text = LegalTextNormalizer.normalize(self.raw_content)
-        self.doc_metadata = MetadataExtractor.extract(self.normalized_text, source=source)
+        self.doc_metadata = coerce_document_metadata(doc_metadata)
 
         self.chunks: List[Dict[str, Any]] = []
-        # Phase 2: parent-child retrieval — populated by _register_parent,
-        # emitted only when emit_parent_chunks=True.
-        self.parent_store: Dict[str, Dict[str, Any]] = {}
 
     # --------------------------------------------------------
     # Public API
@@ -393,20 +440,15 @@ class VietnameseLegalChunker:
             self._emit_chunk(
                 chunk_text=text,
                 chunk_type="short_text",
-                chunk_level="document",
                 section_path=["Toàn văn"],
-                section="Toàn văn",
-                section_title=None,
-                appendix=None,
-                subfield=None,
-                quality_flags=["short_document"],
                 parent_key=self._make_parent_key(["Toàn văn"]),
+                quality_flags=["short_document"],
             )
             self._finalize_links()
             return self.chunks
 
         body_text, footer_blocks = self._extract_footer(text)
-        blocks = self._split_into_blocks(body_text)
+        blocks = self._merge_regulation_header_blocks(self._split_into_blocks(body_text))
 
         for block in blocks:
             self._process_block(block)
@@ -431,18 +473,8 @@ class VietnameseLegalChunker:
 
         blocks = []
 
-        sig_patterns = [
-            r"\bKT\.\s+",
-            r"\bTM\.\s+",
-            r"\bCHỦ\s+TỊCH\b",
-            r"\bPHÓ\s+CHỦ\s+TỊCH\b",
-            r"\bBỘ\s+TRƯỞNG\b",
-            r"\bTHỨ\s+TRƯỞNG\b",
-            r"\bGIÁM\s+ĐỐC\b",
-        ]
-
         sig_pos = None
-        for pat in sig_patterns:
+        for pat in _SIG_PATTERNS:
             sm = re.search(pat, footer, re.IGNORECASE)
             if sm:
                 sig_pos = sm.start()
@@ -494,26 +526,12 @@ class VietnameseLegalChunker:
                     path.append(state[key]["id"])
             return path or ["Thân văn bản"]
 
-        def current_appendix_id() -> Optional[str]:
-            if state.get("appendix"):
-                return state["appendix"]["id"]
-            return None
-
-        def current_subfield_id() -> Optional[str]:
-            if state.get("sub_field"):
-                return state["sub_field"]["id"]
-            if state.get("major_field"):
-                return state["major_field"]["id"]
-            return None
-
         def flush_current():
             nonlocal current_lines, current_type, current_level, current_path
             txt = "\n".join(current_lines).strip()
             if txt:
                 blocks.append(self._make_block(
                     txt, current_type, current_level, current_path,
-                    appendix=current_appendix_id(),
-                    subfield=current_subfield_id(),
                 ))
             current_lines = []
 
@@ -523,8 +541,6 @@ class VietnameseLegalChunker:
             if txt:
                 blocks.append(self._make_block(
                     txt, "table", "table", current_section_path(),
-                    appendix=current_appendix_id(),
-                    subfield=current_subfield_id(),
                 ))
             table_lines = []
             in_table = False
@@ -626,6 +642,37 @@ class VietnameseLegalChunker:
 
         return blocks
 
+    def _merge_regulation_header_blocks(
+        self, blocks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gộp block part (QUY ĐỊNH + tiêu đề) với Điều đầu tiên — tránh chunk tiny chỉ header."""
+        if not blocks:
+            return blocks
+
+        out: List[Dict[str, Any]] = []
+        i = 0
+        while i < len(blocks):
+            b = blocks[i]
+            if (
+                b["type"] == "part"
+                and len(b["section_path"]) == 1
+                and b["section_path"][0] in REGULATION_PART_IDS
+                and i + 1 < len(blocks)
+                and blocks[i + 1]["type"] == "article"
+            ):
+                nxt = blocks[i + 1]
+                out.append(self._make_block(
+                    b["text"].strip() + "\n\n" + nxt["text"].strip(),
+                    "article",
+                    "article",
+                    nxt["section_path"],
+                ))
+                i += 2
+                continue
+            out.append(b)
+            i += 1
+        return out
+
     def _parse_heading(self, line: str) -> Optional[Dict[str, str]]:
         for typ, pat, label in [
             ("appendix", RE_APPENDIX, "Phụ lục"),
@@ -642,6 +689,15 @@ class VietnameseLegalChunker:
                     "id": normalize_heading_id(label, number),
                     "title": truncate(title or line, self.config.max_section_title_chars),
                 }
+
+        m = RE_REGULATION_BLOCK.match(line)
+        if m:
+            block_name = re.sub(r"\s+", " ", m.group(1)).strip().upper()
+            return {
+                "type": "part",
+                "id": block_name,
+                "title": None,
+            }
 
         m = RE_ARTICLE.match(line)
         if m:
@@ -661,7 +717,7 @@ class VietnameseLegalChunker:
         m = re.match(r"^([IVXLCDM]{1,6})\.\s+(.{3,})$", s, re.IGNORECASE)
         if m and len(s) <= 180:
             title = m.group(2).strip()
-            if title.upper() == title or "TTHC" in title.upper() or "LĨNH VỰC" in title.upper():
+            if self._is_heading_text(title):
                 return {
                     "type": "major_field",
                     "id": f"{m.group(1).upper()}. {truncate(title, 120)}",
@@ -685,16 +741,12 @@ class VietnameseLegalChunker:
         typ: str,
         level: str,
         section_path: List[str],
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
     ) -> Dict[str, Any]:
         return {
             "text": text.strip(),
             "type": typ,
             "level": level,
             "section_path": section_path or ["Thân văn bản"],
-            "appendix": appendix,
-            "subfield": subfield,
         }
 
     # --------------------------------------------------------
@@ -707,29 +759,21 @@ class VietnameseLegalChunker:
             return
 
         typ = block["type"]
-        level = block["level"]
         section_path = block["section_path"]
-        appendix = block.get("appendix")
-        subfield = block.get("subfield")
 
         if typ == "table":
-            self._process_table(text, section_path, appendix=appendix, subfield=subfield)
+            self._process_table(text, section_path)
             return
 
         if typ == "article":
-            self._process_article(text, section_path, appendix=appendix, subfield=subfield)
+            self._process_article(text, section_path)
             return
 
         if typ in {"distribution_list", "signature"}:
             self._emit_chunk(
                 chunk_text=text,
                 chunk_type=typ,
-                chunk_level=level,
                 section_path=section_path,
-                section=section_path[-1],
-                section_title=None,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=self._make_parent_key(section_path),
             )
             return
@@ -738,22 +782,14 @@ class VietnameseLegalChunker:
             self._emit_chunk(
                 chunk_text=text,
                 chunk_type=typ,
-                chunk_level=level,
                 section_path=section_path,
-                section=section_path[-1],
-                section_title=None,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=self._make_parent_key(section_path),
             )
         else:
             self._split_prose(
                 text=text,
-                chunk_type=typ,
-                chunk_level=level,
+                chunk_type=self._chunk_type_for_split(typ),
                 section_path=section_path,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=self._make_parent_key(section_path),
             )
 
@@ -761,28 +797,16 @@ class VietnameseLegalChunker:
     # Article processing
     # --------------------------------------------------------
 
-    def _process_article(
-        self,
-        text: str,
-        section_path: List[str],
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
-    ) -> None:
-        article_id, article_title = self._extract_article_id_title(text)
+    def _process_article(self, text: str, section_path: List[str]) -> None:
+        _, article_title = self._extract_article_id_title(text)
         parent_key = self._make_parent_key(section_path)
-
-        self._register_parent(parent_key, text, section_path, "article_parent")
 
         if len(text) <= self.config.max_chars:
             self._emit_chunk(
                 chunk_text=text,
                 chunk_type="article",
-                chunk_level="article",
                 section_path=section_path,
-                section=article_id or section_path[-1],
                 section_title=article_title,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=parent_key,
             )
             return
@@ -792,51 +816,57 @@ class VietnameseLegalChunker:
             self._split_prose(
                 text=text,
                 chunk_type="article",
-                chunk_level="article",
                 section_path=section_path,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=parent_key,
-                section=article_id,
                 section_title=article_title,
             )
             return
 
-        current = []
+        roman_mode = clauses_use_roman_sections(clauses)
+        use_overlap = not roman_mode
+        first_emitted = True
+        current: List[str] = []
         current_len = len(title_line)
 
         for clause in clauses:
+            clause = strip_leading_orphan_amounts(clause)
+            if not clause:
+                continue
+
             if current and current_len + len(clause) > self.config.max_chars:
-                chunk_text = title_line + "\n" + "\n".join(current)
+                body = "\n".join(current)
+                chunk_text = f"{title_line}\n{body}" if first_emitted else body
                 self._emit_chunk(
-                    chunk_text=chunk_text,
+                    chunk_text=chunk_text.strip(),
                     chunk_type="clause_group",
-                    chunk_level="clause",
                     section_path=section_path,
-                    section=article_id,
                     section_title=article_title,
-                    appendix=appendix,
-                    subfield=subfield,
                     parent_key=parent_key,
                 )
-                overlap = smart_overlap("\n".join(current), self.config.overlap_chars)
-                current = [overlap, clause] if overlap else [clause]
-                current_len = len(title_line) + sum(len(x) for x in current)
+                first_emitted = False
+
+                if use_overlap:
+                    overlap = strip_leading_orphan_amounts(
+                        strip_trailing_orphan_amounts(
+                            smart_overlap("\n".join(current), self.config.overlap_chars)
+                        )
+                    )
+                    current = [overlap, clause] if overlap else [clause]
+                else:
+                    current = [clause]
+                current_len = sum(len(x) for x in current) + (len(current) - 1)
             else:
                 current.append(clause)
                 current_len += len(clause) + 1
 
         if current:
-            chunk_text = title_line + "\n" + "\n".join(current)
+            body = "\n".join(current)
+            chunk_text = f"{title_line}\n{body}" if first_emitted else body
             self._emit_chunk(
-                chunk_text=chunk_text,
+                chunk_text=chunk_text.strip(),
                 chunk_type="clause_group",
-                chunk_level="clause",
                 section_path=section_path,
-                section=article_id,
                 section_title=article_title,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=parent_key,
             )
 
@@ -856,7 +886,13 @@ class VietnameseLegalChunker:
         current = []
 
         for line in body_lines:
-            if RE_CLAUSE.match(line.strip()) and current:
+            stripped = line.strip()
+            is_arabic = RE_CLAUSE.match(stripped) and current
+            is_roman = (
+                RE_ROMAN_SECTION_INLINE.match(stripped)
+                or RE_ROMAN_SECTION_STANDALONE.match(stripped)
+            ) and current
+            if is_arabic or is_roman:
                 clauses.append("\n".join(current).strip())
                 current = [line]
             else:
@@ -874,51 +910,41 @@ class VietnameseLegalChunker:
     # Table processing
     # --------------------------------------------------------
 
-    def _process_table(
-        self,
-        table_text: str,
-        section_path: List[str],
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
-    ) -> None:
+    def _process_table(self, table_text: str, section_path: List[str]) -> None:
         parent_key = self._make_parent_key(section_path + ["Bảng"])
-        self._register_parent(parent_key, table_text, section_path, "table_parent")
 
         if self.config.parse_procedure_tables and self._looks_like_procedure_table(table_text):
             records = self._parse_procedure_table_records(table_text, section_path, parent_key)
             if records:
                 for rec in records:
-                    self._emit_procedure_record(
-                        rec, section_path, parent_key,
-                        appendix=appendix, subfield=subfield,
-                    )
+                    self._emit_procedure_record(rec, section_path, parent_key)
                 return
 
         rows = self._parse_pipe_rows(table_text)
 
-        # ≤ table_max_chars (2000) → giữ nguyên Markdown; > table_row_mode_threshold (2500) → split rows
         if len(table_text) <= self.config.table_max_chars or len(rows) <= 4:
             self._emit_chunk(
                 chunk_text=table_text,
                 chunk_type="table",
-                chunk_level="table",
                 section_path=section_path,
-                section=section_path[-1],
-                section_title=None,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=parent_key,
             )
             return
 
-        self._split_large_table_rows(
-            rows, section_path, parent_key,
-            appendix=appendix, subfield=subfield,
+        if len(table_text) > self.config.table_row_mode_threshold:
+            self._split_large_table_rows(rows, section_path, parent_key)
+            return
+
+        self._emit_chunk(
+            chunk_text=table_text,
+            chunk_type="table",
+            section_path=section_path,
+            parent_key=parent_key,
         )
 
     def _looks_like_procedure_table(self, text: str) -> bool:
         lower = text.lower()
-        if "thủ tục hành chính" in lower or "tên thủ tục" in lower or "tthc" in lower:
+        if any(kw in lower for kw in _TTHC_DETECT_KEYWORDS):
             return True
 
         rows = self._parse_pipe_rows(text)
@@ -998,7 +1024,7 @@ class VietnameseLegalChunker:
     def _find_header_cells(self, rows: List[List[str]]) -> List[str]:
         for row in rows[:6]:
             joined = " ".join(row).lower()
-            if "thủ tục" in joined or "tên thủ tục" in joined or "số tt" in joined:
+            if any(kw in joined for kw in _TTHC_HEADER_KEYWORDS):
                 return row
         return []
 
@@ -1006,7 +1032,7 @@ class VietnameseLegalChunker:
         joined = " ".join(cells).lower()
         if not joined:
             return True
-        if "tên thủ tục" in joined or "số tt" in joined or "ghi chú" in joined:
+        if any(kw in joined for kw in _TTHC_HEADER_REJECT_KEYWORDS):
             return True
         if set(joined.replace(" ", "")) <= {"-", ":"}:
             return True
@@ -1022,22 +1048,35 @@ class VietnameseLegalChunker:
 
         if re.match(r"^[IVXLCDM]{1,6}$", first, re.IGNORECASE) and len(non_empty) >= 2:
             candidate = " ".join(non_empty[1:])
-            if candidate.upper() == candidate or "TTHC" in candidate.upper():
+            if self._is_heading_text(candidate):
                 return truncate(candidate, 180)
 
         m = re.match(r"^([IVXLCDM]{1,6})\.\s+(.+)$", joined, re.IGNORECASE)
         if m:
             candidate = m.group(2).strip()
-            if candidate.upper() == candidate or "TTHC" in candidate.upper():
+            if self._is_heading_text(candidate):
                 return truncate(candidate, 180)
 
         return None
 
+    @staticmethod
+    def _is_heading_text(text: str) -> bool:
+        """Heuristic: text là tiêu đề nhóm (all-caps hoặc chứa từ khóa domain)."""
+        up = text.upper()
+        if up == text:           # all-caps
+            return True
+        if any(kw in up for kw in _APPENDIX_HEADING_KEYWORDS):
+            return True
+        return False
+
     def _detect_sub_field_row(self, cells: List[str]) -> Optional[str]:
         joined = " ".join([c for c in cells if c.strip()])
-        m = re.search(r"(Lĩnh vực\s*[:\-]?\s*.+)$", joined, re.IGNORECASE)
-        if m and len(joined) <= 250:
-            return truncate(m.group(1).strip(), 180)
+        if len(joined) > 250:
+            return None
+        for pat in _TABLE_SUBFIELD_PATTERNS:
+            m = re.search(pat, joined, re.IGNORECASE)
+            if m:
+                return truncate(m.group(1).strip(), 180)
         return None
 
     def _parse_procedure_row(
@@ -1121,8 +1160,6 @@ class VietnameseLegalChunker:
         rec: Dict[str, Any],
         section_path: List[str],
         parent_key: str,
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
     ) -> None:
         lines = [
             f"Số thứ tự: {rec.get('stt')}",
@@ -1153,26 +1190,13 @@ class VietnameseLegalChunker:
             record_path.append(rec["sub_field"])
         record_path.append(rec["procedure_name"])
 
-        effective_subfield = subfield or rec.get("sub_field") or rec.get("major_field")
-
         self._emit_chunk(
             chunk_text=chunk_text,
             chunk_type="procedure_record",
-            chunk_level="row",
             section_path=record_path,
-            section=f"procedure_{rec.get('stt')}",
             section_title=rec.get("procedure_name"),
-            appendix=appendix,
-            subfield=effective_subfield,
             parent_key=parent_key,
             procedure_name=rec.get("procedure_name"),
-            field=rec.get("sub_field") or rec.get("major_field"),
-            extra_metadata={
-                "procedure_stt": rec.get("stt"),
-                "receive_by_post": rec.get("receive_by_post"),
-                "return_by_post": rec.get("return_by_post"),
-                "raw_table_cells": rec.get("raw_cells"),
-            },
         )
 
     def _split_large_table_rows(
@@ -1180,8 +1204,6 @@ class VietnameseLegalChunker:
         rows: List[List[str]],
         section_path: List[str],
         parent_key: str,
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
     ) -> None:
         if not rows:
             return
@@ -1197,12 +1219,7 @@ class VietnameseLegalChunker:
                 self._emit_chunk(
                     chunk_text=chunk_text,
                     chunk_type="table_part",
-                    chunk_level="table",
                     section_path=section_path,
-                    section=section_path[-1],
-                    section_title=None,
-                    appendix=appendix,
-                    subfield=subfield,
                     parent_key=parent_key,
                 )
                 current_rows = [row]
@@ -1216,12 +1233,7 @@ class VietnameseLegalChunker:
             self._emit_chunk(
                 chunk_text=chunk_text,
                 chunk_type="table_part",
-                chunk_level="table",
                 section_path=section_path,
-                section=section_path[-1],
-                section_title=None,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=parent_key,
             )
 
@@ -1247,12 +1259,8 @@ class VietnameseLegalChunker:
         self,
         text: str,
         chunk_type: str,
-        chunk_level: str,
         section_path: List[str],
         parent_key: str,
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
-        section: Optional[str] = None,
         section_title: Optional[str] = None,
     ) -> None:
         sentences = split_sentences_vi(text)
@@ -1261,12 +1269,8 @@ class VietnameseLegalChunker:
             self._split_by_hard_chars(
                 text=text,
                 chunk_type=chunk_type,
-                chunk_level=chunk_level,
                 section_path=section_path,
                 parent_key=parent_key,
-                appendix=appendix,
-                subfield=subfield,
-                section=section,
                 section_title=section_title,
             )
             return
@@ -1280,12 +1284,8 @@ class VietnameseLegalChunker:
                 self._emit_chunk(
                     chunk_text=chunk_text,
                     chunk_type=chunk_type,
-                    chunk_level=chunk_level,
                     section_path=section_path,
-                    section=section or section_path[-1],
                     section_title=section_title,
-                    appendix=appendix,
-                    subfield=subfield,
                     parent_key=parent_key,
                 )
 
@@ -1301,12 +1301,8 @@ class VietnameseLegalChunker:
             self._emit_chunk(
                 chunk_text=chunk_text,
                 chunk_type=chunk_type,
-                chunk_level=chunk_level,
                 section_path=section_path,
-                section=section or section_path[-1],
                 section_title=section_title,
-                appendix=appendix,
-                subfield=subfield,
                 parent_key=parent_key,
             )
 
@@ -1314,12 +1310,8 @@ class VietnameseLegalChunker:
         self,
         text: str,
         chunk_type: str,
-        chunk_level: str,
         section_path: List[str],
         parent_key: str,
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
-        section: Optional[str] = None,
         section_title: Optional[str] = None,
     ) -> None:
         step = max(1, self.config.target_chars - self.config.overlap_chars)
@@ -1332,12 +1324,8 @@ class VietnameseLegalChunker:
                 self._emit_chunk(
                     chunk_text=chunk_text,
                     chunk_type=chunk_type,
-                    chunk_level=chunk_level,
                     section_path=section_path,
-                    section=section or section_path[-1],
                     section_title=section_title,
-                    appendix=appendix,
-                    subfield=subfield,
                     parent_key=parent_key,
                     quality_flags=["hard_char_split"],
                 )
@@ -1351,23 +1339,17 @@ class VietnameseLegalChunker:
         self,
         chunk_text: str,
         chunk_type: str,
-        chunk_level: str,
         section_path: List[str],
-        section: Optional[str],
-        section_title: Optional[str],
         parent_key: str,
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
+        section_title: Optional[str] = None,
         procedure_name: Optional[str] = None,
-        field: Optional[str] = None,
-        extra_metadata: Optional[Dict[str, Any]] = None,
         quality_flags: Optional[List[str]] = None,
     ) -> None:
         chunk_text = chunk_text.strip()
         if not chunk_text:
             return
 
-        flags = list(self.doc_metadata.get("quality_flags", []))
+        flags: List[str] = []
         if quality_flags:
             flags.extend(quality_flags)
 
@@ -1384,12 +1366,8 @@ class VietnameseLegalChunker:
         contextual_text = self._build_contextual_text(
             chunk_text=chunk_text,
             section_path=section_path,
-            section=section,
             section_title=section_title,
-            appendix=appendix,
-            subfield=subfield,
             procedure_name=procedure_name,
-            field=field,
         )
 
         chunk_id = make_uuid()
@@ -1403,23 +1381,8 @@ class VietnameseLegalChunker:
             "contextual_text": contextual_text,
 
             "chunk_type": chunk_type,
-            "chunk_level": chunk_level,
-
-            "title": self.doc_metadata.get("title"),
-            "doc_type": self.doc_metadata.get("doc_type"),
-            "agency": self.doc_metadata.get("agency"),
-            "doc_number": self.doc_metadata.get("doc_number"),
-            "issued_date": self.doc_metadata.get("issued_date"),
-
             "section_path": section_path,
-            "section": section,
-
-            "appendix": appendix,
-            "field": field,
-            "subfield": subfield,
             "procedure_name": procedure_name,
-
-            "legal_references": ReferenceExtractor.extract(chunk_text),
 
             "parent_id": stable_hash(parent_key),
             "prev_chunk_id": None,
@@ -1430,57 +1393,50 @@ class VietnameseLegalChunker:
             "quality_flags": sorted(set(flags)),
         }
 
-        if extra_metadata:
-            base.update(extra_metadata)
-
         self.chunks.append(base)
 
     def _build_contextual_text(
         self,
         chunk_text: str,
         section_path: List[str],
-        section: Optional[str],
-        section_title: Optional[str],
-        appendix: Optional[str] = None,
-        subfield: Optional[str] = None,
+        section_title: Optional[str] = None,
         procedure_name: Optional[str] = None,
-        field: Optional[str] = None,
     ) -> str:
         parts = []
+        meta = self.doc_metadata
 
-        doc_label = self.doc_metadata.get("doc_type") or "Văn bản"
-        doc_number = self.doc_metadata.get("doc_number")
-        title = self.doc_metadata.get("title")
+        legal_type = meta.get("legal_type")
+        doc_number = meta.get("document_number")
+        title = meta.get("title")
 
-        if doc_number and title:
-            parts.append(f"Văn bản: {doc_label} {doc_number} - {title}")
-        elif doc_number:
-            parts.append(f"Văn bản: {doc_label} {doc_number}")
+        if legal_type and doc_number and title:
+            parts.append(f"Văn bản: {legal_type} {doc_number} - {title}")
+        elif legal_type and doc_number:
+            parts.append(f"Văn bản: {legal_type} {doc_number}")
         elif title:
             parts.append(f"Văn bản: {title}")
-        else:
+        elif not meta:
             parts.append(f"Văn bản: {self.source}")
 
-        agency = self.doc_metadata.get("agency")
+        agency = meta.get("issuing_authority")
         if agency:
             parts.append(f"Cơ quan: {agency}")
 
-        issued = self.doc_metadata.get("issued_date")
+        issued = meta.get("issuance_date")
         if issued:
-            parts.append(f"Ngày: {issued}")
+            parts.append(f"Ngày ban hành: {issued}")
 
-        if appendix:
-            parts.append(f"Phụ lục: {appendix}")
+        effect = meta.get("effect_status")
+        if effect:
+            parts.append(f"Hiệu lực: {effect}")
 
-        effective_field = field or subfield
-        if effective_field:
-            parts.append(f"Lĩnh vực: {effective_field}")
+        linh_vuc = meta.get("linh_vuc")
+        if linh_vuc and len(parts) < 5:
+            parts.append(f"Lĩnh vực catalog: {linh_vuc}")
 
         if section_path and section_path not in [["Thân văn bản"], ["Toàn văn"]]:
             path_str = " > ".join(section_path[-3:]) if len(section_path) > 3 else " > ".join(section_path)
             parts.append(f"Mục: {path_str}")
-        elif section:
-            parts.append(f"Mục: {section}")
 
         if section_title:
             parts.append(f"Tiêu đề: {section_title}")
@@ -1488,7 +1444,7 @@ class VietnameseLegalChunker:
         if procedure_name:
             parts.append(f"Thủ tục: {procedure_name}")
 
-        prefix = " | ".join(parts)
+        prefix = " | ".join(parts) if parts else self.source
         prefix = truncate(prefix, self.config.max_context_prefix_chars) or prefix
 
         return f"[{prefix}]\n\n{chunk_text}"
@@ -1496,38 +1452,12 @@ class VietnameseLegalChunker:
     def _make_parent_key(self, section_path: List[str]) -> str:
         return f"{self.doc_id}::{' > '.join(section_path)}"
 
-    def _register_parent(
-        self,
-        parent_key: str,
-        parent_text: str,
-        section_path: List[str],
-        parent_type: str,
-    ) -> None:
-        parent_id = stable_hash(parent_key)
-        if parent_key not in self.parent_store:
-            self.parent_store[parent_key] = {
-                "parent_id": parent_id,
-                "parent_key": parent_key,
-                "doc_id": self.doc_id,
-                "parent_type": parent_type,
-                "section_path": section_path,
-                "parent_text": parent_text,
-                "char_len": len(parent_text),
-            }
-
-        if self.config.emit_parent_chunks:
-            self._emit_chunk(
-                chunk_text=parent_text,
-                chunk_type=parent_type,
-                chunk_level="parent",
-                section_path=section_path,
-                section=section_path[-1] if section_path else "parent",
-                section_title=None,
-                appendix=None,
-                subfield=None,
-                parent_key=parent_key,
-                quality_flags=["parent_context_chunk"],
-            )
+    @staticmethod
+    def _chunk_type_for_split(block_type: str) -> str:
+        """Prose split của block không phải Điều → fallback_text (CHUNKING_STRATEGY §8)."""
+        if block_type in {"article", "clause_group"}:
+            return block_type
+        return "fallback_text"
 
     def _finalize_links(self) -> None:
         for i, chunk in enumerate(self.chunks):
@@ -1545,16 +1475,18 @@ def chunk_legal_document(
     doc_id: Any,
     content: str,
     source: str = "unknown",
+    doc_metadata: Optional[Dict[str, Any]] = None,
     config: ChunkingConfig = CONFIG,
 ) -> List[Dict[str, Any]]:
     """
-    Main entrypoint cho 1 document.
-    Return: list[dict], mỗi dict là 1 chunk sẵn sàng ghi parquet/jsonl/vector DB.
+    Entrypoint cho 1 document.
+    doc_metadata: một dòng từ metadata.parquet (join theo id), dùng cho contextual_text prefix.
     """
     return VietnameseLegalChunker(
         doc_id=doc_id,
         content=content,
         source=source,
+        doc_metadata=doc_metadata,
         config=config,
     ).chunk()
 
@@ -1564,21 +1496,22 @@ def chunk_legal_documents_from_records(
     id_col: str = "id",
     content_col: str = "content",
     source_col: str = "source",
+    metadata_by_id: Optional[Dict[Any, Dict[str, Any]]] = None,
     config: ChunkingConfig = CONFIG,
 ) -> List[Dict[str, Any]]:
     """
-    Dùng cho list of dict:
-    [
-        {"id": 1, "content": "...", "source": "legacy"},
-        ...
-    ]
+    Dùng cho list of dict từ content.parquet.
+    metadata_by_id: map id → dòng metadata.parquet (xem metadata_lookup_from_dataframe).
     """
     all_chunks = []
     for rec in records:
         doc_id = rec.get(id_col)
         content = rec.get(content_col) or ""
         source = rec.get(source_col) or "unknown"
-        chunks = chunk_legal_document(doc_id, content, source, config=config)
+        meta = (metadata_by_id or {}).get(doc_id)
+        chunks = chunk_legal_document(
+            doc_id, content, source, doc_metadata=meta, config=config
+        )
         all_chunks.extend(chunks)
     return all_chunks
 
@@ -1588,29 +1521,34 @@ def chunk_legal_documents_from_records(
 # ============================================================
 
 def chunk_polars_dataframe(
-    df,
+    content_df,
+    metadata_df=None,
     id_col: str = "id",
     content_col: str = "content",
     source_col: str = "source",
+    metadata_id_col: str = "id",
     config: ChunkingConfig = CONFIG,
 ):
     """
-    Optional: dùng nếu bạn đang đọc parquet bằng Polars.
+    Chunk toàn bộ content.parquet; tuỳ chọn join metadata.parquet theo id.
 
     Example:
         import polars as pl
         content = pl.read_parquet(CONTENT_PATH)
-        chunks_df = chunk_polars_dataframe(content)
+        metadata = pl.read_parquet(METADATA_PATH)
+        chunks_df = chunk_polars_dataframe(content, metadata_df=metadata)
         chunks_df.write_parquet("legal_chunks.parquet")
     """
     import polars as pl
 
-    records = df.select([id_col, content_col, source_col]).to_dicts()
+    records = content_df.select([id_col, content_col, source_col]).to_dicts()
+    meta_by_id = metadata_lookup_from_dataframe(metadata_df, id_col=metadata_id_col) if metadata_df is not None else None
     chunks = chunk_legal_documents_from_records(
         records,
         id_col=id_col,
         content_col=content_col,
         source_col=source_col,
+        metadata_by_id=meta_by_id,
         config=config,
     )
     return pl.DataFrame(chunks)
