@@ -356,7 +356,7 @@ def normalize_heading_id(kind: str, number: Optional[str]) -> str:
 
 
 # ============================================================
-# 8. MAIN CHUNKER
+# 7. MAIN CHUNKER
 # ============================================================
 
 class VietnameseLegalChunker:
@@ -376,6 +376,8 @@ class VietnameseLegalChunker:
         self.doc_metadata = MetadataExtractor.extract(self.normalized_text, source=source)
 
         self.chunks: List[Dict[str, Any]] = []
+        # Phase 2: parent-child retrieval — populated by _register_parent,
+        # emitted only when emit_parent_chunks=True.
         self.parent_store: Dict[str, Dict[str, Any]] = {}
 
     # --------------------------------------------------------
@@ -1536,7 +1538,7 @@ class VietnameseLegalChunker:
 
 
 # ============================================================
-# 9. PUBLIC FUNCTIONS
+# 8. PUBLIC FUNCTIONS
 # ============================================================
 
 def chunk_legal_document(
@@ -1582,7 +1584,7 @@ def chunk_legal_documents_from_records(
 
 
 # ============================================================
-# 10. OPTIONAL POLARS INTEGRATION
+# 9. OPTIONAL POLARS INTEGRATION
 # ============================================================
 
 def chunk_polars_dataframe(
