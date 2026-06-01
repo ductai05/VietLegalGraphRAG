@@ -207,7 +207,9 @@ Một dòng được coi là **dòng bảng** khi:
 - Letterhead/chữ ký: ≤ **8** pipe nhưng có segment dài > **150** ký tự (`BỘ XÂY DỰNG | CỘNG HÒA... | Hà Nội...`).
 - Thân văn bản: có `Điều N` / `Căn cứ` / loại văn bản ở **đầu đoạn** (`QUYẾT ĐỊNH`, `CHỈ THỊ`, … — **không** khớp nhầm từ “Quyết định” trong tên thủ tục bảng), ≤ **10** pipe, segment dài > **80**.
 
-**Phụ lục + bảng trên một dòng**: `_split_annex_heading_line` tách `Phụ lục:` / `DANH MỤC` trước khi gom lưới pipe → `section_path` đúng (`Phụ lục`, `DANH MỤC`), không gán nhầm vào `Điều` cuối.
+**Phụ lục + bảng trên một dòng**: `_split_annex_heading_line` tách `Phụ lục:` / `DANH MỤC` trước khi gom lưới pipe → `section_path` đúng (`Phụ lục`, `DANH MỤC`), không gán nhậm vào `Điều` cuối.
+
+**Điều + bảng trên một dòng** (ví dụ `Điều 2. … | Nội dung | Giá trị | …` với ≥10 pipe): trong `_split_into_blocks`, **`_parse_heading` chạy trước** `is_probably_table_line` — cập nhật `state["article"]` rồi mới gom block `table` với `current_section_path()` đã là `Điều N`. Nếu chỉ nhận bảng trước, dòng bắt đầu bằng `Điều 2` nhưng nhiều `|` sẽ không kích hoạt heading → bảng kẹt `section_path` của Điều trước (lỗi doc 404340).
 
 ### 4.3. Bảng thủ tục / bảng lớn / footer
 
@@ -267,6 +269,7 @@ Một dòng được coi là **dòng bảng** khi:
 | Phụ lục OCR: nhóm XI. không tách trên 1 dòng pipe | Roman hard-code tới `X.` | Explode dùng `_ROMAN` (tới XX) |
 | Câu cắt sau `UBND.` / `TW.` | Thiếu protect viết tắt | `split_sentences_vi` + `_RE_AUTO_ABBREV` |
 | Chunk kết thúc `1.` / `3.`; `fallback_text`, `section_path=["Thân văn bản"]` | `split_sentences_vi` cắt tại khoản; không nhận Chỉ thị `1. 2. 3.` | `_RE_CLAUSE_NUMBER` + `RE_NUMBERED_CLAUSE_*` → `["Khoản N"]`, `article` |
+| Bảng trong Điều 2: `chunk_text` bắt đầu `Điều 2…` nhưng `section_path=["Điều 1"]` | `is_probably_table_line` trước `_parse_heading` trên dòng nhiều `\|` | `table` tại `["Điều 2"]`; khoản 2–3 của Điều 2 cùng path |
 | Footer sở/ngành không tách chữ ký | Thiếu chức danh | Thêm vào `_SIG_PATTERNS` |
 
 Khi gặp case mới: ưu tiên thêm pattern/keyword vào **§3.4**, chạy lại chunk corpus; tránh sửa logic theo `doc_id`.
@@ -302,6 +305,7 @@ QĐ/NĐ/TT                 → legal structure (preamble, article, …)
 Chỉ thị / NQ chỉ khoản   → preamble + Khoản 1/2/3 (`RE_NUMBERED_CLAUSE_HEADING`, không `Điều`)
 appendix                 → appendix → appendix_group (heading keywords) → procedure_record (row)
 markdown table (guard)   → table / table_part / procedure_record (TTHC keywords)
+  └ heading (Điều/Chương/…) trước is_probably_table_line → section_path đúng khi Điều + pipe cùng dòng
 footer                   → distribution_list | signature (_SIG_PATTERNS)
 unknown long text        → split_sentences_vi → fallback_text | hard_char_split
 ```

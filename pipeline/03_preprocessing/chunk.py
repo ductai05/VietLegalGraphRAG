@@ -730,6 +730,23 @@ class VietnameseLegalChunker:
                 else:
                     continue
 
+            in_dieu = bool(
+                state.get("article")
+                and str(state["article"]["id"]).lower().startswith("điều")
+            )
+            heading = self._parse_heading(line, in_article=in_dieu)
+            if heading:
+                if in_table:
+                    flush_table()
+                flush_current()
+                current_type, current_level = self._apply_heading_to_state(
+                    heading, state
+                )
+                current_path = current_section_path()
+                if not is_probably_table_line(line):
+                    current_lines.append(line)
+                    continue
+
             if is_probably_table_line(line):
                 if not in_table:
                     flush_current()
@@ -740,20 +757,6 @@ class VietnameseLegalChunker:
 
             if in_table:
                 flush_table()
-
-            in_dieu = bool(
-                state.get("article")
-                and str(state["article"]["id"]).lower().startswith("điều")
-            )
-            heading = self._parse_heading(line, in_article=in_dieu)
-            if heading:
-                flush_current()
-                current_type, current_level = self._apply_heading_to_state(
-                    heading, state
-                )
-                current_path = current_section_path()
-                current_lines.append(line)
-                continue
 
             group_heading = self._parse_appendix_group_heading(line)
             if group_heading and state.get("appendix"):
