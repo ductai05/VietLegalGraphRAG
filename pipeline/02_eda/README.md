@@ -1,129 +1,128 @@
 ---
 language:
-- vi
+  - vi
 license: cc-by-4.0
 pretty_name: Vietnamese Legal Documents
 size_categories:
-- 1M<n<10M
+  - 1M<n<10M
 task_categories:
-- text-classification
-- text-generation
-- question-answering
-- summarization
+  - text-classification
+  - text-generation
+  - question-answering
+  - summarization
 tags:
-- legal
-- vietnamese
-- law
-- government
+  - legal
+  - vietnamese
+  - law
+  - government
 configs:
-- config_name: metadata
-  data_files:
-  - split: data
-    path: data/metadata.parquet
-- config_name: relationships
-  data_files:
-  - split: data
-    path: data/relationships.parquet
-- config_name: content
-  data_files:
-  - split: data
-    path: data/content.parquet
-- config_name: legacy
-  data_files:
-  - split: content
-    path: legacy/content.parquet
-  - split: metadata
-    path: legacy/metadata.parquet
+  - config_name: metadata
+    data_files:
+      - split: data
+        path: data/metadata.parquet
+  - config_name: relationships
+    data_files:
+      - split: data
+        path: data/relationships.parquet
+  - config_name: content
+    data_files:
+      - split: data
+        path: data/content.parquet
+  - config_name: legacy
+    data_files:
+      - split: content
+        path: legacy/content.parquet
+      - split: metadata
+        path: legacy/metadata.parquet
 dataset_info:
-- config_name: legacy
-  features:
-  - name: id
-    dtype: int64
-  - name: document_number
-    dtype: string
-  - name: title
-    dtype: string
-  - name: legal_type
-    dtype: string
-  - name: legal_sectors
-    dtype: string
-  - name: issuing_authority
-    dtype: string
-  - name: issuance_date
-    dtype: string
-  - name: effect_date
-    dtype: string
-  - name: effectless_date
-    dtype: string
-  - name: effect_status
-    dtype: string
-  - name: signers
-    dtype: string
-  splits:
-  - name: metadata
-    num_bytes: 137000000
-    num_examples: 518601
-  - name: content
-    num_bytes: 3507657146
-    num_examples: 518235
-  download_size: 3644657146
-- config_name: metadata
-  features:
-  - name: id
-    dtype: int64
-  - name: title
-    dtype: string
-  - name: so_ky_hieu
-    dtype: string
-  - name: ngay_ban_hanh
-    dtype: string
-  - name: loai_van_ban
-    dtype: string
-  - name: ngay_co_hieu_luc
-    dtype: string
-  - name: ngay_het_hieu_luc
-    dtype: string
-  - name: nguon_thu_thap
-    dtype: string
-  - name: ngay_dang_cong_bao
-    dtype: string
-  - name: nganh
-    dtype: string
-  - name: linh_vuc
-    dtype: string
-  - name: co_quan_ban_hanh
-    dtype: string
-  - name: chuc_danh
-    dtype: string
-  - name: nguoi_ky
-    dtype: string
-  - name: pham_vi
-    dtype: string
-  - name: thong_tin_ap_dung
-    dtype: string
-  - name: tinh_trang_hieu_luc
-    dtype: string
-  num_rows: 153420
-- config_name: relationships
-  features:
-  - name: doc_id
-    dtype: int64
-  - name: other_doc_id
-    dtype: string
-  - name: relationship
-    dtype: string
-  num_rows: 897890
-- config_name: content
-  features:
-  - name: id
-    dtype: string
-  - name: content_html
-    dtype: string
-  num_rows: 178665
+  - config_name: legacy
+    features:
+      - name: id
+        dtype: int64
+      - name: document_number
+        dtype: string
+      - name: title
+        dtype: string
+      - name: legal_type
+        dtype: string
+      - name: legal_sectors
+        dtype: string
+      - name: issuing_authority
+        dtype: string
+      - name: issuance_date
+        dtype: string
+      - name: effect_date
+        dtype: string
+      - name: effectless_date
+        dtype: string
+      - name: effect_status
+        dtype: string
+      - name: signers
+        dtype: string
+    splits:
+      - name: metadata
+        num_bytes: 137000000
+        num_examples: 518601
+      - name: content
+        num_bytes: 3507657146
+        num_examples: 518235
+    download_size: 3644657146
+  - config_name: metadata
+    features:
+      - name: id
+        dtype: int64
+      - name: title
+        dtype: string
+      - name: so_ky_hieu
+        dtype: string
+      - name: ngay_ban_hanh
+        dtype: string
+      - name: loai_van_ban
+        dtype: string
+      - name: ngay_co_hieu_luc
+        dtype: string
+      - name: ngay_het_hieu_luc
+        dtype: string
+      - name: nguon_thu_thap
+        dtype: string
+      - name: ngay_dang_cong_bao
+        dtype: string
+      - name: nganh
+        dtype: string
+      - name: linh_vuc
+        dtype: string
+      - name: co_quan_ban_hanh
+        dtype: string
+      - name: chuc_danh
+        dtype: string
+      - name: nguoi_ky
+        dtype: string
+      - name: pham_vi
+        dtype: string
+      - name: thong_tin_ap_dung
+        dtype: string
+      - name: tinh_trang_hieu_luc
+        dtype: string
+    num_rows: 153420
+  - config_name: relationships
+    features:
+      - name: doc_id
+        dtype: int64
+      - name: other_doc_id
+        dtype: string
+      - name: relationship
+        dtype: string
+    num_rows: 897890
+  - config_name: content
+    features:
+      - name: id
+        dtype: string
+      - name: content_html
+        dtype: string
+    num_rows: 178665
 ---
 
 # Vietnamese Legal Documents
-
 
 A comprehensive collection of Vietnamese legal documents — laws, decrees, circulars, decisions, and other normative acts — sourced from [vbpl.vn](https://vbpl.vn), the official Government Legal Document Portal operated by the Ministry of Justice. The dataset includes structured metadata for every document, raw HTML full-text content, and a rich graph of cross-document legal relationships (amendments, citations, repeals, etc.).
 
@@ -131,6 +130,11 @@ A comprehensive collection of Vietnamese legal documents — laws, decrees, circ
 - **Source:** [vbpl.vn](https://vbpl.vn)
 - **Language:** Vietnamese
 - **License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+
+## Trình tự chạy
+
+1. `raw_eda.ipynb`: Đây là file để EDA dataset gốc
+2. `cleaned_eda.ipynb`: Đây là file để EDA dataset sau khi đã được merge `data/` và `legacy/` + preprocess
 
 ## Quick Start
 
@@ -167,52 +171,52 @@ print(citing[["id", "title", "relationship"]])
 
 The dataset has four configs:
 
-| Config | Split | Rows | Description |
-|---|---|---|---|
-| `metadata` | `data` | 153,420 | One row per document — 16 metadata fields |
-| `content` | `data` | 178,665 | Raw HTML full-text content |
-| `relationships` | `data` | 897,890 | Directed edges between documents |
-| `legacy` | `metadata` | 518,601 | Older crawl — English field names, more docs |
-| `legacy` | `content` | 518,235 | Plain-text content for older crawl |
+| Config          | Split      | Rows    | Description                                  |
+| --------------- | ---------- | ------- | -------------------------------------------- |
+| `metadata`      | `data`     | 153,420 | One row per document — 16 metadata fields    |
+| `content`       | `data`     | 178,665 | Raw HTML full-text content                   |
+| `relationships` | `data`     | 897,890 | Directed edges between documents             |
+| `legacy`        | `metadata` | 518,601 | Older crawl — English field names, more docs |
+| `legacy`        | `content`  | 518,235 | Plain-text content for older crawl           |
 
 ### `metadata`
 
-| Column | Description |
-|---|---|
-| `id` | Unique document ID (int) |
-| `title` | Full Vietnamese title |
-| `so_ky_hieu` | Official number, e.g. `115/NQ-HĐBCQG` |
-| `ngay_ban_hanh` | Issuance date (`DD/MM/YYYY`) |
-| `loai_van_ban` | Type — Quyết định, Nghị quyết, Thông tư, … |
-| `ngay_co_hieu_luc` | Effective date |
-| `ngay_het_hieu_luc` | Expiry date (empty if still in effect) |
-| `nguon_thu_thap` | Collection source (e.g. Công báo) |
-| `ngay_dang_cong_bao` | Official Gazette publication date |
-| `nganh` | Sector — Tài chính, Y tế, … |
-| `linh_vuc` | Legal field / sub-domain |
-| `co_quan_ban_hanh` | Issuing authority (551 unique bodies) |
-| `chuc_danh` | Signatory title — Chủ tịch, Bộ trưởng, … |
-| `nguoi_ky` | Signatory name |
-| `pham_vi` | Geographical scope |
-| `thong_tin_ap_dung` | Implementation note |
+| Column                | Description                                           |
+| --------------------- | ----------------------------------------------------- |
+| `id`                  | Unique document ID (int)                              |
+| `title`               | Full Vietnamese title                                 |
+| `so_ky_hieu`          | Official number, e.g. `115/NQ-HĐBCQG`                 |
+| `ngay_ban_hanh`       | Issuance date (`DD/MM/YYYY`)                          |
+| `loai_van_ban`        | Type — Quyết định, Nghị quyết, Thông tư, …            |
+| `ngay_co_hieu_luc`    | Effective date                                        |
+| `ngay_het_hieu_luc`   | Expiry date (empty if still in effect)                |
+| `nguon_thu_thap`      | Collection source (e.g. Công báo)                     |
+| `ngay_dang_cong_bao`  | Official Gazette publication date                     |
+| `nganh`               | Sector — Tài chính, Y tế, …                           |
+| `linh_vuc`            | Legal field / sub-domain                              |
+| `co_quan_ban_hanh`    | Issuing authority (551 unique bodies)                 |
+| `chuc_danh`           | Signatory title — Chủ tịch, Bộ trưởng, …              |
+| `nguoi_ky`            | Signatory name                                        |
+| `pham_vi`             | Geographical scope                                    |
+| `thong_tin_ap_dung`   | Implementation note                                   |
 | `tinh_trang_hieu_luc` | Effect status — Còn hiệu lực, Hết hiệu lực toàn bộ, … |
 
 ### `content`
 
-| Column | Description |
-|---|---|
-| `id` | Document ID (join key → `metadata.id`) |
-| `content_html` | Raw HTML body of the document |
+| Column         | Description                            |
+| -------------- | -------------------------------------- |
+| `id`           | Document ID (join key → `metadata.id`) |
+| `content_html` | Raw HTML body of the document          |
 
 > **Note:** Some documents in `metadata` do not have a corresponding entry in `content` because the portal only provides PDF scans for those documents (no HTML version available).
 
 ### `relationships`
 
-| Column | Description |
-|---|---|
-| `doc_id` | Source document ID (join key → `metadata.id`) |
-| `other_doc_id` | Target document ID |
-| `relationship` | Edge label  |
+| Column         | Description                                   |
+| -------------- | --------------------------------------------- |
+| `doc_id`       | Source document ID (join key → `metadata.id`) |
+| `other_doc_id` | Target document ID                            |
+| `relationship` | Edge label                                    |
 
 ### `legacy`
 
@@ -220,26 +224,26 @@ An older, larger crawl snapshot with ~518 k documents. Field names and enumerate
 
 **`legacy` / `metadata` split** (518,601 rows):
 
-| Column | Description |
-|---|---|
-| `id` | Unique document ID (int) |
-| `document_number` | Official number, e.g. `115/NQ-HĐBCQG` |
-| `title` | Full Vietnamese title |
-| `legal_type` | Document type in English — Resolution, Decision, Circular, … |
-| `legal_sectors` | Sector in English — Finance, Education, … |
-| `issuing_authority` | Issuing authority (Vietnamese name) |
-| `issuance_date` | Issuance date (`YYYY-MM-DD`) |
-| `effect_date` | Effective date (`YYYY-MM-DD`) |
-| `effectless_date` | Expiry date (empty if still in effect) |
-| `effect_status` | `In effect` or `Not in effect` |
-| `signers` | Signatory name and ID, e.g. `Trần Thanh Mẫn:2140` |
+| Column              | Description                                                  |
+| ------------------- | ------------------------------------------------------------ |
+| `id`                | Unique document ID (int)                                     |
+| `document_number`   | Official number, e.g. `115/NQ-HĐBCQG`                        |
+| `title`             | Full Vietnamese title                                        |
+| `legal_type`        | Document type in English — Resolution, Decision, Circular, … |
+| `legal_sectors`     | Sector in English — Finance, Education, …                    |
+| `issuing_authority` | Issuing authority (Vietnamese name)                          |
+| `issuance_date`     | Issuance date (`YYYY-MM-DD`)                                 |
+| `effect_date`       | Effective date (`YYYY-MM-DD`)                                |
+| `effectless_date`   | Expiry date (empty if still in effect)                       |
+| `effect_status`     | `In effect` or `Not in effect`                               |
+| `signers`           | Signatory name and ID, e.g. `Trần Thanh Mẫn:2140`            |
 
 **`legacy` / `content` split** (518,235 rows):
 
-| Column | Description |
-|---|---|
-| `id` | Document ID (join key → `legacy/metadata.id`) |
-| `content` | Plain-text body of the document |
+| Column    | Description                                   |
+| --------- | --------------------------------------------- |
+| `id`      | Document ID (join key → `legacy/metadata.id`) |
+| `content` | Plain-text body of the document               |
 
 > **Note:** The `content` column in `legacy` contains plain text, not HTML. The current `content` config stores raw HTML (`content_html`).
 
