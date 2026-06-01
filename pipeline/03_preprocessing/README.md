@@ -33,9 +33,12 @@ Sau khi có được tập dữ liệu hợp nhất (khoảng hơn 500,000 dòng
 
 ## Bước 3.4: Thực hiện `preprocess_merged_data.ipynb`
 
-# Tóm tắt
+# Reproduction
 
-Trình tự chạy notebook sau khi đã thực hiện EDA trên tập dataset `data/` và `legacy/` chưa được merge:
+Bước 1: Chạy được `raw_eda.ipynb` trong `02_eda`
 
-1. `merge_clean_dataset.py`
-2. `preprocess_merged_data.ipynb`
+Bước 2: Upload `merge_clean_dataset.py` lên kaggle và chạy
+
+Bước 3: Upload `preprocess_merged_data.ipynb` lên kaggle và chạy
+
+Bước 4 (Optional): Chạy `02_eda/cleaned_eda.ipynb`

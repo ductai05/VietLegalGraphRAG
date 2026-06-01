@@ -131,7 +131,15 @@ A comprehensive collection of Vietnamese legal documents — laws, decrees, circ
 - **Language:** Vietnamese
 - **License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
-## Trình tự chạy
+## Reproduce:
+
+Bước 1: Tải xong dataset
+
+Bước 2: Upload file zip dataset lên kaggle
+
+Bước 3: Upload `raw_eda.ipynb` lên Kaggle, sửa path, và run all
+
+Note:
 
 1. `raw_eda.ipynb`: Đây là file để EDA dataset gốc
 2. `cleaned_eda.ipynb`: Đây là file để EDA dataset sau khi đã được merge `data/` và `legacy/` + preprocess
