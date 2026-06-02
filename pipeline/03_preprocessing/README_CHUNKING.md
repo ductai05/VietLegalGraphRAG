@@ -1,250 +1,215 @@
 # Báo cáo chiến lược chunking cho RAG pháp luật Việt Nam
 
-## 1. Tổng quan
+## 1. Giới thiệu
 
-Dự án xây dựng chatbot trợ lý pháp luật Việt Nam sử dụng kiến trúc Hybrid RAG (dense vector search, BM25/keyword matching, LightRAG). Một trong những thành phần quan trọng nhất là chiến lược **chunking** – tách văn bản luật thành các đơn vị truy hồi (retrieval units) đảm bảo giữ nguyên ngữ nghĩa pháp lý, hỗ trợ cả tìm kiếm ngữ nghĩa lẫn tìm kiếm chính xác (số điều, thủ tục, bảng biểu).
+Dự án xây dựng chatbot trả lời câu hỏi về pháp luật Việt Nam dựa trên kiến trúc hybrid RAG (dense vector search + BM25/keyword matching + LightRAG). Dữ liệu đầu vào gồm ba bảng Parquet:
 
-Báo cáo này trình bày:
+- `content.parquet`: chứa `id`, `content` (nội dung văn bản thô), `source`.
+- `metadata.parquet`: chứa các trường catalog như `document_number`, `title`, `legal_type`, `issuing_authority`, `issuance_date`, `effect_status`, `linh_vuc`, … được join với `content` theo `id`.
+- `relationships.parquet`: lưu đồ thị quan hệ giữa các văn bản (`doc_id`, `other_doc_id`, `relationship`).
 
-- Bộ dữ liệu đầu vào (content, metadata, relationships)
-- Chiến lược chunking chi tiết (nguyên tắc, pipeline, xử lý đặc thù)
-- Phương pháp đánh giá trên subset 100 văn bản đa dạng
-- Kết quả định lượng và định tính
-- Các cải tiến đã thực hiện và hướng phát triển
-
-## 2. Dữ liệu
-
-### 2.1. Content
-
-- `content.parquet`: 3 cột `(id, content, source)`
-- `content` chứa toàn văn bản luật (Quyết định, Nghị định, Thông tư, Chỉ thị, Nghị quyết…) dạng text OCR hoặc thu thập từ nguồn công báo.
-
-### 2.2. Metadata
-
-- `metadata.parquet`: 18 cột mô tả văn bản (số hiệu, tiêu đề, loại văn bản, cơ quan ban hành, ngày ban hành, ngày hiệu lực, tình trạng, lĩnh vực, ngành, người ký…)
-- Dùng để **join** khi truy vấn, không nhân bản lên từng chunk.
-
-### 2.3. Relationships
-
-- `relationships.parquet`: đồ thị quan hệ giữa các văn bản `(doc_id, other_doc_id, relationship)`
-- Sử dụng riêng cho GraphRAG / lightRAG, không gắn vào chunk.
-
-## 3. Chiến lược chunking
-
-### 3.1. Nguyên tắc cốt lõi
-
-1. **Không fixed-size**: chỉ fallback khi hết separator logic.
-2. **Giữ đơn vị nghĩa pháp lý**: Điều, khoản/nhóm khoản, thủ tục trong bảng, block bảng, căn cứ, nơi nhận/chữ ký tách riêng.
-3. **Metadata cấp văn bản** lấy từ `metadata.parquet`, không parse lại header.
-4. **Parent-child retrieval**: `procedure_record`, `clause_group` có `parent_id` trỏ về Điều/phụ lục cha.
-5. **Mở rộng bằng cấu hình tập trung**: các hằng số regex và danh sách từ khóa đặt tại một chỗ (`chunk.py` §2b) – **không hard-code theo từng `doc_id`**.
-
-### 3.2. Output schema của chunk
-
-```python
-{
-    "chunk_id": str,
-    "doc_id": int,
-    "source": str,
-    "chunk_text": str,          # nội dung gốc (citation)
-    "contextual_text": str,     # prefix metadata + section_path + nội dung (để embed)
-    "chunk_type": str,          # article, clause_group, table, procedure_record, table_summary, raw_table, preamble, appendix_text, signature, distribution_list, ...
-    "section_path": list[str],  # ["Chương I", "Điều 5"] hoặc ["Phụ lục 2", "QUY ĐỊNH", "Điều 3"]
-    "procedure_name": str | None,
-    "embed": bool,              # có đưa vào dense vector index không
-    "keyword_index": bool,      # có đưa vào BM25 không
-    "parent_id": str | None,
-    "prev_chunk_id": str | None,
-    "next_chunk_id": str | None,
-    "token_estimate": int,
-    "quality_flags": list[str], # tiny_chunk, oversized_chunk, hard_char_split, orphan_chunk...
-}
-```
-
-- `chunk_type` quyết định cờ `embed` / `keyword_index` (xem bảng §5.1 trong chiến lược).
-- `contextual_text` được tạo bằng cách ghép prefix ngắn từ metadata (số hiệu, tiêu đề, cơ quan, ngày tháng) + `section_path` + `chunk_text` – dùng cho dense embedding.
-
-### 3.3. Pipeline xử lý
-
-```
-Raw content (text)
-  ↓ Normalize
-  │ - Chuẩn hóa dòng, explode bảng OCR dẹt
-  │ - Tách Điều inline (OCR nối dòng)
-  │ - Tách khoản Arabic inline (trong Chỉ thị, Nghị quyết)
-  ↓ Structural split
-  │ - Separator: PHỤ LỤC → PHẦN → CHƯƠNG → MỤC
-  │ - Đặc biệt: khối đính kèm (QUY ĐỊNH, DANH MỤC, ĐIỀU LỆ…) → xử lý như Phần, gộp header với Điều 1
-  │ - Nhận dạng Điều (đầu dòng), khoản 1., 2.
-  │ - Trong phụ lục: nhóm lĩnh vực I., II., “Lĩnh vực:”
-  │ - Bảng markdown (|) có guard để tránh nhầm letterhead
-  │ - Footer: tách Nơi nhận, chữ ký (dùng regex chức danh)
-  │ - Kéo phụ lục bị lạc vào footer trở lại body
-  ↓ Xử lý theo loại block
-  │ - Điều ngắn → chunk_type = article
-  │ - Điều dài → split theo khoản (1.,2.) → clause_group, hoặc theo mục La Mã (I, II…)
-  │ - Nếu vẫn >3000 ký tự → hierarchical split: điểm a)b)c) → paragraph → câu
-  │ - Bảng TTHC → mỗi dòng là một procedure_record (chunk riêng)
-  │ - Bảng lớn >3000 ký tự → table_summary + raw_table
-  │ - Appendix dạng văn bản có cấu trúc Điều/Chương → parse lại thành appendix_text
-  │ - Không xác định được → fallback prose split (giữ câu, hard char nếu cần)
-  ↓ Tạo contextual_text + validation
-  ↓ Xuất chunks.parquet
-```
-
-### 3.4. Các xử lý đặc thù – giải quyết lỗi thực tế
-
-| Vấn đề gặp trên corpus                                                     | Giải pháp                                                                                              | Kết quả                                           |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------- |
-| Công văn có dòng `                                                         | ...                                                                                                    | ` là letterhead, bị nhận nhầm bảng                | Guard: nếu số pipe ≤8 và segment dài >150 → giữ là `preamble` |
-| QĐ + danh mục: Điều 1..3 bị mất, chỉ còn `procedure_record`                | Tách `_split_annex_heading_line` trước khi gom bảng; xử lý khối đính kèm (QUY ĐỊNH, DANH MỤC) như Phần | Có đầy đủ Điều và bảng đúng chỗ                   |
-| Bảng TTHC: tên thủ tục chứa từ “Quyết định” làm kích hoạt guard prose      | Hàng `\| 01 \| …` vẫn được nhận dạng bảng; ưu tiên `is_probably_table_line`                            | Giữ nguyên `procedure_record`                     |
-| Footer nuốt cả Biểu số, Đề án, Điều lệ dài 20k-40k ký tự                   | `RE_ANNEX_BLOCK_START` + safety net: tìm lại marker phụ lục trong footer, kéo về body                  | `signature` chỉ còn vài dòng, phụ lục đúng vị trí |
-| Nghị quyết + Quy định kèm theo: hai Điều 1 cùng path                       | Phát hiện heading `QUY ĐỊNH` → `section_path = ["QUY ĐỊNH", "Điều 1"]`                                 | Phân biệt rõ ràng                                 |
-| QUY ĐỊNH có Điều 1,2 bị gộp do OCR inline `.\n. Điều 2.`                   | Tách inline Điều bằng regex `RE_INLINE_ARTICLE_AFTER_PERIOD`                                           | Hai chunk riêng                                   |
-| Chunk chỉ tiêu đề QUY ĐỊNH (50 token) tách khỏi Điều 1                     | Gộp header với Điều 1 đầu tiên cùng khối                                                               | Một chunk `article` hoàn chỉnh                    |
-| Điều 4 có bảng chi (mục I, II, III) bị split theo câu sai                  | Tách theo mục La Mã `_ROMAN` (I..XX) thay vì câu                                                       | `clause_group` đúng mục, không lặp tiêu đề        |
-| Phụ lục OCR: nhóm XI. không được tách (hardcode tới X)                     | Dùng `_ROMAN` mở rộng tới XX, explode dòng dài                                                         | Tách đúng                                         |
-| Câu bị cắt sau `UBND.`, `TW.`                                              | Auto-protect viết tắt (`_RE_AUTO_ABBREV`) + thêm `_SENTENCE_SPLIT_PROTECTED`                           | Giữ nguyên                                        |
-| Chỉ thị không có Điều: `1. 2. 3.` bị cắt bởi `split_sentences_vi`          | `RE_NUMBERED_CLAUSE_HEADING`, chỉ kích hoạt khi không nằm trong Điều                                   | Tạo `["Khoản 1"]`, `article`                      |
-| Bảng trong Điều 2: `chunk_text` bắt đầu đúng nhưng `section_path="Điều 1"` | Thứ tự: parse heading trước `is_probably_table_line`                                                   | `table` mang đúng `["Điều 2"]`                    |
-| Thiếu chức danh chữ ký (CỤC TRƯỞNG, VIỆN TRƯỞNG…)                          | Mở rộng `_SIG_PATTERNS`                                                                                | Tách đúng `signature`                             |
-
-### 3.5. Các ngưỡng cấu hình
-
-```yaml
-min_chars: 300
-target_chars: 1600
-max_chars: 2200
-hard_max_chars: 3000
-overlap_chars: 150
-table_max_chars: 2000
-table_summary_threshold: 3000
-long_prose_threshold: 3000 # prose/article > 3000 chars → hierarchical split
-long_prose_max_chars: 2500 # không còn chunk prose nào vượt quá 2500
-short_doc_threshold: 300
-```
-
-## 4. Đánh giá (Evaluation)
-
-### 4.1. Phương pháp
-
-- Lấy subset **100 văn bản** đa dạng (phân tầng theo lượng tử độ dài từ 1% đến 99%, bổ sung outlier).
-- Chạy pipeline chunking, thu thập các metrics:
-  - **Coverage** = tổng chars của các chunk / tổng chars gốc.
-  - **Phân phối chunk size** (characters).
-  - **Tỷ lệ quality flags**: `tiny_chunk` (<50 chars), `oversized_chunk` (>2000 chars trong lúc chưa có `hard_max`), `hard_char_split`, `orphan_chunk`.
-  - **Metadata propagation**: kiểm tra `document_number` và `title` có được gán đúng trên mọi chunk không.
-  - **Boundary integrity**: phát hiện điều/mục bị cắt ngang giữa hai chunk.
-  - **Table integrity**: bảng bị tách rời header khỏi dữ liệu.
-  - **Phân tích chunk lớn** >10,000 chars: phân loại `table/appendix` hay `long_prose`.
-
-- Code đánh giá được viết bằng Polars, matplotlib, seaborn, và các hàm heuristic.
-
-### 4.2. Kết quả định lượng
-
-Trên 100 văn bản (độ dài từ ~500 đến ~300.000 ký tự):
-
-| Chỉ số                                | Giá trị                                        |
-| ------------------------------------- | ---------------------------------------------- |
-| Tổng số văn bản phân tích             | 100                                            |
-| Tổng số chunks tạo ra                 | ~2.400                                         |
-| Coverage trung bình                   | **98,5%** (mất mát do lỗi normalize tối thiểu) |
-| Tỷ lệ `tiny_chunk` (<50 chars)        | **26%**                                        |
-| Tỷ lệ `oversized_chunk` (>2000 chars) | **8%** (hầu hết là bảng)                       |
-| Tỷ lệ `hard_char_split`               | **0%** (không có fallback cứng)                |
-| Tỷ lệ `orphan_chunk`                  | **0%** (mọi chunk có section_path)             |
-| Metadata propagation đúng             | 100%                                           |
-| Số văn bản có boundary violation      | **0**                                          |
-| Số lần nghi ngờ table bị tách         | **0**                                          |
-
-**Phân tích chunk > 10.000 ký tự:**
-
-- Tổng số chunk >10k: 12 chunk.
-- Trong đó:
-  - `table/appendix`: 12 (100%)
-  - `long_prose`: 0
-- Kết luận: chunk lớn là bảng hoặc phụ lục (tự nhiên), không có prose quá dài do đã được split hierarchical.
-
-**Phân phối chunk size** (log scale):
-
-- Median: ~950 chars
-- p95: ~2.800 chars
-- Max: 44.000 chars (một bảng lớn trong phụ lục)
-
-### 4.3. Phát hiện định tính
-
-- **Tiny_chunk 26%** chủ yếu là các dòng chữ ký (`signature`), dòng nơi nhận (`distribution_list`) hoặc tiêu đề phụ lục ngắn. Các chunk này không được gắn cờ `embed` (vì `embed=False`), không ảnh hưởng đến chất lượng truy hồi.
-- **Không có hard_split**: cho thấy pipeline đã phân tách thành công bằng separator ngữ nghĩa (Điều, khoản, mục, bảng, footer) mà không cần cắt cứng theo ký tự.
-- **Boundary integrity** hoàn hảo: không có trường hợp số Điều bị cắt giữa hai chunk.
-- **Bảng TTHC** được parse đúng thành `procedure_record` với `procedure_name`. Không còn bảng nào bị coi là `raw_table` không mong muốn.
-
-## 5. Cải tiến đã thực hiện (so với phiên bản đầu)
-
-Dựa trên kết quả đánh giá và kiểm tra thủ công 100 văn bản, chúng tôi đã thực hiện các cải tiến sau:
-
-1. **Tách Điều inline OCR** – bổ sung regex `RE_INLINE_ARTICLE_AFTER_PERIOD` cho mọi số Điều.
-2. **Xử lý khối đính kèm** (QUY ĐỊNH, DANH MỤC, ĐIỀU LỆ) như một “Phần” riêng, gộp header với Điều 1 đầu tiên.
-3. **Kéo phụ lục từ footer** – thêm `RE_ANNEX_BLOCK_START` và safety net trong `_process_block`.
-4. **Split Điều dài theo mục La Mã** – dùng `_ROMAN` (I đến XX) thay vì split câu.
-5. **Bảo vệ viết tắt** – tự động bảo vệ `UBND.`, `TW.`, `HĐND.`, `NĐ.`,… và cho phép mở rộng qua `_SENTENCE_SPLIT_PROTECTED`.
-6. **Nhận dạng khoản cấp văn bản** – dành cho Chỉ thị, Nghị quyết không có Điều.
-7. **Guard bảng** – tránh nhầm letterhead và thân văn bản có `|` nhưng không phải bảng.
-8. **Điều chỉnh thứ tự parse** – `_parse_heading` trước `is_probably_table_line` để giữ đúng `section_path` cho bảng nằm trong Điều.
-
-## 6. Hướng dẫn sử dụng
-
-### 6.1. Chạy chunking trên toàn bộ dữ liệu
-
-```python
-import polars as pl
-from chunk import chunk_polars_dataframe
-
-content = pl.read_parquet("data/content.parquet")
-metadata = pl.read_parquet("data/metadata.parquet")
-
-chunks = chunk_polars_dataframe(content, metadata_df=metadata)
-chunks.write_parquet("data/preprocessed/legal_chunks.parquet")
-```
-
-### 6.2. Chạy evaluation trên subset
-
-Các code cells trong `chunking_evaluation.md` đã được tích hợp sẵn. Chỉ cần đảm bảo:
-
-- Hàm `chunk_legal_document` (hoặc `chunk_polars_dataframe`) đã được định nghĩa.
-- Có file `content.parquet` và `metadata.parquet` ở đường dẫn phù hợp.
-
-### 6.3. Mở rộng cho domain mới
-
-Nếu gặp loại văn bản mới (ví dụ: bảng giá đất, biểu mức phạt…) **không thay đổi logic core**, chỉ cần thêm vào các hằng số tập trung trong `chunk.py` §2b:
-
-- Thêm từ khóa nhận dạng bảng thủ tục vào `_TTHC_DETECT_KEYWORDS`.
-- Thêm chức danh chữ ký vào `_SIG_PATTERNS`.
-- Thêm pattern tiêu đề phụ lục vào `_APPENDIX_HEADING_KEYWORDS`.
-
-## 7. Kết luận và hướng phát triển
-
-### 7.1. Kết luận
-
-- Chiến lược chunking đã đáp ứng được yêu cầu **giữ nguyên ngữ nghĩa pháp lý**, xử lý thành công các dạng văn bản đa dạng (văn bản luật có cấu trúc, công văn, bảng biểu, phụ lục, footer).
-- Các chỉ số evaluation cho thấy **không còn chunk prose quá dài** (>2.500 ký tự), **0% hard_split**, coverage gần 99%, metadata propagation hoàn hảo.
-- Tiny_chunk (26%) là chấp nhận được vì chúng không được đưa vào embedding và không ảnh hưởng đến retrieval.
-- Hệ thống có thể mở rộng thông qua cấu hình tập trung, tránh hard-code theo từng văn bản.
-
-### 7.2. Hướng phát triển
-
-1. **Tối ưu `contextual_text`**: thử nghiệm các template prefix khác nhau để cải thiện recall của dense retrieval.
-2. **GraphRAG**: Sử dụng `relationships.parquet` để expand truy vấn sang văn bản liên quan (ví dụ: Nghị định hướng dẫn Luật).
-3. **Reranker**: Huấn luyện hoặc fine-tune một reranker trên dữ liệu luật Việt Nam, sử dụng `contextual_text` làm đầu vào.
-4. **Hybrid search**: Kết hợp BM25 trên `chunk_text` + dense trên `contextual_text` + boost theo `chunk_type` (ưu tiên `article`, `procedure_record`).
-5. **Tự động cập nhật ngưỡng**: dựa trên phân phối độ dài văn bản trong toàn bộ corpus để điều chỉnh `long_prose_threshold`, `max_chars`.
+Mục tiêu của giai đoạn chunking là cắt các văn bản dài thành những đơn vị truy hồi (retrieval units) có tính hoàn chỉnh về mặt pháp lý, đồng thời gắn đủ ngữ cảnh để phục vụ các bước embedding, indexing và reranking sau này.
 
 ---
 
-**Tài liệu tham khảo nội bộ:**
+## 2. Dữ liệu đầu vào và output dự kiến
 
-- `chunking_strategy.md` – chi tiết kỹ thuật pipeline.
-- `chunking_evaluation.md` – mã nguồn đánh giá và visualization.
-- `context.md` – mô tả dữ liệu đầu vào.
+### 2.1. Dữ liệu đầu vào
 
-_Báo cáo được thực hiện cho dự án chatbot pháp luật Việt Nam – Hybrid RAG._
+- **content**: cột `content` chứa văn bản luật thuần (đã qua OCR, có thể lỗi định dạng).
+- **metadata**: dùng để lọc theo loại văn bản, cơ quan ban hành, hiệu lực, lĩnh vực – không sao chép vào mỗi chunk.
+- **relationships**: chỉ sử dụng khi xây dựng đồ thị giữa các văn bản, không gắn trên từng chunk.
+
+### 2.2. Output – mỗi chunk là một dictionary với các trường chính
+
+| Trường                            | Ý nghĩa                                                                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_id`                        | Mã định danh duy nhất của chunk                                                                                             |
+| `doc_id`                          | Liên kết về văn bản gốc                                                                                                     |
+| `source`                          | Nguồn gốc                                                                                                                   |
+| `chunk_text`                      | Nội dung gốc, dùng để trích dẫn và keyword search                                                                           |
+| `contextual_text`                 | Nội dung đã được thêm prefix (metadata + section_path) – dùng cho dense embedding                                           |
+| `chunk_type`                      | Phân loại: `article`, `clause_group`, `procedure_record`, `table`, `table_summary`, `raw_table`, `preamble`, `signature`, … |
+| `section_path`                    | Danh sách vị trí trong văn bản: `["Chương II", "Điều 5"]` hoặc `["Phụ lục 1", "DANH MỤC", "Điều 3"]`                        |
+| `procedure_name`                  | Chỉ có khi `chunk_type = "procedure_record"`                                                                                |
+| `embed` / `keyword_index`         | Cờ xác định chunk có được đưa vào dense vector index hay keyword index                                                      |
+| `parent_id`                       | Dùng để mở rộng trong cùng văn bản (khoản → điều, hàng thủ tục → phụ lục)                                                   |
+| `prev_chunk_id` / `next_chunk_id` | Liên kết tuần tự                                                                                                            |
+| `token_estimate`                  | Ước lượng số token                                                                                                          |
+| `quality_flags`                   | Cờ cảnh báo như `tiny_chunk`, `oversized_chunk`, `hard_char_split`, `orphan_chunk`                                          |
+
+Các trường metadata như `title`, `document_number`, `legal_type`, … được lấy từ bảng `metadata` khi join, không lưu trực tiếp trong chunk.
+
+---
+
+## 3. Phương pháp luận
+
+_Phần dưới đây mô tả chiến lược chunking theo đúng nội dung đã được chuẩn bị sẵn:_
+
+# Hierarchical Legal Chunking
+
+### 1. Nguyên tắc cốt lõi
+
+- **Không chia đều theo số lượng ký tự:** Thay vì cắt văn bản một cách cơ học (ví dụ: cứ đủ 500 chữ thì cắt một đoạn, dễ làm đứt đoạn giữa câu), hệ thống sẽ cắt theo **đơn vị nội dung pháp lý**. Một mảnh văn bản hoàn chỉnh phải là một Điều, một nhóm các Khoản, một quy trình thủ tục, hoặc một bảng biểu.
+- **Liên kết Cha - Con:** Khi một Điều luật quá dài và phải chia nhỏ thành các Khoản, hệ thống sẽ lưu lại mối liên kết giữa Khoản (con) và Điều (cha). Khi tìm kiếm, nếu máy tính tìm thấy một Khoản nhỏ phù hợp, nó có thể dễ dàng lấy ra toàn bộ Điều lớn chứa Khoản đó để người dùng đọc hiểu đầy đủ ngữ cảnh.
+- **Tách biệt thông tin chi tiết của văn bản:** Các thông tin chung của văn bản (như số hiệu, tiêu đề, ngày ban hành, cơ quan ban hành, hiệu lực) được lưu riêng ở một bảng dữ liệu khác. Hệ thống chỉ liên kết chúng lại bằng mã số văn bản khi cần thiết, giúp tránh việc lặp đi lặp lại những đoạn thông tin dài dòng này ở đầu mỗi mảnh văn bản.
+- **Sử dụng quy tắc chung:** Cơ chế chia nhỏ văn bản sử dụng các mẫu chữ và số có tính quy luật chung (như từ khóa "Điều", "Khoản", ký số La Mã I, II, III). Hệ thống không viết mã riêng biệt cho từng văn bản cụ thể, giúp dễ dàng xử lý các văn bản mới sau này.
+
+### 2. Các bước xử lý cụ thể
+
+#### Bước 2.1: Chuẩn hóa văn bản
+
+Trước khi chia nhỏ, văn bản thô sẽ được dọn dẹp để sửa các lỗi hiển thị hoặc lỗi do quá trình quét ảnh văn bản (OCR) gây ra:
+
+- Gom các dòng trống thừa thãi lại.
+- **Tách các dòng bị dính:** Nếu chữ "Điều 2" hoặc "Phụ lục" bị dính liền ngay sau dấu chấm của dòng trước đó do lỗi định dạng, hệ thống sẽ tự động xuống dòng để nhận diện đúng cấu trúc.
+- **Tách các dòng bảng bị dẹt:** Nếu một dòng bảng quá dài bị dồn lại một chỗ, hệ thống sẽ tách thành các dòng riêng biệt dựa trên các ký tự phân tách bảng (`|`).
+
+#### Bước 2.2: Xác định cấu trúc văn bản để phân chia
+
+Hệ thống sẽ quét văn bản từ trên xuống dưới và chia nhỏ dựa theo các cấp bậc từ lớn đến nhỏ:
+$$\text{Phụ lục} \rightarrow \text{Phần} \rightarrow \text{Chương} \rightarrow \text{Mục} \rightarrow \text{Điều} \rightarrow \text{Khoản}$$
+
+- **Quy định đính kèm:** Các khối văn bản đính kèm (như Quy chế, Nội quy, Điều lệ, Danh mục) được xử lý như một "Phần" lớn. Tiêu đề của khối này sẽ được gộp chung với Điều đầu tiên của nó để tránh tạo ra một mảnh văn bản quá ngắn chỉ chứa mỗi dòng tiêu đề.
+- **Khoản độc lập:** Với các văn bản không có "Điều" (ví dụ: Chỉ thị, Nghị quyết thường chỉ có Khoản 1, Khoản 2 trực tiếp), hệ thống sẽ coi các Khoản này có vai trò tương đương như một "Điều" để phân chia.
+
+#### Bước 2.3: Xử lý các đoạn văn quá dài
+
+Khi một Điều hoặc một đoạn văn bản vượt quá độ dài quy định (độ dài lý tưởng là khoảng 1.600 ký tự, tối đa là 2.200 hoặc 2.500 ký tự), hệ thống sẽ xử lý như sau:
+
+- **Tách theo Khoản:** Chia nhỏ Điều đó thành các mảnh theo Khoản `1.`, `2.`, `3.`.
+- **Tách theo mục La Mã:** Nếu không có Khoản số, hệ thống sẽ chia theo các mục La Mã `I`, `II`, `III`.
+- **Tách theo Điểm hoặc Đoạn:** Nếu vẫn còn quá dài, hệ thống tiếp tục chia nhỏ xuống cấp Điểm `a)`, `b)`, `c)`, chia theo dấu xuống dòng, hoặc cuối cùng là chia theo dấu chấm câu.
+- Khi chia nhỏ các đoạn này, hệ thống sẽ giữ lại một phần nội dung gối đầu (overlap) giữa đoạn trước và đoạn sau để đảm bảo không bị mất ngữ cảnh nối tiếp.
+
+#### Bước 2.4: Xử lý bảng biểu
+
+Bảng biểu chứa nhiều số liệu được hệ thống nhận diện và xử lý riêng tùy theo kích thước và nội dung:
+
+- **Bảng thủ tục hành chính:** Nếu bảng chứa danh sách các thủ tục hành chính, hệ thống sẽ tách mỗi thủ tục (tương ứng với một hàng trong bảng) thành một mảnh riêng biệt để dễ tìm kiếm.
+- **Bảng nhỏ:** Giữ nguyên toàn bộ bảng.
+- **Bảng quá lớn:** Hệ thống sẽ tự động tạo ra một đoạn văn ngắn tóm tắt nội dung chính của bảng (dùng để tìm kiếm dựa trên ý nghĩa câu chữ) và lưu kèm theo bảng dữ liệu gốc đầy đủ (dùng để tìm kiếm chính xác các con số khi cần).
+
+#### Bước 2.5: Xử lý phần cuối trang (Footer)
+
+- Tách riêng phần danh sách nơi nhận (Nơi nhận:) và phần chức danh, chữ ký ở cuối văn bản để tránh làm nhiễu thông tin khi tìm kiếm nội dung luật.
+- Hệ thống có cơ chế kiểm tra an toàn để đảm bảo các phụ lục hoặc biểu mẫu nằm ở cuối văn bản không bị nhận nhầm là một phần của chữ ký và bị cắt bỏ.
+
+### 3. Thông tin được lưu trong mỗi mảnh văn bản sau khi chia
+
+Mỗi mảnh văn bản sau khi được tạo ra sẽ bao gồm các thông tin quan trọng sau:
+
+- **Mã định danh:** Mã của mảnh, mã của văn bản gốc và nguồn văn bản.
+- **Nội dung văn bản gốc:** Đoạn văn bản luật chính xác dùng để trích dẫn cho người dùng đọc.
+- **Nội dung ngữ cảnh ngắn:** Một dòng tiêu đề ngắn được ghép từ thông tin văn bản và vị trí của đoạn văn đó (ví dụ: `[Văn bản: QUYẾT ĐỊNH 1762/QĐ-UBND | Mục: Phụ lục 1 > I. Tư pháp]`) được đặt ngay trước nội dung mảnh văn bản, giúp máy tính hiểu được đoạn văn này thuộc văn bản nào và mục nào khi tìm kiếm.
+- **Loại mảnh:** Ghi rõ đây là Điều luật, Khoản luật, Bảng biểu, hay Thủ tục hành chính.
+- **Cấp bậc vị trí:** Danh sách các thư mục chứa nó (ví dụ: `["Chương II", "Điều 5"]`).
+- **Các liên kết:** Mã của mảnh phía trước, mảnh phía sau và mảnh cha của nó.
+- **Đánh dấu tìm kiếm (Flags):** Đánh dấu mảnh này có được dùng để tìm kiếm bằng ý nghĩa (Dense Vector) hay tìm kiếm bằng từ khóa chính xác (Keyword Index) hay không. Ví dụ: phần chữ ký và nơi nhận sẽ được đánh dấu là không dùng để tìm kiếm nhằm loại bỏ thông tin rác.
+
+---
+
+## 4. Chi tiết kỹ thuật triển khai
+
+Pipeline được viết trong module `chunk.py`, sử dụng Polars cho xử lý dữ liệu lớn. Các bước chính:
+
+1. **Normalize**:
+   - Chuyển đổi dòng kết thúc, loại bỏ dòng trống dư thừa.
+   - Tách các trường hợp `Điều N` / `Phụ lục` bị dính liền sau dấu chấm.
+   - Tách các dòng bảng dài bị ép thành một dòng duy nhất (dùng threshold về số pipe và độ dài segment).
+
+2. **Structural split**:
+   - Duyệt văn bản theo dòng, nhận diện heading bằng regex (Chương, Mục, Điều, Phụ lục, …).
+   - Đối với các khối đính kèm (QUY ĐỊNH, DANH MỤC, …), xử lý như một cấp `part` và gộp tiêu đề với Điều đầu tiên.
+   - Với văn bản không có Điều nhưng có khoản `1.` `2.`, tách khoản đó thành `article` riêng.
+
+3. **Xử lý bảng**:
+   - Dùng guard để phân biệt bảng thật với letterhead (dòng `|…|` có segment dài > 150 ký tự).
+   - Bảng TTHC được parse thành từng `procedure_record` (mỗi hàng một chunk).
+   - Bảng lớn > 3000 ký tự tạo ra `table_summary` (embed) và `raw_table` (chỉ keyword).
+
+4. **Adaptive splitting cho prose dài**:
+   - Ngưỡng `long_prose_threshold = 3000` ký tự.
+   - Ưu tiên split theo Điểm `a) b) c)`, sau đó đoạn văn (`\n\n`), sau đó câu, cuối cùng là hard char.
+   - Overlap 150 ký tự để giữ ngữ cảnh.
+
+5. **Footer handling**:
+   - Tách tại `Nơi nhận:`.
+   - Kiểm tra an toàn: nếu phụ lục (DANH MỤC, Biểu số N, …) bị kẹt trong footer, kéo trở lại body.
+   - Trong footer còn lại, tìm chức danh ký (`_SIG_PATTERNS`) để tách `signature` (không index) và `distribution_list`.
+
+6. **Metadata propagation**:
+   - Khi gọi `chunk_polars_dataframe(content, metadata_df)`, hàm sẽ join metadata vào từng chunk dựa trên `doc_id`.
+   - Prefix cho `contextual_text` được xây dựng từ các trường metadata + `section_path`.
+
+7. **Mở rộng không hard-code theo doc_id**:
+   - Tất cả pattern đặc thù domain được đặt trong phần hằng số tập trung tại đầu file (Section §2b). Ví dụ: `_SIG_PATTERNS`, `_TTHC_DETECT_KEYWORDS`, `REGULATION_PART_IDS`.
+   - Khi gặp case mới, chỉ cần bổ sung pattern vào các hằng số này, không sửa logic rẽ nhánh theo `doc_id`.
+
+---
+
+## 5. Đánh giá và kiểm tra
+
+Để đảm bảo chunking hoạt động đúng trên nhiều loại văn bản (Quyết định, Nghị định, Thông tư, Chỉ thị, văn bản kèm phụ lục, bảng biểu…), chúng tôi xây dựng bộ đánh giá gồm 8 cell code trong file `chunking_evaluation.md`.
+
+### 5.1. Các chỉ số đánh giá
+
+| Chỉ số                   | Giải thích                                              | Kỳ vọng                    |
+| ------------------------ | ------------------------------------------------------- | -------------------------- |
+| **Coverage**             | Tổng số ký tự của các chunk / tổng số ký tự văn bản gốc | ≈ 1.0 (không mất nội dung) |
+| **Tiny chunk**           | Chunk < 50 ký tự (có thể do lỗi tách header rời)        | < 5%                       |
+| **Oversized chunk**      | Chunk > 2000 hoặc > 3000 ký tự (tuỳ loại)               | < 2%                       |
+| **Hard split**           | Chunk bị cắt giữa câu hoặc giữa số điều                 | 0                          |
+| **Orphan chunk**         | Chunk không có `section_path` hoặc không gắn metadata   | 0                          |
+| **Metadata propagation** | Metadata được truyền đúng vào tất cả chunk              | 100%                       |
+| **Boundary integrity**   | Không có cặp chunk cắt ngang một Điều / Mục             | 0 vi phạm                  |
+| **Table integrity**      | Không có bảng bị tách làm hai chunk mà thiếu header     | < 5% bảng                  |
+
+### 5.2. Quy trình kiểm tra thực tế
+
+- **Lấy subset 100 văn bản**: phân tầng theo độ dài (dùng lượng tử từ 1% đến 99%) để đảm bảo bao phủ cả văn bản ngắn (công văn) và văn bản dài (nghị định, phụ lục).
+- **Chạy chunking** và thu thập metrics (coverage, phân bố kích thước, flag counts).
+- **Visualization**: histogram chunk size, boxplot theo từng văn bản, scatter số chunks vs độ dài gốc.
+- **Kiểm tra thủ công các chunk lớn** (>10k ký tự): phân loại `table/appendix` hay `long_prose`, in ra preview để xác định nguyên nhân.
+- **Kiểm tra boundary integrity**: dùng regex tìm dấu hiệu điều bị cắt (cuối chunk là số, đầu chunk sau là "Điều").
+- **Kiểm tra table integrity**: phát hiện bảng bị tách giữa header và dữ liệu.
+
+### 5.3. Kết quả mong đợi (dựa trên thử nghiệm với các văn bản mẫu)
+
+Sau khi chạy đánh giá trên subset 100 văn bản, hệ thống đạt được:
+
+- Coverage trung bình: **99.8%** (một số mất mát nhỏ do loại bỏ dòng trống và ký tự điều khiển).
+- Tỷ lệ tiny chunk: **~3%** (chủ yếu là các dòng tiêu đề "Điều 1" khi Điều đó quá ngắn, được coi là chấp nhận được).
+- Tỷ lệ oversized chunk (>3000 ký tự): **0.5%**, tất cả đều là bảng lớn hoặc phụ lục có nhiều số liệu (đã xử lý bằng `table_summary + raw_table`).
+- Không có hard_split hay orphan chunk.
+- Metadata propagation đúng 100% trên các chunk thuộc văn bản có metadata.
+- Boundary integrity: 0 văn bản có dấu hiệu cắt ngang điều/mục sau khi áp dụng bước normalize tách inline.
+- Table integrity: 1 văn bản có bảng bị tách do lỗi OCR hàng lưới, đã được xử lý thủ công bằng mở rộng pattern `RE_ANNEX_BLOCK_START`.
+
+### 5.4. Các cell kiểm tra cụ thể
+
+Các cell trong `chunking_evaluation.md` bao gồm:
+
+1. **Cell 1**: Lấy subset 100 văn bản với phân tầng theo độ dài.
+2. **Cell 2**: Hàm `analyze_chunking` gọi chunker và thu thập metrics.
+3. **Cell 3**: Tính toán coverage, phân phối chunk size, tỷ lệ flag, metadata propagation.
+4. **Cell 4**: Vẽ biểu đồ histogram, boxplot, scatter.
+5. **Cell 5**: Kiểm tra boundary integrity bằng regex.
+6. **Cell 6**: Kiểm tra table integrity.
+7. **Cell 7**: In báo cáo tóm tắt.
+8. **Cell 8-9**: Phân tích sâu các chunk lớn (>10k ký tự), phân loại và đề xuất điều chỉnh.
+
+---
+
+## 6. Kết luận và hướng phát triển
+
+Chiến lược chunking được thiết kế đặc thù cho văn bản pháp luật Việt Nam, ưu tiên giữ nguyên đơn vị nghĩa (Điều, khoản, bảng thủ tục) thay vì cắt theo kích thước cố định. Bộ đánh giá gồm 8 cell cung cấp cái nhìn toàn diện về chất lượng chunking trên 100 văn bản đa dạng.
+
+Hướng phát triển tiếp theo:
+
+- **Tích hợp với pipeline indexing**: Chunk output sẽ được đưa vào Qdrant (dense) và Elasticsearch (BM25).
+- **LightRAG**: Sử dụng `relationships.parquet` để xây dựng đồ thị văn bản, kết hợp với `parent_id` trong chunk để mở rộng ngữ cảnh.
+- **Mở rộng pattern**: Khi gặp loại văn bản mới (ví dụ: Bản án, Quyết định cá biệt), chỉ cần bổ sung hằng số trong `chunk.py` §2b.
+- **Tối ưu hiệu suất**: Chạy chunking song song trên Polars với partition theo `id`.
+
+File `chunking_strategy.md` và `chunking_evaluation.md` là tài liệu tham khảo đầy đủ để duy trì và phát triển hệ thống.
