@@ -4,6 +4,7 @@ import html
 import json
 import time
 import logging
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -122,7 +123,11 @@ for d in [RAW_DIR, INTERIM_DIR, PROCESSED_DIR, LOGS_DIR, DLQ_DIR]:
 # File checkpoint & log
 CHECKPOINT_FILE = LOGS_DIR / "checkpoint.json"
 DLQ_FILE = DLQ_DIR / "failed_documents.parquet"
-FINAL_CHUNKS_PATTERN = PROCESSED_DIR / "chunks_final_*.parquet"
+CHUNKS_OUTPUT = PROCESSED_DIR / "chunks.parquet"
+METADATA_OUTPUT = PROCESSED_DIR / "metadata.parquet"
+CHUNKS_ZIP = PROCESSED_DIR / "chunks.zip"
+METADATA_ZIP = PROCESSED_DIR / "metadata.zip"
+DATASET_ZIP = PROCESSED_DIR / "legal_chunking_dataset.zip"
 LOG_FILE = LOGS_DIR / "pipeline.log"
 
 # Tham số xử lý
@@ -264,11 +269,31 @@ def get_all_doc_ids() -> List[int]:
     df_lazy = pl.scan_parquet(CONTENT_PATH).select("id")
     return df_lazy.collect().to_series().to_list()
 
+
+def append_chunks_to_output(batch_df: pl.DataFrame) -> None:
+    """Ghi/append vào một file chunks.parquet duy nhất (không tách theo batch)."""
+    if CHUNKS_OUTPUT.exists():
+        existing = pl.read_parquet(CHUNKS_OUTPUT)
+        batch_df = pl.concat([existing, batch_df], how="vertical_relaxed")
+    batch_df.write_parquet(CHUNKS_OUTPUT, compression="snappy")
+
+
+def _cleanup_legacy_interim_chunks() -> None:
+    for path in INTERIM_DIR.glob("chunks_batch_*.parquet"):
+        path.unlink(missing_ok=True)
+
+
 def run_pipeline():
     start_time = time.time()
     processed_ids = load_checkpoint()
     all_doc_ids = get_all_doc_ids()
-    
+
+    # Chạy mới từ đầu: xóa file chunk cũ và interim legacy (nếu có)
+    if not processed_ids:
+        if CHUNKS_OUTPUT.exists():
+            CHUNKS_OUTPUT.unlink()
+        _cleanup_legacy_interim_chunks()
+
     to_process = [doc_id for doc_id in all_doc_ids if doc_id not in processed_ids]
     total_to_process = len(to_process)
     logging.info(f"Total documents: {len(all_doc_ids)}, already processed: {len(processed_ids)}, remaining: {total_to_process}")
@@ -279,8 +304,8 @@ def run_pipeline():
     total_chunks = 0
     total_errors = 0
     processed_count = 0
-    
-        # Tạo một ProcessPoolExecutor dùng chung cho tất cả batch
+
+    # Tạo một ProcessPoolExecutor dùng chung cho tất cả batch
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         with tqdm(total=total_to_process, desc="Processing legal documents", unit="doc", mininterval=0.2) as pbar:
             for batch_idx, batch_ids in enumerate(batches):
@@ -303,12 +328,11 @@ def run_pipeline():
                 pbar.update(num_docs_in_batch)
                 processed_count += num_docs_in_batch
                 
-                # Sau khi batch hoàn tất, ghi kết quả ra file
+                # Sau khi batch hoàn tất, append vào file chunks duy nhất
                 if batch_chunks:
                     normalized_chunks = [normalize_chunk_record(c, c.get("doc_id")) for c in batch_chunks]
                     chunk_df = pl.DataFrame(normalized_chunks, schema=CHUNK_SCHEMA, strict=False)
-                    interim_file = INTERIM_DIR / f"chunks_batch_{batch_idx:04d}.parquet"
-                    chunk_df.write_parquet(interim_file)
+                    append_chunks_to_output(chunk_df)
                     total_chunks += len(batch_chunks)
                 
                 if batch_errors:
@@ -335,3 +359,152 @@ def run_pipeline():
 
 # Chạy pipeline
 total_chunks, total_errors, elapsed = run_pipeline()
+
+def _write_parquet_zip(parquet_path: Path, zip_path: Path) -> None:
+    """Nén một file parquet vào zip (tên entry = tên file parquet)."""
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(parquet_path, arcname=parquet_path.name)
+
+
+def finalize_processed_tables() -> Tuple[Optional[pl.DataFrame], Optional[pl.DataFrame]]:
+    """
+    Đọc file chunks.parquet duy nhất, xuất metadata riêng và zip.
+    FK: chunks.doc_id -> metadata.id
+    """
+    if not CHUNKS_OUTPUT.exists():
+        # Tương thích run cũ: gộp interim một lần rồi xóa
+        interim_files = list(INTERIM_DIR.glob("chunks_batch_*.parquet"))
+        if not interim_files:
+            logging.warning("No chunks file found. Run pipeline first.")
+            return None, None
+        chunks_df = pl.scan_parquet(str(INTERIM_DIR / "chunks_batch_*.parquet")).collect()
+        chunks_df.write_parquet(CHUNKS_OUTPUT, compression="snappy")
+        _cleanup_legacy_interim_chunks()
+        logging.info(f"Merged legacy interim -> {CHUNKS_OUTPUT}")
+    else:
+        chunks_df = pl.read_parquet(CHUNKS_OUTPUT)
+
+    logging.info(f"Chunks table: {chunks_df.height} rows -> {CHUNKS_OUTPUT}")
+
+    doc_ids = chunks_df.select("doc_id").unique()
+    metadata_df = (
+        pl.scan_parquet(META_PATH)
+        .filter(pl.col("id").is_in(doc_ids.get_column("doc_id")))
+        .collect()
+    )
+    metadata_df.write_parquet(METADATA_OUTPUT, compression="snappy")
+    logging.info(f"Metadata table: {metadata_df.height} rows -> {METADATA_OUTPUT}")
+
+    _write_parquet_zip(CHUNKS_OUTPUT, CHUNKS_ZIP)
+    _write_parquet_zip(METADATA_OUTPUT, METADATA_ZIP)
+    with zipfile.ZipFile(DATASET_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(CHUNKS_OUTPUT, arcname=CHUNKS_OUTPUT.name)
+        zf.write(METADATA_OUTPUT, arcname=METADATA_OUTPUT.name)
+    logging.info(
+        f"Zips written: {CHUNKS_ZIP.name}, {METADATA_ZIP.name}, {DATASET_ZIP.name}"
+    )
+
+    return chunks_df, metadata_df
+
+
+chunks_df, metadata_df = finalize_processed_tables()
+
+def quality_gates(df: pl.DataFrame, original_content_path: str = CONTENT_PATH):
+    """Thực hiện các kiểm tra chất lượng và in báo cáo"""
+    print("\n=== DATA QUALITY GATES ===\n")
+    
+    # 1. Coverage Test: so sánh tổng độ dài text chunk so với văn bản gốc
+    original_lazy = pl.scan_parquet(original_content_path).select("content")
+    total_original_chars = original_lazy.select(pl.col("content").str.len_bytes().sum()).collect().item()
+    
+    # Giả sử chunk có trường 'chunk_text' hoặc 'content'
+    chunk_text_col = "chunk_text" if "chunk_text" in df.columns else "content"
+    total_chunk_chars = df.select(pl.col(chunk_text_col).str.len_bytes().sum()).item()
+    coverage_ratio = total_chunk_chars / total_original_chars if total_original_chars else 0
+    print(f"Coverage Ratio (chunk chars / original chars): {coverage_ratio:.4f}")
+    assert 0.95 <= coverage_ratio <= 1.05, f"Coverage out of range: {coverage_ratio}"
+    
+    # 2. Integrity Test: không có chunk thiếu doc_id, chunk_text, chunk_type
+    required_cols = ["doc_id", chunk_text_col, "chunk_type"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        print(f"WARNING: Missing columns: {missing_cols}")
+    else:
+        null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in required_cols]).row(0)
+        for col, nulls in zip(required_cols, null_counts):
+            print(f"Nulls in {col}: {nulls} (should be 0)")
+            assert nulls == 0, f"Integrity failed: {col} has nulls"
+    
+    # Orphan Chunk: doc_id không tồn tại trong metadata
+    meta_ids = set(pl.read_parquet(META_PATH)["id"].to_list())
+    orphan_ids = df.filter(~pl.col("doc_id").is_in(meta_ids)).select("doc_id").unique().to_series().to_list()
+    print(f"Orphan chunks (doc_id not in metadata): {len(orphan_ids)}")
+    
+    # 3. Phân phối kích thước chunk (tính bằng số ký tự)
+    chunk_lengths = df.select(pl.col(chunk_text_col).str.len_bytes()).to_series()
+    print(f"\nChunk size distribution (bytes):")
+    print(f"  Min: {chunk_lengths.min()}, Max: {chunk_lengths.max()}, Mean: {chunk_lengths.mean():.2f}")
+    oversized = (chunk_lengths > 2000).sum()
+    tiny = (chunk_lengths < 50).sum()
+    print(f"  Oversized (>2000 chars): {oversized} chunks")
+    print(f"  Tiny (<50 chars): {tiny} chunks")
+    
+    # 4. Báo cáo tổng kết pipeline (nếu có log file)
+    print("\n=== EXECUTION SUMMARY ===")
+    if LOG_FILE.exists():
+        with open(LOG_FILE, "r") as f:
+            lines = f.readlines()
+        # Lấy dòng cuối chứa "PIPELINE FINISHED"
+        summary_line = [l for l in lines if "PIPELINE FINISHED" in l]
+        if summary_line:
+            print(summary_line[-1].strip())
+    print(f"Total final chunks: {df.height}")
+    
+    # Lưu báo cáo dạng JSON
+    report = {
+        "coverage_ratio": coverage_ratio,
+        "total_original_chars": int(total_original_chars),
+        "total_chunk_chars": int(total_chunk_chars),
+        "orphan_chunks": len(orphan_ids),
+        "chunk_size_stats": {
+            "min": int(chunk_lengths.min()),
+            "max": int(chunk_lengths.max()),
+            "mean": float(chunk_lengths.mean()),
+            "oversized_count": int(oversized),
+            "tiny_count": int(tiny)
+        },
+        "total_chunks": df.height
+    }
+    report_path = PROCESSED_DIR / "quality_report.json"
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"\nQuality report saved to {report_path}")
+    
+    return report
+
+# Gọi kiểm định (nếu chunks_df tồn tại)
+if chunks_df is not None:
+    quality_report = quality_gates(chunks_df)
+else:
+    print("No chunks to validate. Run finalize_processed_tables() first.")
+
+# Thống kê số lượng chunk theo loại văn bản (join chunks + metadata)
+if chunks_df is not None and metadata_df is not None:
+    type_stats = (
+        chunks_df.join(metadata_df, left_on="doc_id", right_on="id", how="left")
+        .group_by("legal_type")
+        .agg(pl.len().alias("count"))
+        .sort("count", descending=True)
+    )
+    print("\nChunk distribution by legal_type:")
+    print(type_stats.head(10).to_pandas().to_string(index=False))
+    type_stats.write_parquet(PROCESSED_DIR / "chunk_stats_by_type.parquet")
+
+    dlq_path = DLQ_DIR / "failed_documents.parquet"
+    if dlq_path.exists():
+        dlq_df = pl.read_parquet(dlq_path)
+        print(f"\nDead Letter Queue contains {dlq_df.height} failed documents.")
+        print("Sample errors:")
+        print(dlq_df.head(5).to_pandas().to_string())
+    else:
+        print("\nNo failed documents in DLQ.")
