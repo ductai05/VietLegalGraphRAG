@@ -26,6 +26,12 @@ class ChunkingConfig:
 
     parse_procedure_tables: bool = True
 
+    # Long prose splitting (article/block > threshold → hierarchical split)
+    long_prose_threshold: int = 3000     # chars > này với prose block → split tiếp
+    long_prose_target_chars: int = 1400  # target khi hierarchical split (800–1800)
+    long_prose_max_chars: int = 2500     # hard max sau hierarchical split
+    table_summary_threshold: int = 3000  # bảng > này → table_summary + raw_table
+
 
 CONFIG = ChunkingConfig()
 
@@ -128,6 +134,14 @@ RE_INLINE_NUMBERED_CLAUSE = re.compile(
     r"(?<=[.;:\)）])\s+(\d{1,2})\.\s+(?=[A-ZÀ-ỴĐ])",
 )
 
+# Điểm a) b) c) đầu dòng trong khoản (chữ thường kể cả đ, sau normalize)
+RE_DIEM_START = re.compile(r"(?m)(?=^[ \t]*[a-zđ][)\.]\s)", re.UNICODE)
+# Nhận diện văn bản có cấu trúc luật (Điều, Chương) — dùng để detect appendix sub-doc
+RE_HAS_ARTICLE_MARKER = re.compile(
+    r"(?m)^\s*(ĐIỀU|Điều)\s+\d+|^\s*(CHƯƠNG|Chương)\s+[IVXLCDM\d]",
+    re.IGNORECASE,
+)
+
 
 # ============================================================
 # 2b. GENERALIZABLE CONSTANTS  (mở rộng tại đây, không sửa logic)
@@ -218,6 +232,24 @@ _APPENDIX_HEADING_KEYWORDS: frozenset = frozenset({
     "TTHC", "LĨNH VỰC", "NHÓM LĨNH VỰC", "THỦ TỤC HÀNH CHÍNH",
     "NGÀNH", "PHÂN NHÓM", "LOẠI",
 })
+
+# --------------- Retrieval index flags ---------------
+# Chunk types KHÔNG embed vào dense vector index.
+_NO_EMBED_TYPES: frozenset = frozenset({
+    "raw_table", "signature", "distribution_list",
+})
+# Chunk types KHÔNG index BM25/keyword search.
+_NO_BM25_TYPES: frozenset = frozenset({
+    "signature", "distribution_list",
+})
+
+
+def get_retrieval_flags(chunk_type: str) -> Tuple[bool, bool]:
+    """Trả về (embed, keyword_index) cho chunk_type đã cho."""
+    return (
+        chunk_type not in _NO_EMBED_TYPES,
+        chunk_type not in _NO_BM25_TYPES,
+    )
 
 
 # ============================================================
@@ -553,6 +585,24 @@ def normalize_heading_id(kind: str, number: Optional[str]) -> str:
     if number:
         return f"{kind} {number}".strip()
     return kind.strip()
+
+
+def _group_text_items(items: List[str], max_chars: int) -> List[str]:
+    """Gộp list các đoạn text thành nhóm không quá max_chars ký tự mỗi nhóm."""
+    groups: List[str] = []
+    current: List[str] = []
+    current_len = 0
+    for item in items:
+        if current and current_len + len(item) + 1 > max_chars:
+            groups.append("\n".join(current))
+            current = [item]
+            current_len = len(item)
+        else:
+            current.append(item)
+            current_len += len(item) + 1
+    if current:
+        groups.append("\n".join(current))
+    return groups
 
 
 # ============================================================
@@ -1029,6 +1079,20 @@ class VietnameseLegalChunker:
             )
             return
 
+        # Block prose lớn > long_prose_threshold
+        if len(text) > self.config.long_prose_threshold:
+            if self._has_legal_structure(text):
+                # Appendix dạng văn bản (Điều lệ, Đề án, Quy chế, ...) → re-parse
+                self._parse_appendix_subdoc(text, section_path)
+            else:
+                self._hierarchical_split_prose(
+                    text=text,
+                    chunk_type=self._chunk_type_for_split(typ),
+                    section_path=section_path,
+                    parent_key=self._make_parent_key(section_path),
+                )
+            return
+
         if len(text) <= self.config.max_chars:
             self._emit_chunk(
                 chunk_text=text,
@@ -1064,13 +1128,23 @@ class VietnameseLegalChunker:
 
         title_line, clauses = self._split_article_into_clauses(text)
         if not clauses:
-            self._split_prose(
-                text=text,
-                chunk_type="article",
-                section_path=section_path,
-                parent_key=parent_key,
-                section_title=article_title,
-            )
+            # Không tìm được khoản → hierarchical split nếu quá lớn
+            if len(text) > self.config.long_prose_threshold:
+                self._hierarchical_split_prose(
+                    text=text,
+                    chunk_type="article",
+                    section_path=section_path,
+                    parent_key=parent_key,
+                    section_title=article_title,
+                )
+            else:
+                self._split_prose(
+                    text=text,
+                    chunk_type="article",
+                    section_path=section_path,
+                    parent_key=parent_key,
+                    section_title=article_title,
+                )
             return
 
         roman_mode = clauses_use_roman_sections(clauses)
@@ -1079,22 +1153,36 @@ class VietnameseLegalChunker:
         current: List[str] = []
         current_len = len(title_line)
 
+        def _emit_group() -> None:
+            nonlocal first_emitted
+            body = "\n".join(current)
+            chunk_text = (f"{title_line}\n{body}" if first_emitted else body).strip()
+            first_emitted = False
+            if len(chunk_text) > self.config.long_prose_max_chars:
+                # Khoản gộp vẫn quá lớn → hierarchical split tiếp
+                self._hierarchical_split_prose(
+                    text=chunk_text,
+                    chunk_type="clause_group",
+                    section_path=section_path,
+                    parent_key=parent_key,
+                    section_title=article_title,
+                )
+            else:
+                self._emit_chunk(
+                    chunk_text=chunk_text,
+                    chunk_type="clause_group",
+                    section_path=section_path,
+                    section_title=article_title,
+                    parent_key=parent_key,
+                )
+
         for clause in clauses:
             clause = strip_leading_orphan_amounts(clause)
             if not clause:
                 continue
 
             if current and current_len + len(clause) > self.config.max_chars:
-                body = "\n".join(current)
-                chunk_text = f"{title_line}\n{body}" if first_emitted else body
-                self._emit_chunk(
-                    chunk_text=chunk_text.strip(),
-                    chunk_type="clause_group",
-                    section_path=section_path,
-                    section_title=article_title,
-                    parent_key=parent_key,
-                )
-                first_emitted = False
+                _emit_group()
 
                 if use_overlap:
                     overlap = strip_leading_orphan_amounts(
@@ -1111,15 +1199,7 @@ class VietnameseLegalChunker:
                 current_len += len(clause) + 1
 
         if current:
-            body = "\n".join(current)
-            chunk_text = f"{title_line}\n{body}" if first_emitted else body
-            self._emit_chunk(
-                chunk_text=chunk_text.strip(),
-                chunk_type="clause_group",
-                section_path=section_path,
-                section_title=article_title,
-                parent_key=parent_key,
-            )
+            _emit_group()
 
     def _extract_article_id_title(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         first = text.split("\n", 1)[0].strip()
@@ -1164,6 +1244,7 @@ class VietnameseLegalChunker:
     def _process_table(self, table_text: str, section_path: List[str]) -> None:
         parent_key = self._make_parent_key(section_path + ["Bảng"])
 
+        # Bảng TTHC → procedure_record (giữ nguyên, ưu tiên cao nhất)
         if self.config.parse_procedure_tables and self._looks_like_procedure_table(table_text):
             records = self._parse_procedure_table_records(table_text, section_path, parent_key)
             if records:
@@ -1173,6 +1254,7 @@ class VietnameseLegalChunker:
 
         rows = self._parse_pipe_rows(table_text)
 
+        # Bảng nhỏ (≤ table_max_chars hoặc ≤ 4 hàng) → table, embed bình thường
         if len(table_text) <= self.config.table_max_chars or len(rows) <= 4:
             self._emit_chunk(
                 chunk_text=table_text,
@@ -1182,6 +1264,25 @@ class VietnameseLegalChunker:
             )
             return
 
+        # Bảng rất lớn (> table_summary_threshold) → table_summary + raw_table
+        if len(table_text) > self.config.table_summary_threshold:
+            summary = self._generate_table_summary(table_text, section_path)
+            if summary.strip():
+                self._emit_chunk(
+                    chunk_text=summary,
+                    chunk_type="table_summary",
+                    section_path=section_path,
+                    parent_key=parent_key,
+                )
+            self._emit_chunk(
+                chunk_text=table_text,
+                chunk_type="raw_table",
+                section_path=section_path,
+                parent_key=parent_key,
+            )
+            return
+
+        # Bảng trung bình (table_max_chars < size ≤ table_summary_threshold)
         if len(table_text) > self.config.table_row_mode_threshold:
             self._split_large_table_rows(rows, section_path, parent_key)
             return
@@ -1591,6 +1692,188 @@ class VietnameseLegalChunker:
             start += step
 
     # --------------------------------------------------------
+    # Hierarchical long-prose splitting
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _has_legal_structure(text: str) -> bool:
+        """Kiểm tra text có chứa marker cấu trúc luật (Điều, Chương) để nhận sub-doc."""
+        return bool(RE_HAS_ARTICLE_MARKER.search(text))
+
+    @staticmethod
+    def _split_by_diem(text: str) -> List[str]:
+        """Tách điểm a) b) c) / a. b. c. đầu dòng — khoản con trong khoản."""
+        parts = RE_DIEM_START.split(text)
+        return [p.strip() for p in parts if p.strip()]
+
+    def _hierarchical_split_prose(
+        self,
+        text: str,
+        chunk_type: str,
+        section_path: List[str],
+        parent_key: str,
+        section_title: Optional[str] = None,
+    ) -> None:
+        """
+        Split theo thứ tự ưu tiên: điểm → paragraph → sentence → hard char.
+        Dùng khi text > long_prose_threshold.
+        Target: long_prose_target_chars; max mỗi chunk: long_prose_max_chars.
+        """
+        max_c = self.config.long_prose_max_chars
+
+        def emit(t: str) -> None:
+            self._emit_chunk(
+                chunk_text=t.strip(),
+                chunk_type=chunk_type,
+                section_path=section_path,
+                parent_key=parent_key,
+                section_title=section_title,
+            )
+
+        def sentence_or_hard(t: str) -> None:
+            if len(t) <= max_c:
+                emit(t)
+            else:
+                self._split_prose(t, chunk_type, section_path, parent_key, section_title)
+
+        if len(text) <= max_c:
+            emit(text)
+            return
+
+        # Cấp 1: điểm a) b) c)
+        diem_parts = self._split_by_diem(text)
+        if len(diem_parts) > 1:
+            for group in _group_text_items(diem_parts, max_c):
+                sentence_or_hard(group)
+            return
+
+        # Cấp 2: paragraph (\n\n)
+        paras = [p.strip() for p in text.split("\n\n") if p.strip()]
+        if len(paras) > 1:
+            for group in _group_text_items(paras, max_c):
+                sentence_or_hard(group)
+            return
+
+        # Cấp 3: sentence / hard char (fall through)
+        self._split_prose(text, chunk_type, section_path, parent_key, section_title)
+
+    # --------------------------------------------------------
+    # Appendix sub-document re-parsing
+    # --------------------------------------------------------
+
+    def _parse_appendix_subdoc(self, text: str, section_path: List[str]) -> None:
+        """
+        Re-parse một appendix/phần lớn có cấu trúc luật (Điều lệ, Đề án, Quy chế)
+        như sub-document. Tất cả chunk article/clause_group được gán chunk_type='appendix_text'.
+        """
+        parent_key = self._make_parent_key(section_path)
+        start_idx = len(self.chunks)
+
+        sub_blocks = self._merge_regulation_header_blocks(self._split_into_blocks(text))
+
+        for sub_block in sub_blocks:
+            sub_text = sub_block["text"]
+            sub_type = sub_block["type"]
+            if not sub_text:
+                continue
+
+            # Gộp section_path cha với sub-path (bỏ placeholder "Thân văn bản")
+            sub_path = [p for p in sub_block["section_path"] if p != "Thân văn bản"]
+            combined_path = list(section_path) + sub_path if sub_path else list(section_path)
+
+            if sub_type == "table":
+                self._process_table(sub_text, combined_path)
+            elif sub_type in {"distribution_list", "signature"}:
+                self._emit_chunk(
+                    chunk_text=sub_text,
+                    chunk_type=sub_type,
+                    section_path=combined_path,
+                    parent_key=parent_key,
+                )
+            elif sub_type == "article":
+                self._process_article(sub_text, combined_path)
+            else:
+                # Prose blocks trong sub-doc
+                if len(sub_text) > self.config.long_prose_threshold and self._has_legal_structure(sub_text):
+                    self._parse_appendix_subdoc(sub_text, combined_path)
+                elif len(sub_text) > self.config.long_prose_max_chars:
+                    self._hierarchical_split_prose(
+                        sub_text, "appendix_text", combined_path, parent_key
+                    )
+                else:
+                    self._emit_chunk(
+                        chunk_text=sub_text,
+                        chunk_type="appendix_text",
+                        section_path=combined_path,
+                        parent_key=parent_key,
+                    )
+
+        # Đổi chunk_type article/clause_group từ sub-doc → appendix_text
+        for chunk in self.chunks[start_idx:]:
+            if chunk["chunk_type"] in {"article", "clause_group"}:
+                chunk["chunk_type"] = "appendix_text"
+                chunk["embed"], chunk["keyword_index"] = get_retrieval_flags("appendix_text")
+            # Override parent_id về appendix parent
+            chunk["parent_id"] = stable_hash(parent_key)
+
+    # --------------------------------------------------------
+    # Table summary generation
+    # --------------------------------------------------------
+
+    def _generate_table_summary(self, table_text: str, section_path: List[str]) -> str:
+        """Sinh text mô tả bảng lớn cho table_summary chunk (embed=True)."""
+        rows = self._parse_pipe_rows(table_text)
+        lines: List[str] = []
+
+        # Tiêu đề từ section_path
+        path_parts = [p for p in section_path if p not in {"Thân văn bản", "Bảng"}]
+        if path_parts:
+            lines.append(" > ".join(path_parts[-3:]))
+            lines.append("")
+
+        if not rows:
+            lines.append(f"(Bảng {len(table_text)} ký tự)")
+            return "\n".join(lines)
+
+        # Hàng header
+        header = rows[0]
+        non_empty_headers = [
+            h.strip() for h in header if h.strip() and h.strip() not in {"-", "--", "---"}
+        ]
+        if non_empty_headers:
+            lines.append("Các cột:")
+            for h in non_empty_headers:
+                lines.append(f"- {h}")
+            lines.append("")
+
+        # Lấy nội dung cột đầu (category items) để mô tả phạm vi bảng
+        content_items: List[str] = []
+        for row in rows[1:]:
+            if not row:
+                continue
+            first = row[0].strip() if row else ""
+            # Bỏ qua số thứ tự thuần, lấy cột có nội dung ý nghĩa
+            if first and not re.match(r"^\d{1,4}$", first) and len(first) > 2:
+                content_items.append(first)
+            elif len(row) > 1:
+                second = row[1].strip()
+                if second and len(second) > 4 and not re.match(r"^[\d,.\s]+$", second):
+                    content_items.append(second)
+
+        if content_items:
+            lines.append("Bao gồm:")
+            for item in content_items[:10]:
+                lines.append(f"- {truncate(item, 100)}")
+            if len(content_items) > 10:
+                lines.append(f"- ... (và {len(content_items) - 10} mục khác)")
+            lines.append("")
+
+        lines.append(f"Tổng số hàng dữ liệu: {max(0, len(rows) - 1)}")
+        lines.append(f"Kích thước bảng gốc: {len(table_text)} ký tự")
+
+        return "\n".join(lines)
+
+    # --------------------------------------------------------
     # Chunk emission
     # --------------------------------------------------------
 
@@ -1630,6 +1913,7 @@ class VietnameseLegalChunker:
         )
 
         chunk_id = make_uuid()
+        embed, keyword_index = get_retrieval_flags(chunk_type)
 
         base: Dict[str, Any] = {
             "chunk_id": chunk_id,
@@ -1642,6 +1926,9 @@ class VietnameseLegalChunker:
             "chunk_type": chunk_type,
             "section_path": section_path,
             "procedure_name": procedure_name,
+
+            "embed": embed,
+            "keyword_index": keyword_index,
 
             "parent_id": stable_hash(parent_key),
             "prev_chunk_id": None,
@@ -1717,7 +2004,7 @@ class VietnameseLegalChunker:
         _preserve = {
             "preamble", "legal_basis", "article", "clause_group",
             "appendix", "appendix_group", "appendix_subgroup",
-            "part", "chapter", "section",
+            "part", "chapter", "section", "appendix_text",
         }
         if block_type in _preserve:
             return block_type

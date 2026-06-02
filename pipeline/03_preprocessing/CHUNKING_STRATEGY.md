@@ -61,11 +61,16 @@ Chỉ lưu trường **gắn với đơn vị truy hồi (retrieval unit)**. Fil
     "contextual_text": str,      # embed — prefix ngắn từ metadata + section_path
 
     "chunk_type": str,           # preamble | legal_basis | article | clause_group |
-                                 # appendix | table | table_part | procedure_record |
+                                 # appendix | appendix_text |
+                                 # table | table_part | table_summary | raw_table |
+                                 # procedure_record |
                                  # distribution_list | signature | short_text | fallback_text
 
     "section_path": list[str],   # vị trí trong văn bản: Phần/Chương/Điều/Phụ lục/...
     "procedure_name": str | None,  # chỉ khi chunk_type = procedure_record (tên TTHC trong bảng)
+
+    "embed": bool,               # True → đưa vào dense vector index
+    "keyword_index": bool,       # True → đưa vào BM25/keyword index
 
     "parent_id": str | None,     # expand trong cùng doc (clause → Điều, row → phụ lục)
     "prev_chunk_id": str | None,
@@ -173,6 +178,14 @@ overlap_chars: 150
 table_max_chars: 2000
 table_row_mode_threshold: 2500
 short_doc_threshold: 300
+
+# Long prose splitting
+long_prose_threshold: 3000    # prose/article > này → hierarchical split tiếp
+long_prose_target_chars: 1400 # target sau hierarchical split (800–1800)
+long_prose_max_chars: 2500    # hard max mỗi chunk sau hierarchical split
+
+# Table summary
+table_summary_threshold: 3000 # bảng > này → table_summary + raw_table
 ```
 
 ### 4.1. Điều / khoản / phụ lục
@@ -183,7 +196,21 @@ short_doc_threshold: 300
   - **Không** `smart_overlap` giữa các mục (tránh kéo `100.000`, `50.000` sang chunk sau).
   - Chỉ chunk **đầu** của Điều mang dòng tiêu đề `Điều N.`; các `clause_group` sau bắt đầu trực tiếp bằng mục `II`, `III`, …
   - Bỏ dòng chỉ là mức tiền (`orphan amount`) ở đầu/cuối khi ghép overlap (nếu có).
+- Khoản gộp vẫn vượt `long_prose_max_chars` (2500) sau bước trên → `_hierarchical_split_prose`.
 - Vẫn vượt `max_chars` sau khi tách khoản/mục → `_split_prose` → `split_sentences_vi` → `hard_char_split` (flag `hard_char_split`).
+
+#### Long prose splitting (`_hierarchical_split_prose`)
+
+Kích hoạt khi: `chunk_type != table` **và** `chars > long_prose_threshold` (3 000).
+
+Thứ tự ưu tiên:
+
+1. **Điểm** `a)` `b)` `c)` (đầu dòng) — khoản con trong khoản.
+2. **Paragraph** (`\n\n`) — khối văn bản tách hàng trắng.
+3. **Câu** (`split_sentences_vi`) — fallback.
+4. **Hard char** — khi không tách được câu.
+
+Target mỗi chunk: ≤ `long_prose_max_chars` (2 500 chars). Không còn chunk prose > 2 500 chars.
 
 **Tách câu (`split_sentences_vi`)** — dùng khi `_split_prose`, không phải chiến lược chính:
 
@@ -222,7 +249,36 @@ Một dòng được coi là **dòng bảng** khi:
 
 **Bảng markdown khác**
 
-- Bảng lớn → `table` hoặc `table_part` (row mode khi vượt `table_row_mode_threshold`).
+| Kích thước | Xử lý |
+| ---------- | ------ |
+| ≤ `table_max_chars` (2 000) hoặc ≤ 4 hàng | `table` (embed bình thường) |
+| (`table_max_chars`, `table_summary_threshold`] (2 000–3 000) | `table` hoặc `table_part` (row mode khi > `table_row_mode_threshold` = 2 500) |
+| > `table_summary_threshold` (3 000) | `table_summary` (embed=True) + `raw_table` (embed=False, keyword_index=True) |
+
+**`table_summary`** — text mô tả sinh tự động: tên bảng từ `section_path`, danh sách cột, sampling 10 hàng đầu từ cột nội dung, tổng số hàng. Kích thước: 300–1 000 chars.
+
+**`raw_table`** — giữ nguyên bảng markdown. Chỉ dùng khi cần tra số liệu chi tiết (BM25/keyword search).
+
+**Appendix dạng văn bản (Điều lệ, Đề án, Quy chế, …)**
+
+Khi một block không phải `table` có:
+- `len(text) > long_prose_threshold` (3 000) **và**
+- chứa marker `Điều N` hoặc `Chương N` (`RE_HAS_ARTICLE_MARKER`)
+
+→ `_parse_appendix_subdoc`: re-parse như sub-document luật bình thường:
+
+```text
+ĐIỀU LỆ
+  Chương I
+    Điều 1  →  appendix_text
+    Điều 2  →  appendix_text
+  Chương II
+    Điều 3  →  appendix_text
+```
+
+Chunk_type `appendix_text` (embed=True, keyword_index=True). Section_path kế thừa path phụ lục cha: `["Phụ lục 1", "ĐIỀU LỆ", "Điều 3"]`.
+
+Nếu block lớn nhưng **không** có cấu trúc luật → `_hierarchical_split_prose`.
 
 **Footer**
 
@@ -236,13 +292,33 @@ Một dòng được coi là **dòng bảng** khi:
 
 | Thành phần | Field / ghi chú |
 | ---------- | --------------- |
-| Dense      | `contextual_text` |
-| BM25       | `chunk_text`, `section_path`, `procedure_name` |
+| Dense      | `contextual_text` — chỉ chunk `embed=True` |
+| BM25       | `chunk_text`, `section_path`, `procedure_name` — chỉ chunk `keyword_index=True` |
 | Filter doc | Join `metadata`: `legal_type`, `issuing_authority`, `effect_status`, `linh_vuc`, … |
 | Filter chunk | `chunk_type`, `source`, phần tử trong `section_path` |
 | Rerank     | `contextual_text` |
 | Expand trong doc | `parent_id` (`procedure_record` → phụ lục/Điều; `clause_group` → Điều) |
 | Graph giữa VB | `relationships.parquet` + `doc_id` |
+
+### 5.1. Retrieval flags theo chunk_type
+
+| chunk_type | embed | keyword_index | Ghi chú |
+| ---------- | :---: | :-----------: | ------- |
+| `article` | ✅ | ✅ | Điều / khoản văn bản chính |
+| `clause_group` | ✅ | ✅ | Nhóm khoản từ Điều dài |
+| `appendix_text` | ✅ | ✅ | Chunk từ appendix có cấu trúc luật (Điều lệ, Đề án, …) |
+| `procedure_record` | ✅ | ✅ | Một thủ tục hành chính |
+| `table_summary` | ✅ | ✅ | Mô tả tóm tắt bảng lớn |
+| `table` | ✅ | ✅ | Bảng nhỏ/trung bình |
+| `table_part` | ✅ | ✅ | Phần của bảng trung bình |
+| `raw_table` | ❌ | ✅ | Bảng lớn nguyên bản — chỉ keyword search |
+| `preamble` | ✅ | ✅ | Phần mở đầu |
+| `appendix` / `appendix_group` | ✅ | ✅ | Tiêu đề phụ lục / nhóm |
+| `signature` | ❌ | ❌ | Chữ ký — không index |
+| `distribution_list` | ❌ | ❌ | Nơi nhận — không index |
+| `short_text` / `fallback_text` | ✅ | ✅ | Văn bản ngắn / fallback |
+
+Các flags này được ghi trực tiếp vào chunk (`embed: bool`, `keyword_index: bool`) — không cần lookup lại khi build index.
 
 ---
 
@@ -252,7 +328,7 @@ Một dòng được coi là **dòng bảng** khi:
 
 **Flags**: `oversized_chunk`, `tiny_chunk`, `hard_char_split`, `short_document`, …
 
-**Ngưỡng**: 0 chunk rỗng; <2% oversized; `procedure_record` phải có `procedure_name`.
+**Ngưỡng**: 0 chunk rỗng; <2% oversized (`> hard_max_chars = 3000`); `procedure_record` phải có `procedure_name`; **không còn** chunk prose `> long_prose_max_chars` (2 500).
 
 **Sanity check thủ công** (mẫu đã gặp):
 
@@ -299,15 +375,20 @@ short document           → short_text
 preamble / công văn      → preamble (kể cả dòng dài có | letterhead)
 article legal text       → article / clause_group
   └ Điều dài + mục Roman (_ROMAN) → clause_group (Roman split, không prose-first)
+  └ khoản gộp > long_prose_max_chars → _hierarchical_split_prose (điểm→para→câu)
 Nghị quyết + khối đính kèm → part (QUY ĐỊNH | DANH MỤC | …) gộp Điều 1 → article / clause_group
   └ path: [<KHỐI ĐÍNH KÈM>, Điều N]
 QĐ/NĐ/TT                 → legal structure (preamble, article, …)
 Chỉ thị / NQ chỉ khoản   → preamble + Khoản 1/2/3 (`RE_NUMBERED_CLAUSE_HEADING`, không `Điều`)
+appendix dạng văn bản    → _parse_appendix_subdoc → appendix_text (khi > 3 000 chars + có Điều/Chương)
+  └ path: [Phụ lục N, ĐIỀU LỆ, Điều M]
+appendix prose lớn       → _hierarchical_split_prose → appendix_text
 appendix                 → appendix → appendix_group (heading keywords) → procedure_record (row)
 markdown table (guard)   → table / table_part / procedure_record (TTHC keywords)
+  └ > table_summary_threshold → table_summary (embed) + raw_table (no embed)
   └ heading (Điều/Chương/…) trước is_probably_table_line → section_path đúng khi Điều + pipe cùng dòng
 footer                   → distribution_list | signature (_SIG_PATTERNS)
-unknown long text        → split_sentences_vi → fallback_text | hard_char_split
+unknown long prose       → _hierarchical_split_prose → fallback_text | hard_char_split
 ```
 
 Không dùng một splitter cố định cho toàn corpus. Mở rộng hành vi: **§3.4** (`chunk.py` §2b), không patch theo từng `doc_id`.
