@@ -1,5 +1,4 @@
 import re
-import uuid
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -427,10 +426,6 @@ def metadata_lookup_from_dataframe(metadata_df, id_col: str = "id") -> Dict[Any,
 
 def stable_hash(value: str, length: int = 16) -> str:
     return hashlib.sha1(value.encode("utf-8")).hexdigest()[:length]
-
-
-def make_uuid() -> str:
-    return str(uuid.uuid4())
 
 
 def truncate(value: Optional[str], max_len: int) -> Optional[str]:
@@ -2119,7 +2114,7 @@ class VietnameseLegalChunker:
             procedure_name=procedure_name,
         )
 
-        chunk_id = make_uuid()
+        chunk_id = self._make_chunk_id(len(self.chunks) + 1)
         embed, keyword_index = get_retrieval_flags(chunk_type)
         char_count = len(chunk_text)
 
@@ -2234,6 +2229,9 @@ class VietnameseLegalChunker:
 
     def _make_parent_key(self, section_path: List[str]) -> str:
         return f"{self.doc_id}::{' > '.join(section_path)}"
+
+    def _make_chunk_id(self, ordinal: int) -> str:
+        return f"chunk:{self.doc_id}:{ordinal:06d}"
 
     @staticmethod
     def _chunk_type_for_split(block_type: str) -> str:
