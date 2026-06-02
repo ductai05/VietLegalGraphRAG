@@ -31,6 +31,8 @@ class ChunkingConfig:
     long_prose_target_chars: int = 1400  # target khi hierarchical split (800–1800)
     long_prose_max_chars: int = 2500     # hard max sau hierarchical split
     table_summary_threshold: int = 3000  # bảng > này → table_summary + raw_table
+    table_summary_max_chars: int = 1000  # cap độ dài table_summary (embed target)
+    table_summary_max_columns: int = 12   # OCR 1 hàng nhiều cột — không liệt kê hết
 
 
 CONFIG = ChunkingConfig()
@@ -111,7 +113,9 @@ RE_INLINE_ARTICLE_AFTER_PERIOD = re.compile(
 )
 
 RE_ANNEX_BLOCK_START = re.compile(
-    r"\b(DANH\s+MỤC|PHỤ\s+LỤC)\b",
+    r"\b(DANH\s+MỤC|PHỤ\s+LỤC"
+    r"|ĐỀ\s+ÁN|ĐIỀU\s+LỆ|QUY\s+CHẾ|NỘI\s+QUY"
+    r"|Biểu\s+số\s+\d+)\b",
     re.IGNORECASE,
 )
 
@@ -1071,6 +1075,23 @@ class VietnameseLegalChunker:
             return
 
         if typ in {"distribution_list", "signature"}:
+            # Safety net: sig/dist quá lớn → OCR đã nuốt appendix vào block này.
+            # Cố gắng tách phần phụ lục ra và xử lý riêng.
+            if len(text) > self.config.long_prose_threshold:
+                annex_m = RE_ANNEX_BLOCK_START.search(text)
+                if annex_m and annex_m.start() > 20:
+                    actual_sig = text[:annex_m.start()].strip()
+                    extra_content = text[annex_m.start():].strip()
+                    if actual_sig:
+                        self._emit_chunk(
+                            chunk_text=actual_sig,
+                            chunk_type=typ,
+                            section_path=section_path,
+                            parent_key=self._make_parent_key(section_path),
+                        )
+                    if extra_content:
+                        self._parse_appendix_subdoc(extra_content, section_path)
+                    return
             self._emit_chunk(
                 chunk_text=text,
                 chunk_type=typ,
@@ -1253,19 +1274,10 @@ class VietnameseLegalChunker:
                 return
 
         rows = self._parse_pipe_rows(table_text)
+        table_len = len(table_text)
 
-        # Bảng nhỏ (≤ table_max_chars hoặc ≤ 4 hàng) → table, embed bình thường
-        if len(table_text) <= self.config.table_max_chars or len(rows) <= 4:
-            self._emit_chunk(
-                chunk_text=table_text,
-                chunk_type="table",
-                section_path=section_path,
-                parent_key=parent_key,
-            )
-            return
-
-        # Bảng rất lớn (> table_summary_threshold) → table_summary + raw_table
-        if len(table_text) > self.config.table_summary_threshold:
+        # Bảng rất lớn — luôn table_summary + raw_table (kể cả OCR 1–2 dòng nhiều pipe)
+        if table_len > self.config.table_summary_threshold:
             summary = self._generate_table_summary(table_text, section_path)
             if summary.strip():
                 self._emit_chunk(
@@ -1282,8 +1294,18 @@ class VietnameseLegalChunker:
             )
             return
 
-        # Bảng trung bình (table_max_chars < size ≤ table_summary_threshold)
-        if len(table_text) > self.config.table_row_mode_threshold:
+        # Bảng nhỏ → embed bình thường
+        if table_len <= self.config.table_max_chars:
+            self._emit_chunk(
+                chunk_text=table_text,
+                chunk_type="table",
+                section_path=section_path,
+                parent_key=parent_key,
+            )
+            return
+
+        # Bảng trung bình: nhiều hàng → table_part; ít hàng → một chunk table
+        if len(rows) > 4 and table_len > self.config.table_row_mode_threshold:
             self._split_large_table_rows(rows, section_path, parent_key)
             return
 
@@ -1842,8 +1864,11 @@ class VietnameseLegalChunker:
         ]
         if non_empty_headers:
             lines.append("Các cột:")
-            for h in non_empty_headers:
-                lines.append(f"- {h}")
+            max_cols = self.config.table_summary_max_columns
+            for h in non_empty_headers[:max_cols]:
+                lines.append(f"- {truncate(h, 80)}")
+            if len(non_empty_headers) > max_cols:
+                lines.append(f"- ... ({len(non_empty_headers) - max_cols} cột khác)")
             lines.append("")
 
         # Lấy nội dung cột đầu (category items) để mô tả phạm vi bảng
@@ -1871,7 +1896,8 @@ class VietnameseLegalChunker:
         lines.append(f"Tổng số hàng dữ liệu: {max(0, len(rows) - 1)}")
         lines.append(f"Kích thước bảng gốc: {len(table_text)} ký tự")
 
-        return "\n".join(lines)
+        summary = "\n".join(lines)
+        return truncate(summary, self.config.table_summary_max_chars) or summary
 
     # --------------------------------------------------------
     # Chunk emission
@@ -1895,13 +1921,17 @@ class VietnameseLegalChunker:
         if quality_flags:
             flags.extend(quality_flags)
 
-        if len(chunk_text) > self.config.hard_max_chars:
+        if (
+            len(chunk_text) > self.config.hard_max_chars
+            and chunk_type not in {"raw_table"}
+        ):
             flags.append("oversized_chunk")
         if len(chunk_text) < self.config.min_chars and chunk_type not in {
             "short_text",
             "signature",
             "distribution_list",
             "procedure_record",
+            "table_summary",
         }:
             flags.append("tiny_chunk")
 

@@ -251,11 +251,11 @@ Một dòng được coi là **dòng bảng** khi:
 
 | Kích thước | Xử lý |
 | ---------- | ------ |
-| ≤ `table_max_chars` (2 000) hoặc ≤ 4 hàng | `table` (embed bình thường) |
-| (`table_max_chars`, `table_summary_threshold`] (2 000–3 000) | `table` hoặc `table_part` (row mode khi > `table_row_mode_threshold` = 2 500) |
-| > `table_summary_threshold` (3 000) | `table_summary` (embed=True) + `raw_table` (embed=False, keyword_index=True) |
+| ≤ `table_max_chars` (2 000) | `table` (embed bình thường) |
+| (`table_max_chars`, `table_summary_threshold`] (2 000–3 000) | `table` hoặc `table_part` (khi > `table_row_mode_threshold` **và** > 4 hàng parse được) |
+| > `table_summary_threshold` (3 000) | `table_summary` (embed=True) + `raw_table` (embed=False, keyword_index=True) — **theo kích thước text**, không phụ thuộc số hàng (OCR 1–2 dòng dài vẫn tách) |
 
-**`table_summary`** — text mô tả sinh tự động: tên bảng từ `section_path`, danh sách cột, sampling 10 hàng đầu từ cột nội dung, tổng số hàng. Kích thước: 300–1 000 chars.
+**`table_summary`** — text mô tả sinh tự động: tên bảng từ `section_path`, tối đa `table_summary_max_columns` (12) cột, sampling 10 hàng, cap `table_summary_max_chars` (1 000). OCR 1 hàng nhiều pipe không làm summary phình theo số cột.
 
 **`raw_table`** — giữ nguyên bảng markdown. Chỉ dùng khi cần tra số liệu chi tiết (BM25/keyword search).
 
@@ -283,8 +283,12 @@ Nếu block lớn nhưng **không** có cấu trúc luật → `_hierarchical_sp
 **Footer**
 
 - Tách tại `Nơi nhận:` (`RE_FOOTER`).
-- Trong khối footer: vị trí chữ ký tìm bằng `_SIG_PATTERNS` (KT./TM., CHỦ TỊCH, BỘ TRƯỞNG, CỤC TRƯỞNG, VIỆN TRƯỞNG, …) → `distribution_list` + `signature`.
+- **Kéo phụ lục về body**: trước khi tách dist/sig, tìm `RE_ANNEX_BLOCK_START` trong footer — nếu tìm thấy ở vị trí > 0, chuyển phần đó trở lại `body`:
+  - Pattern nhận ra: `DANH MỤC`, `PHỤ LỤC`, `ĐỀ ÁN`, `ĐIỀU LỆ`, `QUY CHẾ`, `NỘI QUY`, `Biểu số N`
+  - Fallback: tìm `RE_PIPE_GRID_ROW` (lưới bảng pipe) ở vị trí > 20 → cũng kéo về body.
+- Trong khối footer còn lại: vị trí chữ ký tìm bằng `_SIG_PATTERNS` (KT./TM., CHỦ TỊCH, BỘ TRƯỞNG, CỤC TRƯỞNG, VIỆN TRƯỞNG, …) → `distribution_list` + `signature`.
 - Thiếu pattern chức danh → cả khối gom `distribution_list`.
+- **Safety net**: nếu `signature` hoặc `distribution_list` vẫn > `long_prose_threshold` (3 000) sau bước trên, tìm `RE_ANNEX_BLOCK_START` bên trong block — nếu tìm thấy ở vị trí > 20, tách phần đó ra và xử lý bằng `_parse_appendix_subdoc`.
 
 ---
 
@@ -337,6 +341,7 @@ Các flags này được ghi trực tiếp vào chunk (`embed: bool`, `keyword_i
 | Công văn 1 chunk `table`, `section_path=["Thân văn bản"]` | `\|` letterhead trên 1 dòng | `preamble` (hoặc prose), không `table` |
 | QĐ + danh mục: chỉ `procedure_record`, mất Điều 1–3 | OCR 1 dòng; `\|` letterhead; footer nuốt phụ lục; STT bảng → nhầm TTHC | `preamble` + `article` + `table` tại `DANH MỤC`/`Phụ lục` |
 | Bảng TTHC: mất `procedure_record` | “Quyết định” trong tên thủ tục kích hoạt guard prose | Hàng `\| 01 \| …` vẫn là bảng; TTHC giữ `procedure_record` |
+| `signature` 20k–40k nuốt Biểu số / Đề án / Điều lệ | OCR ghép phụ lục vào cùng đoạn với chữ ký; `RE_ANNEX_BLOCK_START` thiếu pattern | Mở rộng `RE_ANNEX_BLOCK_START` + safety net trong `_process_block` → phụ lục về body, `signature` chỉ còn vài dòng |
 | Nghị quyết + Quy định kèm theo: hai `Điều 1` cùng path | Thiếu heading `QUY ĐỊNH` | `["QUY ĐỊNH", "Điều 1"]` vs `["Điều 1"]` |
 | QUY ĐỊNH: Điều 1+2 gộp một chunk | Điều inline `.\n. Điều 2.` | Hai chunk `["QUY ĐỊNH","Điều 1"]`, `["QUY ĐỊNH","Điều 2"]` |
 | Chunk `part` chỉ tiêu đề QUY ĐỊNH (~50 token) | Header tách khỏi Điều 1 | Một `article` gồm header + Điều 1 |
