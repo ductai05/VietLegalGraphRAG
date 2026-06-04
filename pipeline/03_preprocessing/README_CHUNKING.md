@@ -150,24 +150,53 @@ Pipeline được viết trong module `chunk.py`, sử dụng Polars cho xử l�
 
 ## 5. Đánh giá và kiểm tra
 
-Để đảm bảo chunking hoạt động đúng trên nhiều loại văn bản (Quyết định, Nghị định, Thông tư, Chỉ thị, văn bản kèm phụ lục, bảng biểu…), chúng tôi xây dựng bộ đánh giá gồm 8 cell code trong file `chunking_evaluation.md`.
+Để đảm bảo chunking phục vụ **hybrid RAG** (Qdrant dense + BM25 + LightRAG), bộ đánh giá tách thành **hai tầng**:
+
+1. **Corpus integrity** — toàn bộ chunk (kể cả `raw_table`, chữ ký): không mất nội dung, không cắt ngang Điều, bảng còn header.
+2. **Retrieval index quality** — chỉ chunk `embed=True` (dense) hoặc `keyword_index=True` (BM25): kích thước, hard split, tiny chunk.
+
+Script tham chiếu: `batch_chunk_evaluate.py` (Kaggle, memory-safe). Tài liệu notebook gốc: `chunking_evaluation.md`.
 
 ### 5.1. Các chỉ số đánh giá
 
+#### A. Corpus integrity (mọi chunk)
+
 | Chỉ số                   | Giải thích                                              | Kỳ vọng                    |
 | ------------------------ | ------------------------------------------------------- | -------------------------- |
-| **Coverage**             | Tổng số ký tự của các chunk / tổng số ký tự văn bản gốc | ≈ 1.0 (không mất nội dung) |
-| **Tiny chunk**           | Chunk < 50 ký tự (có thể do lỗi tách header rời)        | < 5%                       |
-| **Oversized chunk**      | Chunk > 2000 hoặc > 3000 ký tự (tuỳ loại)               | < 2%                       |
-| **Hard split**           | Chunk bị cắt giữa câu hoặc giữa số điều                 | 0                          |
-| **Orphan chunk**         | Chunk không có `section_path` hoặc không gắn metadata   | 0                          |
-| **Metadata propagation** | Metadata được truyền đúng vào tất cả chunk              | 100%                       |
-| **Boundary integrity**   | Không có cặp chunk cắt ngang một Điều / Mục             | 0 vi phạm                  |
-| **Table integrity**      | Không có bảng bị tách làm hai chunk mà thiếu header     | < 5% bảng                  |
+| **Coverage**             | Tổng ký tự chunk / ký tự văn bản gốc                    | ≈ 1.0 (không mất nội dung) |
+| **Orphan chunk**         | Chunk không có `section_path` hoặc doc không có metadata | 0%                         |
+| **Metadata propagation** | Doc trong chunks có bản ghi metadata                    | 100%                       |
+| **Boundary integrity**   | Prose `embed=True`: không cắt ngang Điều (regex mẫu)    | 0 vi phạm (sample)         |
+| **Table integrity**      | `table` / `raw_table` / `table_summary`: body có header  | < 5% bảng                  |
+
+#### B. Dense index (`embed=True`) — quyết định PASS/FAIL cho vector search
+
+| Chỉ số                         | Giải thích                                                                 | Kỳ vọng |
+| ------------------------------ | -------------------------------------------------------------------------- | ------- |
+| **Dense hard split**           | `hard_char_split` trên chunk embed — cắt cơ học giữa câu (chỉ xảy ra trên prose) | 0       |
+| **Dense oversized >3k**        | Chunk embed > 3000 ký tự (loại trừ `raw_table` vốn không embed)            | < 2%    |
+| **Dense tiny <50 chars**       | Chunk embed quá ngắn                                                       | < 5%    |
+| **Dense coverage** (tham khảo) | Tổng ký tự chunk embed / văn bản gốc — thấp hơn coverage do bỏ `raw_table`, chữ ký | Theo thiết kế |
+
+#### C. Chỉ số corpus-only (chỉ để debug, không dùng PASS/FAIL)
+
+| Chỉ số              | Ghi chú                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| **Hard split (all)** | Bao gồm mọi chunk; thường trùng dense vì `hard_char_split` chỉ gán khi split prose |
+| **Oversized >3k (all)** | **Không** dùng làm tiêu chí: `raw_table` cố ý > 3000 ký tự, chỉ BM25   |
+
+**Lưu ý về bảng và embed:**
+
+- `raw_table`: **không** embed, **có** BM25 — oversized là chủ đích.
+- `table_summary`: embed (mô tả ngữ nghĩa) + `raw_table` (tra số liệu chính xác).
+- `table` / `table_part` nhỏ: vẫn embed; không bị `hard_char_split` (tách theo hàng, không `_split_by_hard_chars`).
+- Hard split chỉ phát sinh từ `_split_prose` → `_split_by_hard_chars` trên `article`, `clause_group`, `appendix_text`, …
 
 ### 5.2. Quy trình kiểm tra thực tế
 
-- **Lấy subset 100 văn bản**: phân tầng theo độ dài (dùng lượng tử từ 1% đến 99%) để đảm bảo bao phủ cả văn bản ngắn (công văn) và văn bản dài (nghị định, phụ lục).
+- **Chạy `batch_chunk_evaluate.py`** trên `legal_chunking_dataset/chunks.parquet` (hoặc notebook tương đương).
+- **PASS/FAIL** dựa trên mục 5.1B (dense) + mục 5.1A (corpus).
+- **Lấy subset 100 văn bản** (phân tầng theo độ dài) cho boundary check — chỉ prose `embed=True`.
 - **Chạy chunking** và thu thập metrics (coverage, phân bố kích thước, flag counts).
 - **Visualization**: histogram chunk size, boxplot theo từng văn bản, scatter số chunks vs độ dài gốc.
 - **Kiểm tra thủ công các chunk lớn** (>10k ký tự): phân loại `table/appendix` hay `long_prose`, in ra preview để xác định nguyên nhân.
@@ -181,7 +210,8 @@ Sau khi chạy đánh giá trên subset 100 văn bản, hệ thống đạt đư
 - Coverage trung bình: **99.8%** (một số mất mát nhỏ do loại bỏ dòng trống và ký tự điều khiển).
 - Tỷ lệ tiny chunk: **~3%** (chủ yếu là các dòng tiêu đề "Điều 1" khi Điều đó quá ngắn, được coi là chấp nhận được).
 - Tỷ lệ oversized chunk (>3000 ký tự): **0.5%**, tất cả đều là bảng lớn hoặc phụ lục có nhiều số liệu (đã xử lý bằng `table_summary + raw_table`).
-- Không có hard_split hay orphan chunk.
+- Không có dense hard split hay orphan chunk trên mục tiêu RAG.
+- `raw_table` oversized không làm FAIL — chỉ báo cáo ở dòng corpus-only.
 - Metadata propagation đúng 100% trên các chunk thuộc văn bản có metadata.
 - Boundary integrity: 0 văn bản có dấu hiệu cắt ngang điều/mục sau khi áp dụng bước normalize tách inline.
 - Table integrity: 1 văn bản có bảng bị tách do lỗi OCR hàng lưới, đã được xử lý thủ công bằng mở rộng pattern `RE_ANNEX_BLOCK_START`.
