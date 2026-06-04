@@ -5,6 +5,7 @@ import json
 import time
 import logging
 import zipfile
+import gc
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -270,12 +271,29 @@ def get_all_doc_ids() -> List[int]:
     return df_lazy.collect().to_series().to_list()
 
 
-def append_chunks_to_output(batch_df: pl.DataFrame) -> None:
-    """Ghi/append vào một file chunks.parquet duy nhất (không tách theo batch)."""
+def write_batch_chunks(batch_df: pl.DataFrame, batch_idx: int) -> None:
+    """Ghi từng batch ra interim — tránh đọc lại toàn bộ chunks.parquet mỗi lần append."""
+    path = INTERIM_DIR / f"chunks_batch_{batch_idx:05d}.parquet"
+    batch_df.write_parquet(path, compression="snappy")
+
+
+def merge_all_chunk_outputs() -> None:
+    """Gộp chunks.parquet (run cũ/resume) + interim thành một file duy nhất."""
+    interim_files = sorted(INTERIM_DIR.glob("chunks_batch_*.parquet"))
+    sources: List[str] = []
     if CHUNKS_OUTPUT.exists():
-        existing = pl.read_parquet(CHUNKS_OUTPUT)
-        batch_df = pl.concat([existing, batch_df], how="vertical_relaxed")
-    batch_df.write_parquet(CHUNKS_OUTPUT, compression="snappy")
+        sources.append(str(CHUNKS_OUTPUT))
+    sources.extend(str(p) for p in interim_files)
+    if not sources:
+        return
+    if len(sources) == 1:
+        pl.scan_parquet(sources[0]).collect().write_parquet(CHUNKS_OUTPUT, compression="snappy")
+    else:
+        pl.concat(
+            [pl.scan_parquet(s) for s in sources],
+            how="vertical_relaxed",
+        ).collect().write_parquet(CHUNKS_OUTPUT, compression="snappy")
+    _cleanup_legacy_interim_chunks()
 
 
 def _cleanup_legacy_interim_chunks() -> None:
@@ -296,7 +314,10 @@ def run_pipeline():
 
     to_process = [doc_id for doc_id in all_doc_ids if doc_id not in processed_ids]
     total_to_process = len(to_process)
-    logging.info(f"Total documents: {len(all_doc_ids)}, already processed: {len(processed_ids)}, remaining: {total_to_process}")
+    logging.info(
+        f"Total documents: {len(all_doc_ids)}, already processed: {len(processed_ids)}, "
+        f"remaining: {total_to_process} | batch_size={BATCH_SIZE} max_workers={MAX_WORKERS}"
+    )
     
     # Chia batch để tránh quá tải bộ nhớ khi đọc content
     batches = [to_process[i:i+BATCH_SIZE] for i in range(0, total_to_process, BATCH_SIZE)]
@@ -332,25 +353,37 @@ def run_pipeline():
                 if batch_chunks:
                     normalized_chunks = [normalize_chunk_record(c, c.get("doc_id")) for c in batch_chunks]
                     chunk_df = pl.DataFrame(normalized_chunks, schema=CHUNK_SCHEMA, strict=False)
-                    append_chunks_to_output(chunk_df)
+                    write_batch_chunks(chunk_df, batch_idx)
                     total_chunks += len(batch_chunks)
+                    del normalized_chunks, chunk_df
                 
                 if batch_errors:
                     error_df = pl.DataFrame(batch_errors)
                     if DLQ_FILE.exists():
-                        existing = pl.read_parquet(DLQ_FILE)
-                        error_df = pl.concat([existing, error_df])
+                        existing = pl.scan_parquet(DLQ_FILE).collect()
+                        error_df = pl.concat([existing, error_df], how="vertical_relaxed")
                     error_df.write_parquet(DLQ_FILE)
                     total_errors += len(batch_errors)
+                    del error_df
                 
                 # Cập nhật checkpoint (chỉ những doc thành công)
-                successful_ids = [doc_id for doc_id in batch_ids if doc_id not in [e["doc_id"] for e in batch_errors]]
+                failed_in_batch = {e["doc_id"] for e in batch_errors}
+                successful_ids = [doc_id for doc_id in batch_ids if doc_id not in failed_in_batch]
                 update_checkpoint(successful_ids)
                 
                 batch_time = time.time() - batch_start
-                tqdm.write(f"Batch {batch_idx+1} done in {batch_time:.2f}s | Chunks: {len(batch_chunks)} | Errors: {len(batch_errors)}")
+                n_chunks_batch = len(batch_chunks) if batch_chunks else 0
+                n_errors_batch = len(batch_errors)
+                tqdm.write(
+                    f"Batch {batch_idx+1} done in {batch_time:.2f}s | "
+                    f"Chunks: {n_chunks_batch} | Errors: {n_errors_batch}"
+                )
                 pbar.set_postfix(chunks=total_chunks, failed=total_errors)
+
+                del batch_data, content_df, batch_chunks, batch_errors
+                gc.collect()
     
+    merge_all_chunk_outputs()
     elapsed = time.time() - start_time
     tqdm.write(f"=== PIPELINE FINISHED ===")
     tqdm.write(f"Time: {elapsed:.2f}s | Processed docs: {processed_count - total_errors} | Failed docs: {total_errors} | Total chunks: {total_chunks}")
@@ -436,8 +469,14 @@ def quality_gates(df: pl.DataFrame, original_content_path: str = CONTENT_PATH):
             assert nulls == 0, f"Integrity failed: {col} has nulls"
     
     # Orphan Chunk: doc_id không tồn tại trong metadata
-    meta_ids = set(pl.read_parquet(META_PATH)["id"].to_list())
-    orphan_ids = df.filter(~pl.col("doc_id").is_in(meta_ids)).select("doc_id").unique().to_series().to_list()
+    meta_ids = pl.scan_parquet(META_PATH).select("id")
+    orphan_ids = (
+        df.select("doc_id")
+        .unique()
+        .join(meta_ids, left_on="doc_id", right_on="id", how="anti")
+        .get_column("doc_id")
+        .to_list()
+    )
     print(f"Orphan chunks (doc_id not in metadata): {len(orphan_ids)}")
     
     # 3. Phân phối kích thước chunk (tính bằng số ký tự)
