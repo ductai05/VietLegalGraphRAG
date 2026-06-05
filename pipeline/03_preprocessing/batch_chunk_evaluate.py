@@ -18,7 +18,7 @@ import gc
 import re
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -35,6 +35,35 @@ CHUNKING_DATASET_DIR = BASE_DATASET / "legal_chunking_dataset"
 CHUNKS_PATH = CHUNKING_DATASET_DIR / "chunks.parquet"
 METADATA_PATH = CHUNKING_DATASET_DIR / "metadata.parquet"
 CONTENT_PATH = BASE_DATASET / "content.parquet"
+
+# Fallback: Kaggle có thể mount cùng file ở slug khác hoặc dataset chỉ chứa legal_chunking_dataset/
+_CONTENT_FALLBACKS = [
+    BASE_DATASET / "content.parquet",
+    Path("/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/content.parquet"),
+    Path("/kaggle/input/vietnamese-legal-documents-cleaned/content.parquet"),
+]
+
+
+def resolve_content_path() -> Optional[Path]:
+    for p in _CONTENT_FALLBACKS:
+        if p.is_file():
+            return p
+    # Quét toàn bộ /kaggle/input — tránh coverage=0 im lặng khi path mount khác tên
+    kaggle_input = Path("/kaggle/input")
+    if kaggle_input.is_dir():
+        hits = sorted(kaggle_input.rglob("content.parquet"))
+        if len(hits) == 1:
+            return hits[0]
+        # Ưu tiên file có cột `content` (không phải merged_content / legacy-only)
+        for hit in hits:
+            try:
+                names = pl.scan_parquet(hit).collect_schema().names()
+                if "content" in names and "id" in names:
+                    return hit
+            except Exception:
+                continue
+    return None
+
 
 WORK_DIR = Path("/kaggle/working/chunk_eval")
 WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -252,15 +281,21 @@ def collect_global_metrics(lf: pl.LazyFrame) -> Dict[str, Any]:
 
 
 metrics = collect_global_metrics(metrics_lf)
+# Gán sau CELL 5/6; None để dashboard/report không KeyError khi chạy lẻ từng cell
+metrics.setdefault("boundary_violations", None)
+metrics.setdefault("boundary_sample_docs", None)
+metrics.setdefault("table_integrity_bad_pct", None)
+metrics.setdefault("table_integrity_issues", None)
 gc.collect()
 
 
 def stratified_doc_ids(n_docs: int = STRATIFIED_SAMPLE_N) -> List[int]:
-    if not CONTENT_PATH.exists():
+    content_path = resolve_content_path()
+    if content_path is None:
         u = metrics_lf.select("doc_id").unique().collect(engine="streaming")
         return u.sample(n=min(n_docs, u.height), seed=RANDOM_SEED)["doc_id"].to_list()
     lens = (
-        pl.scan_parquet(CONTENT_PATH)
+        pl.scan_parquet(content_path)
         .select(pl.col("id"), pl.col("content").str.len_chars().alias("content_len"))
         .collect()
     )
@@ -289,7 +324,7 @@ print(f"Stratified / sample doc_ids: {len(sample_doc_ids)}")
 # =============================================================================
 
 
-def compute_coverage_df() -> pd.DataFrame:
+def compute_coverage_df() -> Tuple[pd.DataFrame, str]:
     chunk_sum = (
         metrics_lf.group_by("doc_id")
         .agg(
@@ -298,26 +333,62 @@ def compute_coverage_df() -> pd.DataFrame:
         )
         .collect(engine="streaming")
     )
-    if not CONTENT_PATH.exists():
-        return pd.DataFrame()
-    doc_ids = chunk_sum["doc_id"]
+    n_chunk_docs = chunk_sum.height
+
+    content_path = resolve_content_path()
+    if content_path is None:
+        return pd.DataFrame(), (
+            "SKIP: không tìm thấy content.parquet (cần cột id + content). "
+            f"Đã thử: {CONTENT_PATH}. "
+            "→ Thêm dataset gốc `vietnamese-legal-documents-cleaned` vào notebook "
+            "(Add Data), không chỉ thư mục legal_chunking_dataset."
+        )
+
+    schema = pl.scan_parquet(content_path).collect_schema().names()
+    if "content" not in schema:
+        return pd.DataFrame(), (
+            f"SKIP: {content_path} thiếu cột `content` (có: {schema}). "
+            "Coverage cần file content.parquet đã preprocess, không phải content_html."
+        )
+
+    id_col = "id"
     content_lens = (
-        pl.scan_parquet(CONTENT_PATH)
-        .filter(pl.col("id").is_in(doc_ids))
+        pl.scan_parquet(content_path)
         .select(
-            pl.col("id").alias("doc_id"),
+            pl.col(id_col).cast(pl.Int64).alias("doc_id"),
             pl.col("content").str.len_chars().alias("content_len"),
         )
         .collect(engine="streaming")
     )
-    merged = chunk_sum.join(content_lens, on="doc_id", how="inner").with_columns(
+    n_content_docs = content_lens.height
+
+    merged = chunk_sum.with_columns(pl.col("doc_id").cast(pl.Int64)).join(
+        content_lens, on="doc_id", how="inner"
+    )
+    n_matched = merged.height
+    if n_matched == 0:
+        sample_chunk = chunk_sum["doc_id"].head(5).to_list()
+        sample_content = content_lens["doc_id"].head(5).to_list()
+        return pd.DataFrame(), (
+            f"SKIP: inner join doc_id trả về 0 hàng "
+            f"(chunk docs={n_chunk_docs:,}, content docs={n_content_docs:,}). "
+            f"Ví dụ doc_id chunk={sample_chunk}, content={sample_content}. "
+            "Có thể chunks và content.parquet không cùng một pipeline/version."
+        )
+
+    merged = merged.with_columns(
         (pl.col("chunk_chars_sum") / pl.col("content_len").clip(lower_bound=1)).alias("coverage"),
         (pl.col("dense_chars_sum") / pl.col("content_len").clip(lower_bound=1)).alias("dense_coverage"),
     )
-    return merged.to_pandas()
+    status = (
+        f"OK: {n_matched:,}/{n_chunk_docs:,} docs khớp content "
+        f"(content: {content_path})"
+    )
+    return merged.to_pandas(), status
 
 
-coverage_df = compute_coverage_df()
+coverage_df, coverage_status = compute_coverage_df()
+print(f"\nCoverage: {coverage_status}")
 if len(coverage_df):
     metrics["coverage_mean"] = float(coverage_df["coverage"].mean())
     metrics["coverage_median"] = float(coverage_df["coverage"].median())
@@ -326,10 +397,10 @@ if len(coverage_df):
         (coverage_df["coverage"] < THRESHOLDS["coverage_min"]).sum()
     )
 else:
-    metrics["coverage_mean"] = 0.0
-    metrics["coverage_median"] = 0.0
-    metrics["dense_coverage_mean"] = 0.0
-    metrics["coverage_docs_below_95pct"] = 0
+    metrics["coverage_mean"] = None
+    metrics["coverage_median"] = None
+    metrics["dense_coverage_mean"] = None
+    metrics["coverage_docs_below_95pct"] = None
 
 print("\n=== GLOBAL METRICS ===")
 for k, v in metrics.items():
@@ -343,9 +414,15 @@ gc.collect()
 # =============================================================================
 
 
-def show_fig() -> None:
+def show_fig(*, use_tight: bool = True) -> None:
     """Hiển thị figure trực tiếp trong notebook (không ghi file)."""
-    plt.tight_layout()
+    if use_tight:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
     plt.show()
 
 
@@ -390,7 +467,9 @@ sns.boxplot(
     data=sub, x="chunk_type", y="char_len_clip", order=order,
     palette=sns.color_palette("crest", n_colors=len(order)), ax=ax,
 )
-ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")
+ax.tick_params(axis="x", labelrotation=35)
+for lbl in ax.get_xticklabels():
+    lbl.set_ha("right")
 ax.set_title("Boxplot kích thước theo chunk_type (sample)")
 show_fig()
 del viz_pd, plot_df, sub
@@ -447,31 +526,6 @@ if len(flag_by_type):
     ax.set_title("chunk_type x quality_flags (embed=True only)")
     show_fig()
 gc.collect()
-
-corpus_metric_checks = [
-    ("Coverage (mean)", metrics["coverage_mean"], THRESHOLDS["coverage_target"], "higher"),
-    ("Orphan (%)", metrics["orphan_pct"], THRESHOLDS["orphan_pct_max"], "lower"),
-    ("Metadata propagation (%)", metrics["metadata_propagation_pct"], THRESHOLDS["metadata_propagation_min"], "higher"),
-    ("Boundary violations (sample)", metrics["boundary_violations"], THRESHOLDS["boundary_violations_max"], "lower"),
-    ("Table integrity issues (%)", metrics["table_integrity_bad_pct"], THRESHOLDS["table_integrity_bad_pct_max"], "lower"),
-]
-dense_metric_checks = [
-    ("Dense hard split (count)", metrics["dense_hard_split_count"], THRESHOLDS["dense_hard_split_count_max"], "lower"),
-    ("Dense oversized >3k (%)", metrics["dense_oversized_3k_pct"], THRESHOLDS["dense_oversized_3k_pct_max"], "lower"),
-    ("Dense tiny <50 chars (%)", metrics["dense_tiny_pct_lt50chars"], THRESHOLDS["dense_tiny_pct_max"], "lower"),
-]
-metric_checks = corpus_metric_checks + dense_metric_checks
-fig = plt.figure(figsize=(11, 7))
-gs = GridSpec(len(metric_checks), 1, figure=fig, hspace=0.55)
-for i, (label, val, thr, direction) in enumerate(metric_checks):
-    ax = fig.add_subplot(gs[i])
-    ok = (val >= thr * 0.95) if direction == "higher" else (val <= thr)
-    ratio = min(1.2, val / thr) if direction == "higher" and thr else min(1.2, val / max(thr, 1e-9))
-    color = PALETTE_COOL(0.15 + 0.7 * min(ratio, 1.0)) if ok else PALETTE_WARM(0.55)
-    ax.barh([0], [val], color=color, height=0.5)
-    ax.axvline(thr, color="#2d3436", ls="--", lw=2)
-    ax.set_title(f"{label}: {val:.4g}  [{'PASS' if ok else 'CHECK'}]", loc="left")
-show_fig()
 
 
 # =============================================================================
@@ -586,14 +640,54 @@ ax.pie(
 ax.set_title("chunk_type (donut — top 12)")
 show_fig()
 
+corpus_metric_checks = [
+    ("Coverage (mean)", metrics["coverage_mean"], THRESHOLDS["coverage_target"], "higher"),
+    ("Orphan (%)", metrics["orphan_pct"], THRESHOLDS["orphan_pct_max"], "lower"),
+    ("Metadata propagation (%)", metrics["metadata_propagation_pct"], THRESHOLDS["metadata_propagation_min"], "higher"),
+    ("Boundary violations (sample)", metrics["boundary_violations"], THRESHOLDS["boundary_violations_max"], "lower"),
+    ("Table integrity issues (%)", metrics["table_integrity_bad_pct"], THRESHOLDS["table_integrity_bad_pct_max"], "lower"),
+]
+dense_metric_checks = [
+    ("Dense hard split (count)", metrics["dense_hard_split_count"], THRESHOLDS["dense_hard_split_count_max"], "lower"),
+    ("Dense oversized >3k (%)", metrics["dense_oversized_3k_pct"], THRESHOLDS["dense_oversized_3k_pct_max"], "lower"),
+    ("Dense tiny <50 chars (%)", metrics["dense_tiny_pct_lt50chars"], THRESHOLDS["dense_tiny_pct_max"], "lower"),
+]
+metric_checks = corpus_metric_checks + dense_metric_checks
+fig = plt.figure(figsize=(11, 7), layout="constrained")
+gs = GridSpec(len(metric_checks), 1, figure=fig, hspace=0.55)
+for i, (label, val, thr, direction) in enumerate(metric_checks):
+    ax = fig.add_subplot(gs[i])
+    if val is None:
+        ax.axis("off")
+        na_msg = (
+            "N/A (thiếu content.parquet)"
+            if "Coverage" in label
+            else "N/A (chạy CELL 5–6 trước)"
+        )
+        ax.text(0.5, 0.5, f"{label}\n{na_msg}", ha="center", va="center")
+        continue
+    ok = (val >= thr * 0.95) if direction == "higher" else (val <= thr)
+    ratio = min(1.2, val / thr) if direction == "higher" and thr else min(1.2, val / max(thr, 1e-9))
+    color = PALETTE_COOL(0.15 + 0.7 * min(ratio, 1.0)) if ok else PALETTE_WARM(0.55)
+    ax.barh([0], [val], color=color, height=0.5)
+    ax.axvline(thr, color="#2d3436", ls="--", lw=2)
+    ax.set_title(f"{label}: {val:.4g}  [{'PASS' if ok else 'CHECK'}]", loc="left")
+show_fig(use_tight=False)
+
 
 # =============================================================================
 # CELL 7 — Báo cáo
 # =============================================================================
 
 
-def pass_fail(val: float, thr: float, higher: bool) -> str:
+def pass_fail(val: Optional[float], thr: float, higher: bool) -> str:
+    if val is None:
+        return "N/A"
     return "PASS" if (val >= thr if higher else val <= thr) else "FAIL"
+
+
+def _fmt_metric(val: Optional[float]) -> str:
+    return "N/A" if val is None else f"{val:.4g}"
 
 
 rows_report = [
@@ -616,11 +710,12 @@ lines = [
     "",
 ]
 for label, val, thr, hib in rows_report:
-    lines.append(f"  {label:<36} {val:>10.4g}  thr={thr:<8.4g}  {pass_fail(val, thr, hib)}")
+    lines.append(f"  {label:<36} {_fmt_metric(val):>10}  thr={thr:<8.4g}  {pass_fail(val, thr, hib)}")
 lines.extend([
     "",
+    f"Coverage status: {coverage_status}",
     f"Index mix: embed={metrics.get('embed_chunk_pct', 0):.1f}% | keyword={metrics.get('keyword_chunk_pct', 0):.1f}%",
-    f"Dense coverage (mean, tham khảo): {metrics.get('dense_coverage_mean', 0):.4f}",
+    f"Dense coverage (mean, tham khảo): {_fmt_metric(metrics.get('dense_coverage_mean'))}",
     f"Corpus-only (tham khảo): hard_split={metrics['hard_split_count']} | oversized>3k={metrics['oversized_3k_pct']:.2f}%",
     f"Boundary: {len(boundary_df)} / {metrics.get('boundary_sample_docs', 0)} docs sampled (prose, embed=True)",
     "=" * 60,
@@ -691,7 +786,7 @@ if _hist_n > VIZ_SAMPLE_ROWS:
 else:
     hist_sample = _hist_lf.collect(engine="streaming").to_pandas()
 
-fig = plt.figure(figsize=(16, 10))
+fig = plt.figure(figsize=(16, 10), layout="constrained")
 gs = GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3)
 ax0 = fig.add_subplot(gs[0, 0])
 sns.histplot(hist_sample, x="char_len", bins=50, kde=True, color=PALETTE_MAIN[0], ax=ax0)
@@ -733,10 +828,10 @@ ax5.axis("off")
 y = 0.95
 for label, val, thr, hib in rows_report:
     st = pass_fail(val, thr, hib)
-    ax5.text(0.02, y, f"{label}: {val:.3g} ({st})", fontsize=8,
+    ax5.text(0.02, y, f"{label}: {_fmt_metric(val)} ({st})", fontsize=8,
              color="#00b894" if st == "PASS" else "#d63031", transform=ax5.transAxes)
     y -= 0.12
 fig.suptitle("Legal Chunking Evaluation — Overview", fontsize=14)
-show_fig()
+show_fig(use_tight=False)
 
 print("\n=== HOÀN TẤT ĐÁNH GIÁ ===")
