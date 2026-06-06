@@ -521,83 +521,124 @@ else:
     metrics["coverage_docs_below_95pct"] = None
 
 
-def _kpi_card(ax, title: str, value: str, subtitle: str, color: str) -> None:
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
-    ax.add_patch(plt.Rectangle((0.04, 0.08), 0.92, 0.84, fc=color, alpha=0.12, ec=color, lw=1.5))
-    ax.text(0.5, 0.72, title, ha="center", va="center", fontsize=10, color="#636e72")
-    ax.text(0.5, 0.46, value, ha="center", va="center", fontsize=18, fontweight="bold", color=color)
-    ax.text(0.5, 0.18, subtitle, ha="center", va="center", fontsize=8.5, color="#636e72")
-
-
 def render_coverage_dashboard(
     cov_df: pd.DataFrame,
     status: str,
     summary: Dict[str, Any],
 ) -> None:
-    fig = plt.figure(figsize=(14, 8), layout="constrained")
-    gs = GridSpec(3, 4, figure=fig, height_ratios=[0.55, 0.85, 2.4], hspace=0.4, wspace=0.3)
-
     cov_ok = (
         summary.get("coverage_mean") is not None
         and summary["coverage_mean"] >= THRESHOLDS["coverage_target"]
     )
-    status_color = "#00b894" if cov_ok else ("#fdcb6e" if len(cov_df) else "#b2bec3")
-    ax_status = fig.add_subplot(gs[0, :])
-    ax_status.axis("off")
-    ax_status.add_patch(plt.Rectangle((0, 0.15), 1, 0.7, fc=status_color, alpha=0.15, ec=status_color, lw=2))
-    ax_status.text(
-        0.02, 0.5, f"Coverage: {status}",
-        ha="left", va="center", fontsize=12, fontweight="bold", color="#2d3436",
-    )
-    if len(cov_df):
-        ax_status.text(
-            0.98, 0.5,
-            f"{'PASS' if cov_ok else 'CHECK'}  (target ≥ {THRESHOLDS['coverage_target']:.3f})",
-            ha="right", va="center", fontsize=12, fontweight="bold", color=status_color,
-        )
+    badge = "PASS" if cov_ok else ("CHECK" if len(cov_df) else "N/A")
+    badge_color = "#00b894" if badge == "PASS" else ("#e17055" if badge == "CHECK" else "#b2bec3")
 
+    fig = plt.figure(figsize=(13, 6.8))
+    gs = fig.add_gridspec(
+        2, 3,
+        height_ratios=[0.28, 1.0],
+        width_ratios=[1.15, 1.15, 0.7],
+        hspace=0.38, wspace=0.28,
+        left=0.07, right=0.97, top=0.82, bottom=0.11,
+    )
+
+    ax_strip = fig.add_subplot(gs[0, :])
+    ax_strip.set_xlim(0, 4)
+    ax_strip.set_ylim(0, 1)
+    ax_strip.axis("off")
     kpi_specs = [
-        ("Chunks", f"{summary['n_chunks']:,}", f"{summary['n_docs']:,} documents", "#0984e3"),
+        ("Chunks", f"{summary['n_chunks']:,}", f"{summary['n_docs']:,} docs", "#0984e3"),
         ("Orphan", f"{summary['orphan_pct']:.2f}%", f"{summary['orphan_count']:,} chunks", "#6c5ce7"),
-        ("Embed mix", f"{summary.get('embed_chunk_pct', 0):.1f}%", f"{summary.get('embed_chunk_count', 0):,} chunks", "#00cec9"),
+        ("Embed", f"{summary.get('embed_chunk_pct', 0):.1f}%", f"{summary.get('embed_chunk_count', 0):,} chunks", "#00cec9"),
         ("Metadata", f"{summary['metadata_propagation_pct']:.1f}%", "docs có metadata", "#e17055"),
     ]
-    for i, spec in enumerate(kpi_specs):
-        _kpi_card(fig.add_subplot(gs[1, i]), *spec)
+    for i, (title, value, sub, color) in enumerate(kpi_specs):
+        x0 = i + 0.06
+        ax_strip.add_patch(
+            plt.Rectangle((x0, 0.08), 0.88, 0.84, fc=color, alpha=0.10, ec=color, lw=1.2, clip_on=False)
+        )
+        ax_strip.text(x0 + 0.44, 0.72, title, ha="center", va="center", fontsize=9, color="#636e72")
+        ax_strip.text(x0 + 0.44, 0.46, value, ha="center", va="center", fontsize=15, fontweight="bold", color=color)
+        ax_strip.text(x0 + 0.44, 0.20, sub, ha="center", va="center", fontsize=8, color="#636e72")
 
-    ax_hist = fig.add_subplot(gs[2, :])
-    if len(cov_df):
-        plot_cov = cov_df.sample(min(len(cov_df), 80_000), random_state=RANDOM_SEED)
-        sns.histplot(
-            data=plot_cov, x="coverage", bins=50, kde=True,
-            color="#0984e3", edgecolor="white", linewidth=0.4,
-            ax=ax_hist, stat="density",
-        )
-        sns.kdeplot(
-            data=plot_cov, x="dense_coverage", color="#e84393", lw=2.2,
-            label="Dense coverage KDE", ax=ax_hist,
-        )
-        ax_hist.axvline(THRESHOLDS["coverage_target"], color="#00b894", ls="--", lw=2, label="Target")
-        ax_hist.axvline(THRESHOLDS["coverage_min"], color="#d63031", ls="--", lw=1.5, label="Min 95%")
-        mean_cov = summary.get("coverage_mean")
-        if mean_cov is not None:
-            ax_hist.axvline(mean_cov, color="#2d3436", ls="-", lw=1.5, alpha=0.7, label=f"Mean={mean_cov:.3f}")
-        ax_hist.set_xlim(0, min(1.25, plot_cov["coverage"].quantile(0.995) + 0.05))
-        ax_hist.set_title(
-            f"Phân phối coverage theo document  |  "
-            f"mean={_fmt_metric(summary.get('coverage_mean'))}  "
-            f"median={_fmt_metric(summary.get('coverage_median'))}  "
-            f"dense_mean={_fmt_metric(summary.get('dense_coverage_mean'))}  "
-            f"docs<95%={summary.get('coverage_docs_below_95pct', 'N/A')}",
-            loc="left", fontsize=11,
-        )
-        ax_hist.legend(loc="upper left", fontsize=8, ncol=2)
-    else:
-        ax_hist.axis("off")
-        ax_hist.text(0.5, 0.5, status, ha="center", va="center", fontsize=12, color="#636e72")
-    fig.suptitle("Coverage & Corpus Overview", fontsize=14, fontweight="bold", y=1.02)
+    if not len(cov_df):
+        ax_msg = fig.add_subplot(gs[1, :])
+        ax_msg.axis("off")
+        ax_msg.text(0.5, 0.5, status, ha="center", va="center", fontsize=12, color="#636e72")
+        fig.suptitle("Coverage & Corpus Overview", fontsize=14, fontweight="bold", y=0.96)
+        fig.text(0.5, 0.90, status, ha="center", va="center", fontsize=9, color="#636e72")
+        show_fig(use_tight=False)
+        return
+
+    plot_cov = cov_df.sample(min(len(cov_df), 60_000), random_state=RANDOM_SEED)
+    x_hi = float(min(1.30, plot_cov["coverage"].quantile(0.995) + 0.08))
+
+    ax_hist = fig.add_subplot(gs[1, 0])
+    sns.histplot(
+        data=plot_cov, x="coverage", bins=45, stat="percent",
+        color="#74b9ff", edgecolor="white", linewidth=0.4,
+        ax=ax_hist, kde=False,
+    )
+    ax_hist.axvline(THRESHOLDS["coverage_min"], color="#d63031", ls="--", lw=1.5, alpha=0.85)
+    ax_hist.axvline(THRESHOLDS["coverage_target"], color="#00b894", ls="--", lw=1.5, alpha=0.85)
+    ax_hist.set_xlim(0, x_hi)
+    ax_hist.set_xlabel("Coverage (chunk chars / content chars)")
+    ax_hist.set_ylabel("% documents")
+    ax_hist.set_title("Histogram coverage", loc="left", fontsize=11)
+
+    ax_kde = fig.add_subplot(gs[1, 1])
+    sns.kdeplot(
+        data=plot_cov, x="coverage", color="#0984e3", lw=2.2,
+        fill=True, alpha=0.22, clip=(0, x_hi), ax=ax_kde, label="Corpus coverage",
+    )
+    sns.kdeplot(
+        data=plot_cov, x="dense_coverage", color="#e84393", lw=2.2,
+        clip=(0, x_hi), ax=ax_kde, label="Dense coverage",
+    )
+    mean_cov = summary.get("coverage_mean")
+    if mean_cov is not None:
+        ax_kde.axvline(mean_cov, color="#2d3436", ls="-", lw=1.4, alpha=0.75)
+    ax_kde.axvline(THRESHOLDS["coverage_target"], color="#00b894", ls="--", lw=1.5, alpha=0.85)
+    ax_kde.set_xlim(0, x_hi)
+    ax_kde.set_xlabel("Coverage")
+    ax_kde.set_ylabel("Density")
+    ax_kde.set_title("KDE: corpus vs dense", loc="left", fontsize=11)
+    ax_kde.legend(loc="upper right", fontsize=8, framealpha=0.9)
+
+    ax_info = fig.add_subplot(gs[1, 2])
+    ax_info.axis("off")
+    stat_rows = [
+        ["Status", badge],
+        ["Mean coverage", _fmt_metric(summary.get("coverage_mean"))],
+        ["Median", _fmt_metric(summary.get("coverage_median"))],
+        ["Dense mean", _fmt_metric(summary.get("dense_coverage_mean"))],
+        ["Docs < 95%", str(summary.get("coverage_docs_below_95pct", "N/A"))],
+        ["Target", f"≥ {THRESHOLDS['coverage_target']:.3f}"],
+    ]
+    tbl = ax_info.table(
+        cellText=stat_rows,
+        colLabels=["Metric", "Value"],
+        loc="center", cellLoc="left", colWidths=[0.55, 0.45],
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1, 1.55)
+    for (r, c), cell in tbl.get_celld().items():
+        if r == 0:
+            cell.set_facecolor("#2d3436")
+            cell.set_text_props(color="white", fontweight="bold")
+        elif r == 1 and c == 1:
+            cell.set_facecolor(badge_color)
+            cell.set_text_props(color="white", fontweight="bold")
+        elif r % 2 == 0:
+            cell.set_facecolor("#f5f6fa")
+
+    status_short = status.replace(" (content:", "\n(content:")
+    fig.suptitle("Coverage & Corpus Overview", fontsize=14, fontweight="bold", y=0.96)
+    fig.text(
+        0.5, 0.905, status_short,
+        ha="center", va="center", fontsize=8.5, color="#636e72",
+    )
     show_fig(use_tight=False)
 
 
