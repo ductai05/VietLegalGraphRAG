@@ -12,9 +12,39 @@ Quan hệ giữa văn bản (`relationships.parquet`) **không** nhân bản tr�
 
 Mục tiêu của giai đoạn chunking: chunk có tính pháp lý hoàn chỉnh, phục vụ Hybrid RAG — **không chia đều theo token**.
 
+### 1.1. Kiến trúc mã nguồn
+
+Thư mục `pipeline/03_preprocessing/chunk/` gồm ba module chính và tài liệu này:
+
+| File | Vai trò |
+| ---- | ------- |
+| `legal_chunker.py` | Engine chunking: normalize, structural split, table/TTHC, emit chunk dict |
+| `batch_chunk.py` | Pipeline batch production (Kaggle/local): song song, checkpoint, ghi Parquet |
+| `batch_chunk_evaluate.py` | Đánh giá chất lượng dataset chunk (corpus + dense index + bảng) |
+| `README_CHUNKING.md` | Tài liệu tổng quan (chiến lược, schema I/O, API, gates) |
+
+```text
+content.parquet (+ metadata.parquet tùy chọn)
+        │
+        ▼
+  legal_chunker.chunk_legal_document()     ← core logic (§3–§4)
+        │
+        ▼
+  batch_chunk.run_pipeline()               ← scale + normalize schema + DLQ
+        │
+        ├── chunks.parquet
+        ├── metadata.parquet (subset theo doc_id có chunk)
+        └── failed_documents.parquet (DLQ)
+        │
+        ▼
+  batch_chunk_evaluate.py                  ← QA metrics + visualization
+```
+
+**Lưu ý quan trọng:** `batch_chunk.py` gọi `chunk_legal_document(..., doc_metadata=None)` — prefix `contextual_text` trong batch run **không** chứa title/cơ quan từ `metadata.parquet`. Metadata vẫn được xuất riêng (`metadata.parquet`) để join lúc build index hoặc khi cần rebuild `contextual_text` có prefix đầy đủ (dùng `chunk_polars_dataframe` với `metadata_df`).
+
 ---
 
-## 2. Dữ liệu đầu vào và output dự kiến
+## 2. Dữ liệu đầu vào và output
 
 ### 2.1. Dữ liệu đầu vào
 
@@ -42,7 +72,57 @@ Schema([("doc_id", Int64), ("other_doc_id", Int64), ("relationship", String)])
 - **metadata**: dùng để lọc theo loại văn bản, cơ quan ban hành, hiệu lực, lĩnh vực – không sao chép vào mỗi chunk.
 - **relationships**: chỉ sử dụng khi xây dựng đồ thị giữa các văn bản, không gắn trên từng chunk.
 
-### 2.2. Output – mỗi chunk là một dictionary với các trường chính
+**Tiền xử lý trong `batch_chunk.py` (trước khi gọi chunker):**
+
+- Lọc `content` có `str.len_chars() >= 20`.
+- Chuẩn hóa OCR bằng regex thay thế khoảng trắng thừa quanh dấu câu và tách từ tiếng Việt bị OCR (`\s+Ố` → `Ố`, `\s+Ủy` → `Ủy`, … — xem `replacements` trong `batch_chunk.py`).
+- `metadata` và `relationships` được lọc semi-join theo `id`/`doc_id` còn trong content đã lọc.
+
+### 2.2. Output – schema Parquet (`chunks.parquet`)
+
+`batch_chunk.py` chuẩn hóa mỗi chunk qua `normalize_chunk_record()` và ghi với schema cố định `CHUNK_SCHEMA` (tránh lỗi suy luận kiểu Polars khi batch lớn):
+
+```python
+# chunks.parquet — CHUNK_SCHEMA (batch_chunk.py)
+{
+    "chunk_id": Utf8,
+    "doc_id": Int64,
+    "source": Utf8,
+    "chunk_text": Utf8,
+    "contextual_text": Utf8,
+    "chunk_type": Utf8,
+    "section_path": List(Utf8),           # native list
+    "section_path_json": Utf8,            # JSON mirror (tương thích tool cũ)
+    "procedure_name": Utf8,               # nullable
+    "embed": Boolean,
+    "keyword_index": Boolean,
+    "parent_id": Utf8,
+    "prev_chunk_id": Utf8,                # nullable
+    "next_chunk_id": Utf8,                # nullable
+    "token_estimate": Int64,
+    "char_count": Int64,
+    "table_id": Utf8,                     # nullable
+    "raw_table_id": Utf8,                 # nullable
+    "summary_of": Utf8,                   # nullable
+    "source_table_hash": Utf8,            # nullable
+    "table_columns": List(Utf8),
+    "table_columns_json": Utf8,
+    "table_summary_schema_json": Utf8,    # JSON từ dict table_summary_schema
+    "table_strategy": Utf8,               # nullable, vd. numeric_or_code_table
+    "answer_source": Utf8,                # nullable
+    "do_not_answer_from_summary": Boolean,
+    "quality_flags": List(Utf8),
+    "quality_flags_json": Utf8,
+    "created_at": Float64,                # Unix timestamp (batch ghi thêm)
+}
+```
+
+`legal_chunker._emit_chunk()` trả về dict thô **trước** khi normalize; khác biệt chính:
+
+- Chunker dùng `table_summary_schema` (dict); Parquet lưu `table_summary_schema_json` (string JSON).
+- Chunker không có `section_path_json`, `table_columns_json`, `quality_flags_json`, `created_at` — batch thêm khi ghi.
+
+### 2.3. Các trường chunk — ý nghĩa
 
 Chỉ lưu trường **gắn với đơn vị truy hồi (retrieval unit)**. Filter theo loại VB, cơ quan, hiệu lực → join `metadata` lúc query hoặc lúc build index.
 
@@ -66,8 +146,24 @@ Chỉ lưu trường **gắn với đơn vị truy hồi (retrieval unit)**. Fil
 | `summary_of` / `source_table_hash`| Link retrieval rõ nghĩa và hash cache summary                                                                                |
 | `table_columns`                   | Column metadata truyền xuống `procedure_record` / `table_part`                                                               |
 | `answer_source`                   | Nguồn phải expand để trả lời; summary luôn trỏ về `raw_table`                                                               |
+| `do_not_answer_from_summary`    | `True` trên `table_summary` — cấm trả lời số liệu chỉ từ summary                                                             |
+| `table_strategy`                  | Chiến lược xử lý bảng (vd. `numeric_or_code_table` → không embed `table_part`)                                               |
+| `table_summary_schema_json`       | JSON structured summary (không phải LLM tự do); xem §7.2                                                                     |
+| `created_at`                      | Thời điểm ghi batch (Unix epoch); chỉ có trên Parquet output                                                                |
 
-**Giá trị `chunk_type`:** `preamble` | `legal_basis` | `article` | `clause_group` | `appendix` | `appendix_text` | `table` | `table_part` | `table_summary` | `raw_table` | `procedure_record` | `distribution_list` | `signature` | `short_text` | `fallback_text`
+**Giá trị `chunk_type`:** `preamble` | `legal_basis` | `article` | `clause_group` | `appendix` | `appendix_text` | `table` | `table_part` | `table_summary` | `raw_table` | `procedure_record` | `distribution_list` | `signature` | `short_text` | `fallback_text` | `part` | `chapter` | `section` | `appendix_group` | `appendix_subgroup`
+
+**Giá trị `quality_flags` phổ biến:**
+
+| Flag | Nguồn | Ý nghĩa |
+| ---- | ----- | ------- |
+| `tiny_chunk` | `_emit_chunk` | `< min_chars` (300), trừ các loại exempt |
+| `oversized_chunk` | `_emit_chunk` | `> hard_max_chars` (3000), trừ `raw_table` |
+| `hard_char_split` | split prose | Cắt cơ học theo ký tự → `embed=False` |
+| `long_prose_no_embed` | `_emit_chunk` | Prose `>= 10_000` chars → chỉ keyword |
+| `short_document` | văn bản ngắn | Toàn doc `< short_doc_threshold` |
+| `tiny_chunk_merged` | `_postprocess_chunks` | Đã gộp chunk nhỏ vào chunk kế tiếp |
+| `tiny_chunk_no_dense` | `_postprocess_chunks` | Chunk nhỏ không gộp được → `embed=False` |
 
 **Không lưu trên chunk** (join `metadata.parquet` theo `doc_id`): `title`, `legal_type`, `document_number`, `issuing_authority`, `issuance_date`, `effect_status`, `linh_vuc`, …
 
@@ -81,6 +177,37 @@ Chỉ lưu trường **gắn với đơn vị truy hồi (retrieval unit)**. Fil
 
 Thiếu metadata → prefix chỉ còn `section_path` / `source`; chunk vẫn được tạo.
 
+### 2.4. Output phụ (batch pipeline)
+
+**`metadata.parquet` (subset)** — sinh bởi `finalize_processed_tables()`:
+
+```python
+# Cùng schema với metadata.parquet đầu vào, chỉ giữ các id có ít nhất một chunk
+# FK: chunks.doc_id → metadata.id
+```
+
+**`failed_documents.parquet` (DLQ):**
+
+```python
+Schema([("doc_id", Int64), ("error_msg", String), ("timestamp", Float64)])
+```
+
+**Cấu trúc thư mục làm việc (`batch_chunk.py`):**
+
+```text
+{kaggle/working|local}/legal_chunking/
+  data/
+    interim/          chunks_batch_{NNNNN}.parquet  (từng batch)
+    processed/        chunks.parquet, metadata.parquet, legal_chunking_dataset.zip
+  logs/
+    checkpoint.json   {"processed_ids": [1, 2, ...]}  — resume
+    pipeline.log
+  dlq/
+    failed_documents.parquet
+```
+
+**Dataset đầu ra đánh giá:** `legal_chunking_dataset/{chunks,metadata}.parquet` (ZIP tùy chọn nếu đủ dung lượng đĩa).
+
 ---
 
 ## 3. Phương pháp luận
@@ -91,7 +218,7 @@ Thiếu metadata → prefix chỉ còn `section_path` / `source`; chunk vẫn đ
 2. **Giữ đơn vị nghĩa pháp lý**: Điều, khoản/nhóm khoản, thủ tục trong phụ lục, block bảng, căn cứ, nơi nhận/chữ ký tách riêng.
 3. **Metadata cấp văn bản (document-level)** lấy từ `metadata.parquet` — join `doc_id`, không parse header trên `content`.
 4. **Parent-child retrieval**: index ở child (`procedure_record`, `clause_group`); expand qua `parent_id`.
-5. **Không hard-code theo từng văn bản**. Mở rộng corpus bằng **pattern + hằng số tập trung** trong `chunk.py` mục **§2b** — không sửa logic chunker cho từng case.
+5. **Không hard-code theo từng văn bản**. Mở rộng corpus bằng **pattern + hằng số tập trung** trong `legal_chunker.py` mục **§2b** — không sửa logic chunker cho từng case.
 
 | Đặc điểm              | Xử lý                                      |
 | --------------------- | ------------------------------------------ |
@@ -176,21 +303,36 @@ Target mỗi chunk: ≤ `long_prose_max_chars` (2 500 chars).
 
 ## 4. Chi tiết kỹ thuật triển khai
 
-Pipeline (`chunk.py`):
+### 4.0. `legal_chunker.py` — pipeline nội bộ
+
+Class chính: `VietnameseLegalChunker`. Luồng xử lý một document:
 
 ```text
-content (+ metadata join theo id)
-  → normalize (inline Điều, explode pipe OCR)
-  → structural blocks + section_path
-  → xử lý theo chunk_type
-  → merge/split adaptive (khoản / Roman / câu / char fallback)
-  → contextual_text (prefix từ metadata)
-  → validate → export chunks.parquet
+content (+ doc_metadata tùy chọn)
+  → LegalTextNormalizer.normalize()     (inline Điều, explode pipe OCR, …)
+  → _split_into_blocks()                (structural blocks + section_path)
+  → router theo block_type              (article, table, appendix, footer, …)
+  → merge/split adaptive                (khoản / Roman / điểm / câu / hard char)
+  → _emit_chunk()                       (embed flags, quality_flags, table links)
+  → _postprocess_chunks()               (merge tiny, filter dense)
+  → _finalize_links()                   (prev_chunk_id / next_chunk_id)
 ```
 
-Hằng số mở rộng tại **§2b** trong `chunk.py`.
+**Public API:**
 
-### 4.1. Cấu hình ngưỡng
+| Hàm | Input | Output |
+| --- | ----- | ------ |
+| `chunk_legal_document(doc_id, content, source, doc_metadata?, config?)` | 1 văn bản | `List[Dict]` — schema §2.2 (dict thô) |
+| `chunk_legal_documents_from_records(records, metadata_by_id?, …)` | List dict từ `content.parquet` | `List[Dict]` gộp mọi doc |
+| `chunk_polars_dataframe(content_df, metadata_df?, …)` | Polars DataFrame | `pl.DataFrame` chunks |
+| `metadata_lookup_from_dataframe(metadata_df)` | `metadata.parquet` | `Dict[id → metadata dict]` |
+| `get_retrieval_flags(chunk_type)` | `chunk_type` | `(embed, keyword_index)` |
+
+`doc_metadata` dùng các trường `METADATA_PREFIX_FIELDS`: `title`, `legal_type`, `document_number`, `issuing_authority`, `issuance_date`, `effect_status`, `linh_vuc`.
+
+Hằng số mở rộng tại **§2b** trong `legal_chunker.py`.
+
+### 4.1. Cấu hình ngưỡng (`ChunkingConfig` / `CONFIG` trong `legal_chunker.py`)
 
 ```yaml
 min_chars: 300
@@ -211,7 +353,7 @@ long_prose_max_chars: 2500
 table_summary_threshold: 3000
 ```
 
-### 4.2. Hằng số mở rộng (`chunk.py` §2b)
+### 4.2. Hằng số mở rộng (`legal_chunker.py` §2b)
 
 Logic chunker dùng **regex cấu trúc** cho mọi văn bản. Các trường hợp đặc thù domain được cấu hình tập trung — **chỉ thêm vào list/frozenset**, không viết `if doc_id == …`.
 
@@ -332,19 +474,61 @@ Không dùng một splitter cố định cho toàn corpus.
 | `signature` / `distribution_list` | ❌ | ❌ | Không index |
 | `short_text` / `fallback_text` | ✅ | ✅ | Văn bản ngắn / fallback |
 
-### 4.7. API (Polars)
+### 4.7. API (Polars) — chunk đơn lẻ / notebook
 
 ```python
 import polars as pl
-from chunk import chunk_polars_dataframe
+from legal_chunker import chunk_polars_dataframe, chunk_legal_document, CONFIG
 
 content = pl.read_parquet("data/content.parquet")
 metadata = pl.read_parquet("data/metadata.parquet")
 chunks = chunk_polars_dataframe(content, metadata_df=metadata)
 chunks.write_parquet("data/preprocessed/legal_chunks.parquet")
+
+# Hoặc một document:
+chunks = chunk_legal_document(
+    doc_id=123,
+    content="...",
+    source="thuvienphapluat",
+    doc_metadata={"title": "...", "issuing_authority": "..."},
+)
 ```
 
 Quan hệ văn bản: dùng `relationships` khi build graph index, không gắn vào từng chunk row.
+
+### 4.8. `batch_chunk.py` — pipeline production
+
+Script chạy end-to-end trên Kaggle (hoặc local nếu chỉnh `BASE_PATH`). Tóm tắt:
+
+| Tham số | Mặc định | Ý nghĩa |
+| ------- | -------- | ------- |
+| `BATCH_SIZE` | 10_000 | Số doc mỗi batch đọc từ `content.parquet` |
+| `MAX_WORKERS` | `cpu_count()` | Process pool song song |
+| `DOC_TIMEOUT_SEC` | 60 | Timeout mỗi document |
+
+**Luồng `run_pipeline()`:**
+
+1. Đọc checkpoint → bỏ qua `processed_ids`.
+2. Chia `to_process` thành batch; mỗi batch: `ProcessPoolExecutor` gọi `chunk_legal_document(doc_id, text, src, doc_metadata=None)`.
+3. `normalize_chunk_record()` → ghi `interim/chunks_batch_{idx}.parquet`.
+4. Lỗi/timeout → append `dlq/failed_documents.parquet`.
+5. Cập nhật `checkpoint.json` (chỉ doc thành công trong batch).
+6. `merge_all_chunk_outputs()` → `processed/chunks.parquet`.
+7. `validate_chunk_invariants()` — production gates (§7).
+
+**`validate_chunk_invariants()` — vi phạm đếm về 0 trước embedding:**
+
+| Key | Điều kiện vi phạm |
+| --- | ----------------- |
+| `raw_table_embed_true` | `raw_table` có `embed=True` |
+| `table_summary_embed_false` | `table_summary` có `embed=False` |
+| `table_summary_missing_raw_link` | `raw_table_id` không trỏ tới `raw_table` tồn tại |
+| `table_summary_wrong_answer_source` | `answer_source != "raw_table"` hoặc `do_not_answer_from_summary=False` |
+| `procedure_record_missing_columns` | `procedure_record` có `table_columns` rỗng |
+| `dense_hard_split` | `embed=True` và flag `hard_char_split` |
+| `dense_long_prose_ge_10k` | `embed=True` và `char_count >= 10000` |
+
+Sau pipeline: `finalize_processed_tables()` xuất `metadata.parquet` subset + ZIP tùy chọn.
 
 ---
 
@@ -355,13 +539,82 @@ Quan hệ văn bản: dùng `relationships` khi build graph index, không gắn 
 1. **Corpus integrity** — toàn bộ chunk (kể cả `raw_table`, chữ ký): không mất nội dung, không cắt ngang Điều, bảng còn header.
 2. **Retrieval index quality** — chỉ chunk `embed=True` (dense) hoặc `keyword_index=True` (BM25): kích thước, hard split, tiny chunk.
 
-Script tham chiếu: `batch_chunk_evaluate.py` (Kaggle, memory-safe). Tài liệu notebook gốc: `chunking_evaluation.md`.
+Script: `batch_chunk_evaluate.py` (Kaggle notebook script, memory-safe). Có thể chạy từng cell hoặc toàn file.
 
-**Validation metrics:** `total_chunks`, phân bố `chunk_type`, `section_path` rỗng, `token_estimate`, thiếu `procedure_name` trên `procedure_record`.
+### 5.0. `batch_chunk_evaluate.py` — I/O và cấu trúc
 
-**Flags:** `oversized_chunk`, `tiny_chunk`, `hard_char_split`, `short_document`, …
+**Input (bắt buộc):**
 
-**Ngưỡng:** 0 chunk rỗng; <2% oversized (`> hard_max_chars = 3000`); `procedure_record` phải có `procedure_name`; **không còn** chunk prose `> long_prose_max_chars` (2 500).
+```text
+{kaggle/input}/.../legal_chunking_dataset/
+  chunks.parquet      # output từ batch_chunk
+  metadata.parquet    # subset metadata
+```
+
+**Input (tùy chọn — cho Coverage):**
+
+```text
+content.parquet       # cột id + content (resolve_content_path() tự tìm mount Kaggle)
+```
+
+**Output / artifact:**
+
+| Artifact | Mô tả |
+| -------- | ----- |
+| `metrics` dict | Tổng hợp toàn bộ chỉ số (in dashboard + báo cáo PASS/FAIL) |
+| `{work}/metrics_narrow_{hash}.parquet` | Cache metrics đã materialize (tránh đọc lại `chunk_text`) |
+| Biểu đồ `plt.show()` | Histogram coverage, token, heatmap flags, table integrity, báo cáo QA |
+
+**Cấu trúc cell:**
+
+| Cell | Nội dung |
+| ---- | -------- |
+| 1 | Cấu hình path, lazy scan `chunks.parquet`, detect schema columns |
+| 2 | `build_metrics_lf()` — char_len, flags, orphan, embed/keyword |
+| 3 | Coverage: `chunk_chars_sum / content_len` theo doc |
+| 4 | Visualization token distribution (sample ≤ 250k rows) |
+| 5 | Boundary integrity (sample ≤ 3000 docs, prose `embed=True`) |
+| 6 | Table integrity: `raw_table`, `table_part`, `procedure_record` |
+| 7 | Báo cáo PASS/FAIL tổng hợp |
+| 8 | Phân tích chunk lớn (≥ 10_000 chars) |
+
+**Ngưỡng `THRESHOLDS` (trích):**
+
+```python
+{
+    "coverage_min": 0.95,
+    "coverage_target": 0.998,
+    "tiny_pct_max": 5.0,                    # corpus-wide <50 chars
+    "oversized_3k_pct_max": 2.0,            # corpus-wide (gồm raw_table)
+    "dense_oversized_3k_pct_max": 2.0,      # chỉ embed=True, trừ raw_table
+    "dense_hard_split_count_max": 100,
+    "dense_tiny_pct_max": 5.0,
+    "orphan_pct_max": 0.0,
+    "metadata_propagation_min": 100.0,
+    "boundary_violations_max": 0,
+    "table_integrity_bad_pct_max": 10.0,
+}
+```
+
+**Keys chính trong `metrics` dict (output đánh giá):**
+
+| Key | Nhóm |
+| --- | ---- |
+| `n_chunks`, `n_docs`, `chunk_type_counts` | Tổng quan |
+| `coverage_mean`, `coverage_median`, `dense_coverage_mean` | Corpus |
+| `orphan_pct`, `metadata_propagation_pct` | Corpus |
+| `tiny_pct_lt50chars`, `oversized_3k_pct`, `hard_split_count` | Corpus (all chunks) |
+| `dense_tiny_pct_lt50chars`, `dense_oversized_3k_pct`, `dense_hard_split_count` | Dense index |
+| `embed_chunk_pct`, `keyword_chunk_pct` | Index policy |
+| `boundary_violations`, `boundary_sample_docs` | Boundary |
+| `raw_table_has_header_pct`, `table_part_has_header_or_parent_header_pct`, `procedure_record_has_column_context_pct` | Table parser |
+| `table_integrity_bad_pct`, `table_integrity_issues` | Table tổng |
+| `table_summary_has_raw_table_link_pct`, `raw_table_embed_false_pct`, `table_summary_embed_true_pct` | Table links |
+| `procedure_record_has_column_names_pct`, `table_summary_answer_rule_pct` | Table policy |
+
+**Flags đếm:** `oversized_chunk`, `tiny_chunk`, `hard_char_split` (từ `quality_flags` / `quality_flags_json`).
+
+**Ngưỡng nghiệp vụ:** 0 chunk rỗng; <2% dense oversized (`> 3000` chars); `procedure_record` phải có `procedure_name` và column context; prose dense không `hard_char_split`.
 
 ### 5.1. Các chỉ số đánh giá
 
@@ -422,18 +675,16 @@ Sau khi chạy đánh giá trên subset 100 văn bản, hệ thống đạt đư
 - Boundary integrity: 0 văn bản có dấu hiệu cắt ngang điều/mục sau khi áp dụng bước normalize tách inline.
 - Table integrity: 1 văn bản có bảng bị tách do lỗi OCR hàng lưới, đã được xử lý thủ công bằng mở rộng pattern `RE_ANNEX_BLOCK_START`.
 
-### 5.4. Các cell kiểm tra cụ thể
+### 5.4. Chi tiết từng cell (`batch_chunk_evaluate.py`)
 
-Các cell trong `chunking_evaluation.md` bao gồm:
-
-1. **Cell 1**: Lấy subset 100 văn bản với phân tầng theo độ dài.
-2. **Cell 2**: Hàm `analyze_chunking` gọi chunker và thu thập metrics.
-3. **Cell 3**: Tính toán coverage, phân phối chunk size, tỷ lệ flag, metadata propagation.
-4. **Cell 4**: Vẽ biểu đồ histogram, boxplot, scatter.
-5. **Cell 5**: Kiểm tra boundary integrity bằng regex.
-6. **Cell 6**: Kiểm tra table integrity.
-7. **Cell 7**: In báo cáo tóm tắt.
-8. **Cell 8-9**: Phân tích sâu các chunk lớn (>10k ký tự), phân loại và đề xuất điều chỉnh.
+1. **Cell 1**: Lazy scan, auto-detect cột (`quality_flags` vs JSON mirror, `embed`, `table_columns`, …).
+2. **Cell 2**: Materialize `metrics_narrow_*.parquet` — một lần đọc `chunk_text` để tính `char_len`.
+3. **Cell 3**: Coverage join `content.parquet`; stratified sample 100 doc_ids theo độ dài.
+4. **Cell 4**: Histogram/bar token bins; heatmap `chunk_type × quality_flags` (embed only).
+5. **Cell 5**: Boundary — chunk trước kết thúc bằng header `Điều N` nhưng chunk sau không mở `Điều` mới.
+6. **Cell 6**: Table — header trên `raw_table`; `table_part` kế thừa header parent; `procedure_record` có column context.
+7. **Cell 7**: Bảng PASS/FAIL + gauge value vs threshold.
+8. **Cell 8**: Chunk ≥ 10k chars — phân loại `table_or_appendix` / `appendix` / `long_prose`.
 
 ### 5.5. Sanity check thủ công (mẫu đã gặp)
 
@@ -464,10 +715,8 @@ Hướng phát triển tiếp theo:
 
 - **Tích hợp với pipeline indexing**: Chunk output sẽ được đưa vào Qdrant (dense) và Elasticsearch (BM25).
 - **LightRAG**: Sử dụng `relationships.parquet` để xây dựng đồ thị văn bản, kết hợp với `parent_id` trong chunk để mở rộng ngữ cảnh.
-- **Mở rộng pattern**: Khi gặp loại văn bản mới (ví dụ: Bản án, Quyết định cá biệt), chỉ cần bổ sung hằng số trong `chunk.py` §2b.
+- **Mở rộng pattern**: Khi gặp loại văn bản mới (ví dụ: Bản án, Quyết định cá biệt), chỉ cần bổ sung hằng số trong `legal_chunker.py` §2b.
 - **Tối ưu hiệu suất**: Chạy chunking song song trên Polars với partition theo `id`.
-
-Tài liệu tham khảo bổ sung: `chunking_evaluation.md`.
 
 ---
 

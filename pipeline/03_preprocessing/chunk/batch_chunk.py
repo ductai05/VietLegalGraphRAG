@@ -17,8 +17,6 @@ import warnings
 warnings.filterwarnings('ignore')
 
 import polars as pl
-import pandas as pd
-import numpy as np
 
 # ============================================================
 # Stable schema for chunk output (avoid Polars inference errors)
