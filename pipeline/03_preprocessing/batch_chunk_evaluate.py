@@ -82,8 +82,11 @@ PALETTE_GRAD = sns.color_palette("rocket", as_cmap=True)
 PALETTE_COOL = sns.color_palette("viridis", as_cmap=True)
 PALETTE_WARM = sns.color_palette("flare", as_cmap=True)
 
-_RE_BOUNDARY_TAIL_NUM = re.compile(r"\d\s*$")
 _RE_BOUNDARY_HEAD_DIEU = re.compile(r"^\s*Điều\s+\d+", re.IGNORECASE)
+_RE_BOUNDARY_PREV_ENDS_WITH_DIEU_HEADER_ONLY = re.compile(
+    r"(?:^|\n)\s*Điều\s+\d+\s*[:.]?\s*$",
+    re.IGNORECASE,
+)
 _RE_TABLE_HEADER_HINT = re.compile(
     r"(STT|TT|Mã|Tên|Nội dung|Thủ tục|Đơn vị|Ghi chú|Thời hạn)",
     re.IGNORECASE,
@@ -495,20 +498,33 @@ def check_boundary_sample(doc_ids: List[int]) -> pd.DataFrame:
         texts = rows["chunk_text"].to_list()
         cids = rows["chunk_id"].to_list()
         for i in range(len(texts) - 1):
-            tail = (texts[i] or "").rstrip()[-80:]
-            head = (texts[i + 1] or "").lstrip()[:80]
-            if _RE_BOUNDARY_TAIL_NUM.search(tail) and _RE_BOUNDARY_HEAD_DIEU.match(head):
-                violations.append({
-                    "doc_id": doc_id,
-                    "chunk_id_prev": cids[i],
-                    "chunk_id_next": cids[i + 1],
-                })
+            prev_text = (texts[i] or "").rstrip()
+            next_text = (texts[i + 1] or "").lstrip()
+
+            # Boundary integrity: "không cắt ngang Điều"
+            # Vi phạm điển hình: chunk trước chỉ chứa header "Điều N:" (hoặc "Điều N")
+            # nhưng phần nội dung của Điều lại nằm ở chunk sau (chunk sau KHÔNG bắt đầu bằng "Điều ...").
+            tail = prev_text[-160:]
+            head = next_text[:120]
+
+            prev_ends_with_dieu_header = bool(_RE_BOUNDARY_PREV_ENDS_WITH_DIEU_HEADER_ONLY.search(tail))
+            next_starts_with_new_dieu = bool(_RE_BOUNDARY_HEAD_DIEU.match(head))
+
+            if prev_ends_with_dieu_header and (head.strip() != "") and (not next_starts_with_new_dieu):
+                violations.append(
+                    {
+                        "doc_id": doc_id,
+                        "chunk_id_prev": cids[i],
+                        "chunk_id_next": cids[i + 1],
+                    }
+                )
     return pd.DataFrame(violations)
 
 
 boundary_doc_ids = sample_doc_ids[:BOUNDARY_MAX_DOCS]
 boundary_df = check_boundary_sample(boundary_doc_ids)
 metrics["boundary_violations"] = len(boundary_df)
+metrics["boundary_violation_docs"] = int(boundary_df["doc_id"].nunique()) if len(boundary_df) else 0
 metrics["boundary_sample_docs"] = len(boundary_doc_ids)
 print(f"\nBoundary violations: {len(boundary_df)} (trên {len(boundary_doc_ids)} docs mẫu)")
 gc.collect()
