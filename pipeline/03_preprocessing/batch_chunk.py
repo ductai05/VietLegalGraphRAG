@@ -4,8 +4,13 @@ import html
 import json
 import time
 import logging
+import errno
+import logging
+import shutil
 import zipfile
 import gc
+import sys
+import importlib.util
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -123,15 +128,44 @@ def normalize_chunk_record(chunk: dict, doc_id: int) -> dict:
         "created_at": float(chunk.get("created_at") or time.time()),
     }
 
-# Tạo liên kết ảo trỏ đến file đã đổi tên
-if not os.path.exists("legal_chunker.py"):
-    os.symlink("/kaggle/input/datasets/brdh7940/chunking/legal_chunker.py", "legal_chunker.py")
+def _load_chunk_legal_document():
+    """Load `chunk_legal_document` from the first existing legal_chunker.py."""
+    candidates = [
+        Path("/kaggle/input/chunking/legal_chunker.py"),
+        (Path(__file__).resolve().parent / "legal_chunker.py") if "__file__" in globals() else (Path.cwd() / "legal_chunker.py"),
+        Path("/kaggle/input/datasets/brdh7940/chunking/legal_chunker.py"),
+    ]
 
-# Import sạch sẽ không lo xung đột hệ thống
-from legal_chunker import chunk_legal_document
+    for path in candidates:
+        if not path.exists():
+            continue
+        spec = importlib.util.spec_from_file_location("legal_chunker", str(path))
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules["legal_chunker"] = module
+            spec.loader.exec_module(module)
+            if hasattr(module, "chunk_legal_document"):
+                return module.chunk_legal_document
+    raise ImportError(
+        "Could not load chunk_legal_document from any legal_chunker.py candidate."
+    )
+
+
+chunk_legal_document = _load_chunk_legal_document()
 
 # ========== CẤU HÌNH ==========
-BASE_PATH = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned"
+_INPUT_BASE_CANDIDATES = [
+    Path("/kaggle/input/vietnamese-legal-documents-cleaned/cleaned_data"),
+    Path("/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/cleaned_data"),
+]
+
+for _base in _INPUT_BASE_CANDIDATES:
+    if (_base / "content.parquet").exists():
+        BASE_PATH = str(_base)
+        break
+else:
+    BASE_PATH = str(_INPUT_BASE_CANDIDATES[0])
+
 CONTENT_PATH = f"{BASE_PATH}/content.parquet"
 META_PATH = f"{BASE_PATH}/metadata.parquet"
 REL_PATH = f"{BASE_PATH}/relationships.parquet"
@@ -162,6 +196,7 @@ BATCH_SIZE = 10000          # Số văn bản trên mỗi batch
 MAX_WORKERS = cpu_count()   # Số tiến trình song song
 DOC_TIMEOUT_SEC = 60        # Timeout cho mỗi văn bản
 CHUNKING_FUNC = chunk_legal_document   # Hàm chunking có sẵn
+ZIP_FREE_SPACE_MARGIN = 512 * 1024**2
 
 # Cấu hình logging
 logging.basicConfig(
@@ -479,51 +514,103 @@ def run_pipeline():
 # Chạy pipeline
 total_chunks, total_errors, elapsed = run_pipeline()
 
-def _write_parquet_zip(parquet_path: Path, zip_path: Path) -> None:
-    """Nén một file parquet vào zip (tên entry = tên file parquet)."""
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.write(parquet_path, arcname=parquet_path.name)
+def _write_dataset_zip_if_space(parquet_paths: Tuple[Path, ...]) -> bool:
+    """Create the optional ZIP only when the working disk has enough space."""
+    DATASET_ZIP.unlink(missing_ok=True)
+
+    source_size = sum(path.stat().st_size for path in parquet_paths)
+    required_free = source_size + ZIP_FREE_SPACE_MARGIN
+    free_space = shutil.disk_usage(DATASET_ZIP.parent).free
+
+    if free_space < required_free:
+        logging.warning(
+            "Skipping ZIP: need about %.2f GiB free but only %.2f GiB is "
+            "available. Parquet outputs remain at %s.",
+            required_free / 1024**3,
+            free_space / 1024**3,
+            PROCESSED_DIR,
+        )
+        return False
+
+    try:
+        # Parquet is already compressed. Storing it avoids expensive,
+        # low-yield recompression and makes the space estimate predictable.
+        with zipfile.ZipFile(
+            DATASET_ZIP,
+            "w",
+            compression=zipfile.ZIP_STORED,
+            allowZip64=True,
+        ) as zf:
+            for path in parquet_paths:
+                zf.write(path, arcname=path.name)
+    except OSError as exc:
+        DATASET_ZIP.unlink(missing_ok=True)
+        if exc.errno == errno.ENOSPC:
+            logging.warning(
+                "ZIP creation stopped because the disk became full. "
+                "Partial ZIP removed; Parquet outputs remain at %s.",
+                PROCESSED_DIR,
+            )
+            return False
+        raise
+
+    logging.info("Zip written: %s", DATASET_ZIP.name)
+    return True
 
 
-def finalize_processed_tables() -> Tuple[Optional[pl.DataFrame], Optional[pl.DataFrame]]:
+def finalize_processed_tables() -> Tuple[Optional[pl.LazyFrame], Optional[pl.LazyFrame]]:
     """
-    Đọc file chunks.parquet duy nhất, xuất metadata riêng và zip.
+    Xuất metadata riêng và zip mà không nạp toàn bộ parquet vào RAM.
     FK: chunks.doc_id -> metadata.id
     """
-    if not CHUNKS_OUTPUT.exists():
-        # Tương thích run cũ: gộp interim một lần rồi xóa
-        interim_files = list(INTERIM_DIR.glob("chunks_batch_*.parquet"))
-        if not interim_files:
-            logging.warning("No chunks file found. Run pipeline first.")
-            return None, None
-        chunks_df = pl.scan_parquet(str(INTERIM_DIR / "chunks_batch_*.parquet")).collect()
-        chunks_df.write_parquet(CHUNKS_OUTPUT, compression="snappy")
-        _cleanup_legacy_interim_chunks()
-        logging.info(f"Merged legacy interim -> {CHUNKS_OUTPUT}")
+    interim_files = sorted(INTERIM_DIR.glob("chunks_batch_*.parquet"))
+    if interim_files:
+        chunk_sources = [str(path) for path in interim_files]
+    elif CHUNKS_OUTPUT.exists():
+        with CHUNKS_OUTPUT.open("rb") as parquet_file:
+            parquet_file.seek(-4, 2)
+            if parquet_file.read(4) != b"PAR1":
+                raise RuntimeError(
+                    f"Corrupted parquet: {CHUNKS_OUTPUT}. "
+                    f"No valid interim files found in {INTERIM_DIR}."
+                )
+        chunk_sources = [str(CHUNKS_OUTPUT)]
     else:
-        chunks_df = pl.read_parquet(CHUNKS_OUTPUT)
+        logging.warning("No chunks file found. Run pipeline first.")
+        return None, None
 
-    logging.info(f"Chunks table: {chunks_df.height} rows -> {CHUNKS_OUTPUT}")
+    chunks_lf = pl.scan_parquet(chunk_sources)
+    if interim_files:
+        chunks_lf.sink_parquet(CHUNKS_OUTPUT, compression="snappy")
+        with CHUNKS_OUTPUT.open("rb") as parquet_file:
+            parquet_file.seek(-4, 2)
+            if parquet_file.read(4) != b"PAR1":
+                raise RuntimeError(f"Failed to create valid parquet: {CHUNKS_OUTPUT}")
+        for path in interim_files:
+            path.unlink()
+        logging.info("Removed %s merged interim chunk files.", len(interim_files))
+        chunks_lf = pl.scan_parquet(CHUNKS_OUTPUT)
 
-    doc_ids = chunks_df.select("doc_id").unique()
-    metadata_df = (
+    chunks_count = chunks_lf.select(pl.len()).collect(engine="streaming").item()
+    logging.info(f"Chunks table: {chunks_count} rows -> {CHUNKS_OUTPUT}")
+
+    doc_ids_lf = chunks_lf.select(pl.col("doc_id").alias("id")).unique()
+    metadata_lf = (
         pl.scan_parquet(META_PATH)
-        .filter(pl.col("id").is_in(doc_ids.get_column("doc_id")))
-        .collect()
+        .join(doc_ids_lf, on="id", how="semi")
     )
-    metadata_df.write_parquet(METADATA_OUTPUT, compression="snappy")
-    logging.info(f"Metadata table: {metadata_df.height} rows -> {METADATA_OUTPUT}")
-
-    _write_parquet_zip(CHUNKS_OUTPUT, CHUNKS_ZIP)
-    _write_parquet_zip(METADATA_OUTPUT, METADATA_ZIP)
-    with zipfile.ZipFile(DATASET_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.write(CHUNKS_OUTPUT, arcname=CHUNKS_OUTPUT.name)
-        zf.write(METADATA_OUTPUT, arcname=METADATA_OUTPUT.name)
-    logging.info(
-        f"Zips written: {CHUNKS_ZIP.name}, {METADATA_ZIP.name}, {DATASET_ZIP.name}"
+    metadata_lf.sink_parquet(METADATA_OUTPUT, compression="snappy")
+    metadata_count = (
+        pl.scan_parquet(METADATA_OUTPUT)
+        .select(pl.len())
+        .collect(engine="streaming")
+        .item()
     )
+    logging.info(f"Metadata table: {metadata_count} rows -> {METADATA_OUTPUT}")
 
-    return chunks_df, metadata_df
+    _write_dataset_zip_if_space((CHUNKS_OUTPUT, METADATA_OUTPUT))
+
+    return chunks_lf, pl.scan_parquet(METADATA_OUTPUT)
 
 
-chunks_df, metadata_df = finalize_processed_tables()
+chunks_lf, metadata_lf = finalize_processed_tables()
