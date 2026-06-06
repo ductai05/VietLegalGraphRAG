@@ -39,6 +39,17 @@ CHUNK_SCHEMA = {
     "prev_chunk_id": pl.Utf8,
     "next_chunk_id": pl.Utf8,
     "token_estimate": pl.Int64,
+    "char_count": pl.Int64,
+    "table_id": pl.Utf8,
+    "raw_table_id": pl.Utf8,
+    "summary_of": pl.Utf8,
+    "source_table_hash": pl.Utf8,
+    "table_columns": pl.List(pl.Utf8),
+    "table_columns_json": pl.Utf8,
+    "table_summary_schema_json": pl.Utf8,
+    "table_strategy": pl.Utf8,
+    "answer_source": pl.Utf8,
+    "do_not_answer_from_summary": pl.Boolean,
     "quality_flags": pl.List(pl.Utf8),
     "quality_flags_json": pl.Utf8,
     "created_at": pl.Float64,
@@ -88,6 +99,21 @@ def normalize_chunk_record(chunk: dict, doc_id: int) -> dict:
         "prev_chunk_id": (None if chunk.get("prev_chunk_id") is None else str(chunk.get("prev_chunk_id"))),
         "next_chunk_id": (None if chunk.get("next_chunk_id") is None else str(chunk.get("next_chunk_id"))),
         "token_estimate": int(chunk.get("token_estimate") or 0),
+        "char_count": int(chunk.get("char_count") or len(str(chunk.get("chunk_text") or ""))),
+        "table_id": (None if chunk.get("table_id") is None else str(chunk.get("table_id"))),
+        "raw_table_id": (None if chunk.get("raw_table_id") is None else str(chunk.get("raw_table_id"))),
+        "summary_of": (None if chunk.get("summary_of") is None else str(chunk.get("summary_of"))),
+        "source_table_hash": (None if chunk.get("source_table_hash") is None else str(chunk.get("source_table_hash"))),
+        "table_columns": (
+            [str(x) for x in (chunk.get("table_columns") or [])]
+            if isinstance(chunk.get("table_columns"), list)
+            else []
+        ),
+        "table_columns_json": _to_json_or_none(chunk.get("table_columns") or []),
+        "table_summary_schema_json": _to_json_or_none(chunk.get("table_summary_schema")),
+        "table_strategy": (None if chunk.get("table_strategy") is None else str(chunk.get("table_strategy"))),
+        "answer_source": (None if chunk.get("answer_source") is None else str(chunk.get("answer_source"))),
+        "do_not_answer_from_summary": bool(chunk.get("do_not_answer_from_summary", False)),
         "quality_flags": (
             [str(x) for x in (chunk.get("quality_flags") or [])]
             if isinstance(chunk.get("quality_flags"), list)
@@ -291,9 +317,55 @@ def merge_all_chunk_outputs() -> None:
     else:
         pl.concat(
             [pl.scan_parquet(s) for s in sources],
-            how="vertical_relaxed",
+            how="diagonal_relaxed",
         ).collect().write_parquet(CHUNKS_OUTPUT, compression="snappy")
     _cleanup_legacy_interim_chunks()
+
+
+def validate_chunk_invariants(path: Path) -> Dict[str, int]:
+    """Validate production gates that can be checked without loading chunk text."""
+    lf = pl.scan_parquet(path)
+    raw_ids = (
+        lf.filter(pl.col("chunk_type") == "raw_table")
+        .select(pl.col("chunk_id").alias("_raw_id"))
+        .with_columns(pl.lit(True).alias("_raw_exists"))
+    )
+    summary_links = (
+        lf.filter(pl.col("chunk_type") == "table_summary")
+        .select("chunk_id", "raw_table_id")
+        .join(raw_ids, left_on="raw_table_id", right_on="_raw_id", how="left")
+    )
+    checks = {
+        "raw_table_embed_true": lf.filter(
+            (pl.col("chunk_type") == "raw_table") & pl.col("embed")
+        ).select(pl.len()).collect().item(),
+        "table_summary_embed_false": lf.filter(
+            (pl.col("chunk_type") == "table_summary") & (~pl.col("embed"))
+        ).select(pl.len()).collect().item(),
+        "table_summary_missing_raw_link": summary_links.filter(
+            pl.col("_raw_exists").is_null()
+        ).select(pl.len()).collect().item(),
+        "table_summary_wrong_answer_source": lf.filter(
+            (pl.col("chunk_type") == "table_summary")
+            & (
+                (pl.col("answer_source").fill_null("") != "raw_table")
+                | (~pl.col("do_not_answer_from_summary").fill_null(False))
+            )
+        ).select(pl.len()).collect().item(),
+        "procedure_record_missing_columns": lf.filter(
+            (pl.col("chunk_type") == "procedure_record")
+            & (pl.col("table_columns").list.len().fill_null(0) == 0)
+        ).select(pl.len()).collect().item(),
+        "dense_hard_split": lf.filter(
+            pl.col("embed") & pl.col("quality_flags").list.contains("hard_char_split")
+        ).select(pl.len()).collect().item(),
+        "dense_long_prose_ge_10k": lf.filter(
+            pl.col("embed") & (pl.col("char_count").fill_null(0) >= 10000)
+        ).select(pl.len()).collect().item(),
+    }
+    logging.info("Chunk invariant violations: %s", checks)
+    tqdm.write(f"Chunk invariant violations: {checks}")
+    return checks
 
 
 def _cleanup_legacy_interim_chunks() -> None:
@@ -351,6 +423,18 @@ def run_pipeline():
                 
                 # Sau khi batch hoàn tất, append vào file chunks duy nhất
                 if batch_chunks:
+                    tiny_merged = sum(
+                        "tiny_chunk_merged" in (c.get("quality_flags") or [])
+                        for c in batch_chunks
+                    )
+                    tiny_filtered = sum(
+                        "tiny_chunk_no_dense" in (c.get("quality_flags") or [])
+                        for c in batch_chunks
+                    )
+                    logging.info(
+                        "Batch %s tiny handling: merged=%s dense_filtered=%s",
+                        batch_idx + 1, tiny_merged, tiny_filtered,
+                    )
                     normalized_chunks = [normalize_chunk_record(c, c.get("doc_id")) for c in batch_chunks]
                     chunk_df = pl.DataFrame(normalized_chunks, schema=CHUNK_SCHEMA, strict=False)
                     write_batch_chunks(chunk_df, batch_idx)
@@ -384,6 +468,8 @@ def run_pipeline():
                 gc.collect()
     
     merge_all_chunk_outputs()
+    if CHUNKS_OUTPUT.exists():
+        validate_chunk_invariants(CHUNKS_OUTPUT)
     elapsed = time.time() - start_time
     tqdm.write(f"=== PIPELINE FINISHED ===")
     tqdm.write(f"Time: {elapsed:.2f}s | Processed docs: {processed_count - total_errors} | Failed docs: {total_errors} | Total chunks: {total_chunks}")

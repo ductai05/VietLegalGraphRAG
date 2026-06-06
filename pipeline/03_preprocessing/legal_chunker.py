@@ -33,6 +33,9 @@ class ChunkingConfig:
     table_summary_threshold: int = 3000  # bảng > này → table_summary + raw_table
     table_summary_max_chars: int = 1000  # cap độ dài table_summary (embed target)
     table_summary_max_columns: int = 12   # OCR 1 hàng nhiều cột — không liệt kê hết
+    tiny_dense_char_limit: int = 50
+    small_table_threshold: int = 500
+    long_prose_no_embed_threshold: int = 10000
 
 
 CONFIG = ChunkingConfig()
@@ -256,6 +259,16 @@ def get_retrieval_flags(chunk_type: str) -> Tuple[bool, bool]:
     )
 
 
+def _meaningful_table_headers(rows: List[List[str]]) -> List[str]:
+    if not rows:
+        return []
+    return [
+        cell.strip()
+        for cell in rows[0]
+        if cell.strip() and cell.strip() not in {"-", "--", "---"}
+    ]
+
+
 # ============================================================
 # 3. NORMALIZER
 # ============================================================
@@ -279,7 +292,8 @@ class LegalTextNormalizer:
         text = RE_MULTI_NEWLINE.sub("\n\n", text)
 
         # Chuẩn hóa khoảng trắng quanh dấu pipe để parser bảng ổn hơn.
-        text = re.sub(r"\s*\|\s*", " | ", text)
+        # Không dùng \s ở đây vì nó nuốt luôn newline và làm phẳng toàn bộ bảng.
+        text = re.sub(r"[ \t]*\|[ \t]*", " | ", text)
         text = re.sub(r"[ \t]{2,}", " ", text)
 
         text = LegalTextNormalizer._explode_mixed_prose_and_tables(text)
@@ -631,6 +645,7 @@ class VietnameseLegalChunker:
         self.doc_metadata = coerce_document_metadata(doc_metadata)
 
         self.chunks: List[Dict[str, Any]] = []
+        self._table_positions: Dict[str, int] = {}
 
     # --------------------------------------------------------
     # Public API
@@ -641,7 +656,10 @@ class VietnameseLegalChunker:
         if not text:
             return []
 
-        if len(text) < self.config.short_doc_threshold:
+        if (
+            len(text) < self.config.short_doc_threshold
+            and not any(is_probably_table_line(line) for line in text.splitlines())
+        ):
             self._emit_chunk(
                 chunk_text=text,
                 chunk_type="short_text",
@@ -649,6 +667,7 @@ class VietnameseLegalChunker:
                 parent_key=self._make_parent_key(["Toàn văn"]),
                 quality_flags=["short_document"],
             )
+            self._postprocess_chunks()
             self._finalize_links()
             return self.chunks
 
@@ -661,6 +680,7 @@ class VietnameseLegalChunker:
         for block in footer_blocks:
             self._process_block(block)
 
+        self._postprocess_chunks()
         self._finalize_links()
         return self.chunks
 
@@ -1264,57 +1284,99 @@ class VietnameseLegalChunker:
 
     def _process_table(self, table_text: str, section_path: List[str]) -> None:
         parent_key = self._make_parent_key(section_path + ["Bảng"])
+        table_key = f"{self.doc_id}::{' > '.join(section_path)}"
+        table_position = self._table_positions.get(table_key, 0)
+        self._table_positions[table_key] = table_position + 1
+        table_id = stable_hash(f"{table_key}::{table_position}", length=24)
+        source_table_hash = stable_hash(
+            f"{table_text}::{' > '.join(section_path)}", length=40
+        )
+        rows = self._parse_pipe_rows(table_text)
+        columns = self._infer_table_columns(rows)
+        strategy = self._classify_table_strategy(table_text, rows)
 
-        # Bảng TTHC → procedure_record (giữ nguyên, ưu tiên cao nhất)
+        raw_chunk = self._emit_chunk(
+            chunk_text=table_text,
+            chunk_type="raw_table",
+            section_path=section_path,
+            parent_key=parent_key,
+            table_id=table_id,
+            source_table_hash=source_table_hash,
+            table_columns=columns,
+            table_strategy=strategy,
+            answer_source="raw_table",
+        )
+        if raw_chunk is None:
+            return
+        raw_table_id = raw_chunk["chunk_id"]
+
+        summary_schema = self._generate_table_summary_schema(
+            table_text, section_path, rows=rows, strategy=strategy
+        )
+        summary = self._table_summary_contextual_text(summary_schema, table_text)
+        self._emit_chunk(
+            chunk_text=summary,
+            chunk_type="table_summary",
+            section_path=section_path,
+            parent_key=parent_key,
+            table_id=table_id,
+            raw_table_id=raw_table_id,
+            summary_of=raw_table_id,
+            source_table_hash=source_table_hash,
+            table_columns=columns,
+            table_summary_schema=summary_schema,
+            table_strategy=strategy,
+            answer_source="raw_table",
+            do_not_answer_from_summary=True,
+        )
+
+        # Bảng TTHC → raw_table + summary + procedure_record.
         if self.config.parse_procedure_tables and self._looks_like_procedure_table(table_text):
             records = self._parse_procedure_table_records(table_text, section_path, parent_key)
             if records:
                 for rec in records:
-                    self._emit_procedure_record(rec, section_path, parent_key)
+                    self._emit_procedure_record(
+                        rec,
+                        section_path,
+                        parent_key,
+                        table_id=table_id,
+                        raw_table_id=raw_table_id,
+                        source_table_hash=source_table_hash,
+                        table_columns=columns,
+                    )
                 return
 
-        rows = self._parse_pipe_rows(table_text)
         table_len = len(table_text)
 
-        # Bảng rất lớn — luôn table_summary + raw_table (kể cả OCR 1–2 dòng nhiều pipe)
-        if table_len > self.config.table_summary_threshold:
-            summary = self._generate_table_summary(table_text, section_path)
-            if summary.strip():
-                self._emit_chunk(
-                    chunk_text=summary,
-                    chunk_type="table_summary",
-                    section_path=section_path,
-                    parent_key=parent_key,
-                )
-            self._emit_chunk(
-                chunk_text=table_text,
-                chunk_type="raw_table",
-                section_path=section_path,
-                parent_key=parent_key,
-            )
-            return
-
-        # Bảng nhỏ → embed bình thường
-        if table_len <= self.config.table_max_chars:
-            self._emit_chunk(
-                chunk_text=table_text,
-                chunk_type="table",
-                section_path=section_path,
-                parent_key=parent_key,
-            )
-            return
-
-        # Bảng trung bình: nhiều hàng → table_part; ít hàng → một chunk table
+        # Row-level/table-part retrieval bổ sung cho bảng trung bình/lớn có cấu trúc.
         if len(rows) > 4 and table_len > self.config.table_row_mode_threshold:
-            self._split_large_table_rows(rows, section_path, parent_key)
-            return
+            self._split_large_table_rows(
+                rows,
+                section_path,
+                parent_key,
+                table_id=table_id,
+                raw_table_id=raw_table_id,
+                source_table_hash=source_table_hash,
+                table_strategy=strategy,
+            )
 
-        self._emit_chunk(
-            chunk_text=table_text,
-            chunk_type="table",
-            section_path=section_path,
-            parent_key=parent_key,
+    def _classify_table_strategy(
+        self, table_text: str, rows: List[List[str]]
+    ) -> str:
+        if self._looks_like_procedure_table(table_text):
+            return "procedure_table"
+        if len(table_text) < self.config.small_table_threshold:
+            return "small_table"
+        non_empty = [cell for row in rows[:20] for cell in row if cell.strip()]
+        numeric_like = sum(
+            bool(re.fullmatch(r"[\d\s.,/%+\-–—]+", cell.strip()))
+            for cell in non_empty
         )
+        if non_empty and numeric_like / len(non_empty) >= 0.5:
+            return "numeric_or_code_table"
+        if len(table_text) >= self.config.table_summary_threshold:
+            return "large_table"
+        return "structured_table"
 
     def _looks_like_procedure_table(self, text: str) -> bool:
         lower = text.lower()
@@ -1409,6 +1471,20 @@ class VietnameseLegalChunker:
             if any(kw in joined for kw in _TTHC_HEADER_KEYWORDS):
                 return row
         return []
+
+    def _infer_table_columns(self, rows: List[List[str]]) -> List[str]:
+        """Chọn header tốt nhất trong vài hàng đầu, thay vì mặc định hàng đầu là caption."""
+        best: List[str] = []
+        best_score = -1
+        hints = ("stt", "tt", "mã", "tên", "nội dung", "thủ tục", "đơn vị", "ghi chú", "thời hạn")
+        for row in rows[:6]:
+            cells = _meaningful_table_headers([row])
+            joined = " ".join(cells).lower()
+            score = sum(hint in joined for hint in hints) * 10 + len(cells)
+            if score > best_score:
+                best = cells
+                best_score = score
+        return best[:self.config.table_summary_max_columns]
 
     def _is_header_like(self, cells: List[str]) -> bool:
         joined = " ".join(cells).lower()
@@ -1542,6 +1618,10 @@ class VietnameseLegalChunker:
         rec: Dict[str, Any],
         section_path: List[str],
         parent_key: str,
+        table_id: str,
+        raw_table_id: str,
+        source_table_hash: str,
+        table_columns: List[str],
     ) -> None:
         lines = [
             f"Số thứ tự: {rec.get('stt')}",
@@ -1579,6 +1659,13 @@ class VietnameseLegalChunker:
             section_title=rec.get("procedure_name"),
             parent_key=parent_key,
             procedure_name=rec.get("procedure_name"),
+            parent_id=raw_table_id,
+            table_id=table_id,
+            raw_table_id=raw_table_id,
+            source_table_hash=source_table_hash,
+            table_columns=table_columns,
+            table_strategy="procedure_table",
+            answer_source="procedure_record",
         )
 
     def _split_large_table_rows(
@@ -1586,6 +1673,10 @@ class VietnameseLegalChunker:
         rows: List[List[str]],
         section_path: List[str],
         parent_key: str,
+        table_id: str,
+        raw_table_id: str,
+        source_table_hash: str,
+        table_strategy: str,
     ) -> None:
         if not rows:
             return
@@ -1603,6 +1694,13 @@ class VietnameseLegalChunker:
                     chunk_type="table_part",
                     section_path=section_path,
                     parent_key=parent_key,
+                    parent_id=raw_table_id,
+                    table_id=table_id,
+                    raw_table_id=raw_table_id,
+                    source_table_hash=source_table_hash,
+                    table_columns=self._infer_table_columns(rows),
+                    table_strategy=table_strategy,
+                    answer_source="raw_table",
                 )
                 current_rows = [row]
                 current_len = len(" | ".join(header)) + len(row_text)
@@ -1617,6 +1715,13 @@ class VietnameseLegalChunker:
                 chunk_type="table_part",
                 section_path=section_path,
                 parent_key=parent_key,
+                parent_id=raw_table_id,
+                table_id=table_id,
+                raw_table_id=raw_table_id,
+                source_table_hash=source_table_hash,
+                table_columns=self._infer_table_columns(rows),
+                table_strategy=table_strategy,
+                answer_source="raw_table",
             )
 
     def _rows_to_markdown_like_table(self, header: List[str], rows: List[List[str]]) -> str:
@@ -1648,6 +1753,22 @@ class VietnameseLegalChunker:
         sentences = split_sentences_vi(text)
 
         if len(sentences) <= 1:
+            soft_units = self._split_soft_legal_units(text)
+            if len(soft_units) > 1:
+                for group in _group_text_items(soft_units, self.config.long_prose_max_chars):
+                    if len(group) <= self.config.long_prose_max_chars:
+                        self._emit_chunk(
+                            chunk_text=group,
+                            chunk_type=chunk_type,
+                            section_path=section_path,
+                            section_title=section_title,
+                            parent_key=parent_key,
+                        )
+                    else:
+                        self._split_by_hard_chars(
+                            group, chunk_type, section_path, parent_key, section_title
+                        )
+                return
             self._split_by_hard_chars(
                 text=text,
                 chunk_type=chunk_type,
@@ -1712,6 +1833,24 @@ class VietnameseLegalChunker:
                     quality_flags=["hard_char_split"],
                 )
             start += step
+
+    @staticmethod
+    def _split_soft_legal_units(text: str) -> List[str]:
+        """Fallback mềm cho OCR prose một dòng: điểm, bullet, mệnh đề và dấu chấm phẩy."""
+        patterns = [
+            r"(?=\s+[a-zđ][).]\s+)",
+            r"(?=\s+[-+•]\s+)",
+            r"(?=\s+(?:Trường hợp|Đối với|Căn cứ)\b)",
+            r"(?<=;)\s+",
+            r"\n+",
+        ]
+        parts = [text]
+        for pattern in patterns:
+            next_parts: List[str] = []
+            for part in parts:
+                next_parts.extend(re.split(pattern, part, flags=re.IGNORECASE))
+            parts = [p.strip() for p in next_parts if p.strip()]
+        return parts
 
     # --------------------------------------------------------
     # Hierarchical long-prose splitting
@@ -1842,62 +1981,87 @@ class VietnameseLegalChunker:
     # Table summary generation
     # --------------------------------------------------------
 
-    def _generate_table_summary(self, table_text: str, section_path: List[str]) -> str:
-        """Sinh text mô tả bảng lớn cho table_summary chunk (embed=True)."""
-        rows = self._parse_pipe_rows(table_text)
-        lines: List[str] = []
-
-        # Tiêu đề từ section_path
+    def _generate_table_summary_schema(
+        self,
+        table_text: str,
+        section_path: List[str],
+        rows: Optional[List[List[str]]] = None,
+        strategy: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Rule-based summary schema. Có thể dùng source_table_hash để cache/LLM-enrich sau."""
+        rows = rows if rows is not None else self._parse_pipe_rows(table_text)
         path_parts = [p for p in section_path if p not in {"Thân văn bản", "Bảng"}]
-        if path_parts:
-            lines.append(" > ".join(path_parts[-3:]))
-            lines.append("")
+        title = " > ".join(path_parts[-3:]) if path_parts else "Bảng trong văn bản"
+        columns = self._infer_table_columns(rows)
 
-        if not rows:
-            lines.append(f"(Bảng {len(table_text)} ký tự)")
-            return "\n".join(lines)
+        entities: List[str] = []
+        for row in rows[1:21]:
+            for cell in row:
+                value = cell.strip()
+                if (
+                    len(value) >= 5
+                    and not re.fullmatch(r"[\d\s.,/%+\-–—]+", value)
+                    and value not in entities
+                ):
+                    entities.append(truncate(value, 120) or value)
+                    break
+            if len(entities) >= 20:
+                break
 
-        # Hàng header
-        header = rows[0]
-        non_empty_headers = [
-            h.strip() for h in header if h.strip() and h.strip() not in {"-", "--", "---"}
+        joined_columns = " ".join(columns).lower()
+        intents = ["tra cứu nội dung trong bảng"]
+        for needle, intent in [
+            ("phí", "tra cứu mức phí"),
+            ("thời hạn", "tra cứu thời hạn giải quyết"),
+            ("hồ sơ", "tra cứu thành phần hồ sơ"),
+            ("mã", "tra cứu mã hoặc ngạch"),
+            ("cơ quan", "tra cứu cơ quan thực hiện"),
+        ]:
+            if needle in joined_columns:
+                intents.append(intent)
+
+        purpose = (
+            "Dùng để tìm đúng bảng; giá trị chính xác phải lấy từ raw_table."
+            if strategy != "procedure_table"
+            else "Dùng để tra cứu danh sách thủ tục; chi tiết lấy từ procedure_record hoặc raw_table."
+        )
+        return {
+            "table_title": title,
+            "legal_context": self._legal_context_label(section_path),
+            "table_purpose": purpose,
+            "main_columns": columns,
+            "key_entities": entities,
+            "lookup_intents": list(dict.fromkeys(intents)),
+            "answer_source": "raw_table",
+        }
+
+    def _table_summary_contextual_text(
+        self, schema: Dict[str, Any], raw_table_text: str
+    ) -> str:
+        columns = ", ".join(schema.get("main_columns") or []) or "không xác định rõ"
+        entities = "; ".join(schema.get("key_entities") or []) or "không xác định rõ"
+        intents = "; ".join(schema.get("lookup_intents") or [])
+        lines = [
+            f"Bảng này quy định: {schema.get('table_title')}.",
+            f"Ngữ cảnh pháp lý: {schema.get('legal_context')}.",
+            f"Các cột chính gồm: {columns}.",
+            f"Bảng dùng để tra cứu: {intents}.",
+            f"Các thực thể chính: {entities}.",
+            "Lưu ý: chỉ dùng summary để retrieve; mọi giá trị chính xác phải lấy từ raw_table.",
         ]
-        if non_empty_headers:
-            lines.append("Các cột:")
-            max_cols = self.config.table_summary_max_columns
-            for h in non_empty_headers[:max_cols]:
-                lines.append(f"- {truncate(h, 80)}")
-            if len(non_empty_headers) > max_cols:
-                lines.append(f"- ... ({len(non_empty_headers) - max_cols} cột khác)")
-            lines.append("")
-
-        # Lấy nội dung cột đầu (category items) để mô tả phạm vi bảng
-        content_items: List[str] = []
-        for row in rows[1:]:
-            if not row:
-                continue
-            first = row[0].strip() if row else ""
-            # Bỏ qua số thứ tự thuần, lấy cột có nội dung ý nghĩa
-            if first and not re.match(r"^\d{1,4}$", first) and len(first) > 2:
-                content_items.append(first)
-            elif len(row) > 1:
-                second = row[1].strip()
-                if second and len(second) > 4 and not re.match(r"^[\d,.\s]+$", second):
-                    content_items.append(second)
-
-        if content_items:
-            lines.append("Bao gồm:")
-            for item in content_items[:10]:
-                lines.append(f"- {truncate(item, 100)}")
-            if len(content_items) > 10:
-                lines.append(f"- ... (và {len(content_items) - 10} mục khác)")
-            lines.append("")
-
-        lines.append(f"Tổng số hàng dữ liệu: {max(0, len(rows) - 1)}")
-        lines.append(f"Kích thước bảng gốc: {len(table_text)} ký tự")
-
+        if len(raw_table_text) < self.config.small_table_threshold:
+            lines.append(f"Nội dung bảng nhỏ: {raw_table_text}")
         summary = "\n".join(lines)
         return truncate(summary, self.config.table_summary_max_chars) or summary
+
+    def _legal_context_label(self, section_path: List[str]) -> str:
+        meta = self.doc_metadata
+        doc = " ".join(
+            str(meta.get(k) or "").strip()
+            for k in ("legal_type", "document_number", "title")
+        ).strip()
+        path = " > ".join(section_path)
+        return " | ".join(x for x in (doc, path) if x) or self.source
 
     # --------------------------------------------------------
     # Chunk emission
@@ -1912,10 +2076,20 @@ class VietnameseLegalChunker:
         section_title: Optional[str] = None,
         procedure_name: Optional[str] = None,
         quality_flags: Optional[List[str]] = None,
-    ) -> None:
+        parent_id: Optional[str] = None,
+        table_id: Optional[str] = None,
+        raw_table_id: Optional[str] = None,
+        summary_of: Optional[str] = None,
+        source_table_hash: Optional[str] = None,
+        table_columns: Optional[List[str]] = None,
+        table_summary_schema: Optional[Dict[str, Any]] = None,
+        table_strategy: Optional[str] = None,
+        answer_source: Optional[str] = None,
+        do_not_answer_from_summary: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         chunk_text = chunk_text.strip()
         if not chunk_text:
-            return
+            return None
 
         flags: List[str] = []
         if quality_flags:
@@ -1932,6 +2106,9 @@ class VietnameseLegalChunker:
             "distribution_list",
             "procedure_record",
             "table_summary",
+            "raw_table",
+            "table",
+            "table_part",
         }:
             flags.append("tiny_chunk")
 
@@ -1944,6 +2121,24 @@ class VietnameseLegalChunker:
 
         chunk_id = make_uuid()
         embed, keyword_index = get_retrieval_flags(chunk_type)
+        char_count = len(chunk_text)
+
+        if chunk_type == "procedure_record" and char_count < self.config.tiny_dense_char_limit:
+            embed = False
+        if chunk_type in {"table", "table_part"} and char_count < self.config.tiny_dense_char_limit:
+            embed = False
+        if chunk_type == "table_part" and table_strategy == "numeric_or_code_table":
+            embed = False
+        if "hard_char_split" in flags:
+            embed = False
+            keyword_index = True
+        if (
+            char_count > self.config.long_prose_no_embed_threshold
+            and chunk_type not in {"raw_table"}
+        ):
+            embed = False
+            keyword_index = True
+            flags.append("long_prose_no_embed")
 
         base: Dict[str, Any] = {
             "chunk_id": chunk_id,
@@ -1960,16 +2155,28 @@ class VietnameseLegalChunker:
             "embed": embed,
             "keyword_index": keyword_index,
 
-            "parent_id": stable_hash(parent_key),
+            "parent_id": parent_id or stable_hash(parent_key),
             "prev_chunk_id": None,
             "next_chunk_id": None,
 
-            "token_estimate": max(1, int(len(chunk_text) / 4)),
+            "token_estimate": max(1, int(char_count / 4)),
+            "char_count": char_count,
+
+            "table_id": table_id,
+            "raw_table_id": raw_table_id,
+            "summary_of": summary_of,
+            "source_table_hash": source_table_hash,
+            "table_columns": table_columns or [],
+            "table_summary_schema": table_summary_schema,
+            "table_strategy": table_strategy,
+            "answer_source": answer_source,
+            "do_not_answer_from_summary": do_not_answer_from_summary,
 
             "quality_flags": sorted(set(flags)),
         }
 
         self.chunks.append(base)
+        return base
 
     def _build_contextual_text(
         self,
@@ -2039,6 +2246,73 @@ class VietnameseLegalChunker:
         if block_type in _preserve:
             return block_type
         return "fallback_text"
+
+    def _postprocess_chunks(self) -> None:
+        """Merge tiny heading/prose vào chunk kế tiếp cùng scope; nếu không thể thì bỏ dense."""
+        excluded = {
+            "procedure_record", "raw_table", "table_summary", "table", "table_part",
+            "signature", "distribution_list", "short_text",
+        }
+        removed: set = set()
+        merged_count = 0
+        filtered_count = 0
+
+        for i, chunk in enumerate(self.chunks):
+            if i in removed or chunk["char_count"] >= self.config.tiny_dense_char_limit:
+                continue
+            if chunk["chunk_type"] in excluded:
+                continue
+
+            candidate_idx = None
+            for j in range(i + 1, len(self.chunks)):
+                candidate = self.chunks[j]
+                if j in removed or candidate["chunk_type"] in {"signature", "distribution_list"}:
+                    continue
+                same_scope = (
+                    candidate["section_path"] == chunk["section_path"]
+                    or candidate["parent_id"] == chunk["parent_id"]
+                )
+                if same_scope:
+                    candidate_idx = j
+                break
+
+            if candidate_idx is not None:
+                target = self.chunks[candidate_idx]
+                target["chunk_text"] = f"{chunk['chunk_text']}\n{target['chunk_text']}".strip()
+                target["char_count"] = len(target["chunk_text"])
+                target["token_estimate"] = max(1, int(target["char_count"] / 4))
+                target["contextual_text"] = self._build_contextual_text(
+                    target["chunk_text"],
+                    target["section_path"],
+                    procedure_name=target.get("procedure_name"),
+                )
+                if target["chunk_type"] == "raw_table" and target.get("table_id"):
+                    new_hash = stable_hash(
+                        f"{target['chunk_text']}::{' > '.join(target['section_path'])}",
+                        length=40,
+                    )
+                    for related in self.chunks:
+                        if related.get("table_id") == target["table_id"]:
+                            related["source_table_hash"] = new_hash
+                target["quality_flags"] = sorted(set(
+                    target["quality_flags"] + ["tiny_chunk_merged"]
+                ))
+                removed.add(i)
+                merged_count += 1
+            else:
+                chunk["embed"] = False
+                chunk["quality_flags"] = sorted(set(
+                    chunk["quality_flags"] + ["tiny_chunk_no_dense"]
+                ))
+                filtered_count += 1
+
+        if removed:
+            self.chunks = [c for idx, c in enumerate(self.chunks) if idx not in removed]
+        if self.chunks and (merged_count or filtered_count):
+            self.chunks[0]["quality_flags"] = sorted(set(
+                self.chunks[0]["quality_flags"]
+                + [f"tiny_merged:{merged_count}", f"tiny_dense_filtered:{filtered_count}"]
+            ))
 
     def _finalize_links(self) -> None:
         for i, chunk in enumerate(self.chunks):

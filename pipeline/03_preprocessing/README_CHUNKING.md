@@ -37,6 +37,11 @@ Mục tiêu của giai đoạn chunking là cắt các văn bản dài thành nh
 | `prev_chunk_id` / `next_chunk_id` | Liên kết tuần tự                                                                                                            |
 | `token_estimate`                  | Ước lượng số token                                                                                                          |
 | `quality_flags`                   | Cờ cảnh báo như `tiny_chunk`, `oversized_chunk`, `hard_char_split`, `orphan_chunk`                                          |
+| `char_count`                      | Số ký tự sau normalize, dùng cho gate tiny/oversized                                                                        |
+| `table_id` / `raw_table_id`       | ID ổn định của bảng và link về chunk `raw_table`                                                                            |
+| `summary_of` / `source_table_hash`| Link retrieval rõ nghĩa và hash cache summary                                                                                |
+| `table_columns`                   | Column metadata truyền xuống `procedure_record` / `table_part`                                                               |
+| `answer_source`                   | Nguồn phải expand để trả lời; summary luôn trỏ về `raw_table`                                                               |
 
 Các trường metadata như `title`, `document_number`, `legal_type`, … được lấy từ bảng `metadata` khi join, không lưu trực tiếp trong chunk.
 
@@ -167,7 +172,7 @@ Script tham chiếu: `batch_chunk_evaluate.py` (Kaggle, memory-safe). Tài liệ
 | **Orphan chunk**         | Chunk không có `section_path` hoặc doc không có metadata | 0%                         |
 | **Metadata propagation** | Doc trong chunks có bản ghi metadata                    | 100%                       |
 | **Boundary integrity**   | Prose `embed=True`: không cắt ngang Điều (regex mẫu)    | 0 vi phạm (sample)         |
-| **Table integrity**      | `table` / `raw_table` / `table_summary`: body có header  | < 5% bảng                  |
+| **Table integrity thật** | Tách riêng raw header, table-part parent header và procedure column context | < 10% lỗi |
 
 #### B. Dense index (`embed=True`) — quyết định PASS/FAIL cho vector search
 
@@ -188,8 +193,8 @@ Script tham chiếu: `batch_chunk_evaluate.py` (Kaggle, memory-safe). Tài liệ
 **Lưu ý về bảng và embed:**
 
 - `raw_table`: **không** embed, **có** BM25 — oversized là chủ đích.
-- `table_summary`: embed (mô tả ngữ nghĩa) + `raw_table` (tra số liệu chính xác).
-- `table` / `table_part` nhỏ: vẫn embed; không bị `hard_char_split` (tách theo hàng, không `_split_by_hard_chars`).
+- `table_summary`: embed để retrieve; bắt buộc expand sang `raw_table` khi trả lời giá trị chính xác.
+- `table_part`/row-level: ưu tiên BM25; chunk < 50 ký tự không embed.
 - Hard split chỉ phát sinh từ `_split_prose` → `_split_by_hard_chars` trên `article`, `clause_group`, `appendix_text`, …
 
 ### 5.2. Quy trình kiểm tra thực tế
@@ -243,3 +248,71 @@ Hướng phát triển tiếp theo:
 - **Tối ưu hiệu suất**: Chạy chunking song song trên Polars với partition theo `id`.
 
 File `chunking_strategy.md` và `chunking_evaluation.md` là tài liệu tham khảo đầy đủ để duy trì và phát triển hệ thống.
+
+---
+
+## 7. Production gates trước full embedding
+
+Không chạy full embedding nếu một trong các gate sau chưa đạt:
+
+| Metric | Target |
+| --- | --- |
+| `dense_tiny_pct_lt50chars` | < 5% |
+| `dense_hard_split_count` | < 100, tốt nhất 0 |
+| `dense_oversized_3k_pct` | < 2% |
+| `table_integrity_bad_pct` | < 10% lỗi parser thật |
+| `raw_table_embed_false_pct` | 100% |
+| `table_summary_embed_true_pct` | gần 100% |
+| `procedure_record_has_column_names_pct` | > 95% |
+| `table_summary_has_raw_table_link_pct` | 100% |
+
+`batch_chunk.py` chạy `validate_chunk_invariants()` sau khi merge Parquet. Validation phải không có vi phạm cho `raw_table` embed, summary link, summary answer rule, dense hard split và dense prose >= 10k.
+
+### 7.1. Quy tắc tiny và long prose
+
+- Chunk prose/heading < 50 ký tự được merge vào chunk kế tiếp cùng `section_path` hoặc `parent_id`. Nếu không có candidate hợp lệ thì `embed=False`.
+- `procedure_record` < 50 ký tự và `table_part` < 50 ký tự chỉ dùng keyword index.
+- `signature` và `distribution_list` không embed, không keyword index.
+- Hard-char split còn lại được giữ để không mất coverage nhưng bắt buộc `embed=False`, `keyword_index=True`.
+- Mọi prose >= 10.000 ký tự bắt buộc `embed=False`.
+
+### 7.2. Table multi-vector schema
+
+Mọi bảng được lưu thành `raw_table` để làm nguồn dữ liệu chính xác và một `table_summary` rule-based để dense retrieve. Bảng TTHC còn sinh thêm `procedure_record`; bảng có cấu trúc lớn có thể sinh `table_part`.
+
+| Field | Quy tắc |
+| --- | --- |
+| `table_id` | Hash ổn định từ `doc_id + section_path + table_position` |
+| `raw_table_id` | `chunk_id` của raw table tương ứng |
+| `summary_of` | Alias của `raw_table_id` trên summary |
+| `source_table_hash` | Hash từ raw text + section path, dùng cho cache |
+| `table_columns` | Tên cột truyền xuống procedure/table-part |
+| `table_summary_schema_json` | Summary có cấu trúc, không phải văn bản LLM tự do |
+| `answer_source` | Luôn là `raw_table` trên `table_summary` |
+| `do_not_answer_from_summary` | Luôn `True` trên `table_summary` |
+
+Summary schema:
+
+```json
+{
+  "table_title": "...",
+  "legal_context": "...",
+  "table_purpose": "...",
+  "main_columns": ["..."],
+  "key_entities": ["..."],
+  "lookup_intents": ["..."],
+  "answer_source": "raw_table"
+}
+```
+
+**Answer rule:** `table_summary` chỉ dùng để retrieve. Câu hỏi cần số liệu, mức phí, thời hạn, điều kiện, tên thủ tục hoặc mã/ngạch phải expand sang `raw_table` hoặc `procedure_record`.
+
+### 7.3. Table integrity metrics
+
+Evaluator không kiểm tra `table_summary` như bảng thô. Ba metric parser riêng:
+
+- `raw_table_has_header_pct`: raw table có header ở phần đầu.
+- `table_part_has_header_or_parent_header_pct`: table part có header hoặc `parent_id` trỏ về raw table có header.
+- `procedure_record_has_column_context_pct`: record có `procedure_name` và column metadata/context.
+
+Các baseline retrieval chưa được tính trong chunking stage: `table_QA_hit@10`, `exact_value_accuracy`, `summary_hallucination_rate`.
