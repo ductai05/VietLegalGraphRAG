@@ -29,3 +29,6 @@ venv/
 /app/node_modules/
 /app/.next/
 /app/dist/
+
+# Kaggle temp files
+/kaggle/
