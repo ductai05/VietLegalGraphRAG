@@ -156,25 +156,33 @@ Chỉ chạy encode full nếu command trên in `debug embedding OK`.
 ## 4. Encode full và resume
 
 Pipeline mặc định gom các text có độ dài gần nhau vào cùng batch để giảm padding. Dùng
-`batch-size` lớn làm giới hạn số row và `token-budget` làm giới hạn bộ nhớ cho batch:
-batch dài sẽ nhỏ, còn batch ngắn có thể chứa nhiều row hơn. Với T4/P100 16 GB, bắt đầu
-với ngân sách tương đương batch 16 ở độ dài 1024:
+`batch-size` làm giới hạn số row và `token-budget` làm giới hạn padded-token per batch:
+batch dài sẽ nhỏ, còn batch ngắn có thể chứa nhiều row hơn.
+
+`token-budget = batch-size × max-length` là ngưỡng tối đa an toàn. Với T4/P100 16 GB và
+model 1.2 GB float16, dùng `token-budget=49152` (48 × 1024) và `batch-size=128`.
+Trên T4 16 GB, `131072` gây OOM (~128 rows × 1024 token cần thêm ~8 GB VRAM).
+`encode_texts` tự chia batch khi OOM; vẫn nên giữ budget an toàn.
+
+**Quan trọng khi chạy 2 GPU song song:** notebook/script launcher **không được**
+`import torch` trước khi spawn worker. Parent giữ CUDA context trên GPU 0 sẽ chặn
+worker `CUDA_VISIBLE_DEVICES=0`. Dùng `KAGGLE_T4X2.py` (không import torch ở parent)
+hoặc kiểm tra GPU bằng subprocess rồi mới spawn hai process.
 
 ```bash
 !python embed_shards.py \
   --payload "$WORK/data/embed_payload_v0.1.parquet" \
   --output-dir "$WORK/data/shards" \
   --batch-size 128 \
-  --token-budget 16384 \
+  --token-budget 49152 \
   --max-length 1024 \
   --shard-size 10000 \
   --attn-implementation sdpa \
   --cache-dir /kaggle/working/.cache
 ```
 
-Nếu CUDA OOM, giảm `--token-budget` xuống `12288` hoặc `8192`. Nếu GPU còn nhiều VRAM,
-tăng lên `24576` rồi `32768`. Không giảm `max-length=1024` cho production chỉ để tăng
-tốc nếu chưa đánh giá retrieval quality.
+Nếu CUDA OOM, giảm `--token-budget` theo bội số 2 (65536 → 32768). Không giảm
+`max-length=1024` cho production chỉ để tăng tốc nếu chưa đánh giá retrieval quality.
 
 Trước khi chạy full, benchmark đúng một shard production trong output directory riêng:
 
@@ -183,7 +191,7 @@ Trước khi chạy full, benchmark đúng một shard production trong output d
   --payload "$WORK/data/embed_payload_v0.1.parquet" \
   --output-dir "$WORK/benchmark_shard" \
   --shard-start 0 --shard-stop 1 \
-  --batch-size 128 --token-budget 16384 --max-length 1024 \
+  --batch-size 384 --token-budget 131072 --max-length 1024 \
   --shard-size 10000 --attn-implementation sdpa
 ```
 
@@ -209,14 +217,14 @@ Ví dụ 5 triệu rows tương ứng 500 shard. Trong cùng runtime T4 x2, ph�
   --payload "$WORK/data/embed_payload_v0.1.parquet" \
   --output-dir "$WORK/data/shards_0" \
   --shard-start 0 --shard-stop 250 \
-  --batch-size 128 --token-budget 16384 --max-length 1024 \
+  --batch-size 384 --token-budget 131072 --max-length 1024 \
   --shard-size 10000 --attn-implementation sdpa \
   > "$WORK/gpu0.log" 2>&1 & \
 CUDA_VISIBLE_DEVICES=1 python embed_shards.py \
   --payload "$WORK/data/embed_payload_v0.1.parquet" \
   --output-dir "$WORK/data/shards_1" \
   --shard-start 250 --shard-stop 500 \
-  --batch-size 128 --token-budget 16384 --max-length 1024 \
+  --batch-size 384 --token-budget 131072 --max-length 1024 \
   --shard-size 10000 --attn-implementation sdpa \
   > "$WORK/gpu1.log" 2>&1 & \
 wait

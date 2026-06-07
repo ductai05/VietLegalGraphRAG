@@ -200,6 +200,81 @@ def load_encoder(
     return tokenizer, model, resolved_device, revision
 
 
+def _forward_embeddings(
+    batch_indices: list[int],
+    texts: Sequence[str],
+    tokenizer: Any,
+    model: Any,
+    device: str,
+    *,
+    max_length: int,
+    is_query: bool,
+    pad_to_multiple_of: int | None,
+    use_pinned: bool,
+) -> np.ndarray:
+    """Run one forward pass; on CUDA OOM, split the batch in half and retry."""
+    import torch
+    import torch.nn.functional as functional
+
+    batch = [texts[index] for index in batch_indices]
+    if is_query:
+        batch = [QUERY_PREFIX + text for text in batch]
+    inputs = tokenizer(
+        batch,
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        return_tensors="pt",
+    ).to(device, non_blocking=use_pinned)
+    seq_len = int(inputs["attention_mask"].shape[1])
+    try:
+        with torch.inference_mode():
+            output = model(**inputs, use_cache=False)
+        attention_mask = inputs["attention_mask"]
+        last_indices = seq_len - 1 - attention_mask.flip(dims=[1]).argmax(dim=1)
+        row_indices = torch.arange(len(batch), device=device)
+        embeddings = output.last_hidden_state[row_indices, last_indices]
+        return functional.normalize(embeddings.float(), p=2, dim=1).cpu().numpy()
+    except torch.cuda.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        if len(batch_indices) <= 1:
+            raise
+        mid = len(batch_indices) // 2
+        logging.warning(
+            "CUDA OOM on batch rows=%s seq=%s; splitting into %s + %s",
+            len(batch_indices),
+            seq_len,
+            mid,
+            len(batch_indices) - mid,
+        )
+        left = _forward_embeddings(
+            batch_indices[:mid],
+            texts,
+            tokenizer,
+            model,
+            device,
+            max_length=max_length,
+            is_query=is_query,
+            pad_to_multiple_of=pad_to_multiple_of,
+            use_pinned=use_pinned,
+        )
+        right = _forward_embeddings(
+            batch_indices[mid:],
+            texts,
+            tokenizer,
+            model,
+            device,
+            max_length=max_length,
+            is_query=is_query,
+            pad_to_multiple_of=pad_to_multiple_of,
+            use_pinned=use_pinned,
+        )
+        return np.concatenate([left, right], axis=0)
+    finally:
+        del inputs
+
+
 def encode_texts(
     texts: Sequence[str],
     tokenizer: Any,
@@ -216,7 +291,6 @@ def encode_texts(
 ) -> np.ndarray:
     """Encode texts with robust last-token pooling and L2 normalization."""
     import torch
-    import torch.nn.functional as functional
     from tqdm.auto import tqdm
 
     if not texts:
@@ -287,28 +361,46 @@ def encode_texts(
         progress = tqdm(batches, desc="Encoding", unit="batch")
     started = time.perf_counter()
 
-    for batch_indices in progress:
-        batch = [texts[index] for index in batch_indices]
-        if is_query:
-            batch = [QUERY_PREFIX + text for text in batch]
-        inputs = tokenizer(
-            batch,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            pad_to_multiple_of=pad_to_multiple_of,
-            return_tensors="pt",
-        ).to(device)
-        with torch.inference_mode():
-            output = model(**inputs, use_cache=False)
+    # Pinned memory enables async (non-blocking) GPU→CPU copies, so the CPU can
+    # prepare the next batch's tokenization while the transfer is in flight.
+    use_pinned = device.startswith("cuda")
+    pending: tuple[list[int], "torch.Tensor"] | None = None
 
-        attention_mask = inputs["attention_mask"]
-        sequence_length = attention_mask.shape[1]
-        last_indices = sequence_length - 1 - attention_mask.flip(dims=[1]).argmax(dim=1)
-        row_indices = torch.arange(len(batch), device=device)
-        embeddings = output.last_hidden_state[row_indices, last_indices]
-        embeddings = functional.normalize(embeddings.float(), p=2, dim=1)
-        vectors[batch_indices] = embeddings.cpu().numpy()
+    for batch_indices in progress:
+        if pending is not None:
+            prev_indices, prev_tensor = pending
+            if use_pinned:
+                torch.cuda.synchronize()
+            vectors[prev_indices] = prev_tensor.numpy()
+            pending = None
+
+        embeddings = _forward_embeddings(
+            batch_indices,
+            texts,
+            tokenizer,
+            model,
+            device,
+            max_length=max_length,
+            is_query=is_query,
+            pad_to_multiple_of=pad_to_multiple_of,
+            use_pinned=use_pinned,
+        )
+
+        if use_pinned:
+            cpu_tensor = torch.empty(
+                embeddings.shape, dtype=torch.float32, pin_memory=True
+            )
+            cpu_tensor.copy_(torch.from_numpy(embeddings), non_blocking=True)
+            pending = (batch_indices, cpu_tensor)
+        else:
+            vectors[batch_indices] = embeddings
+
+    # Flush the last batch.
+    if pending is not None:
+        prev_indices, prev_tensor = pending
+        if use_pinned:
+            torch.cuda.synchronize()
+        vectors[prev_indices] = prev_tensor.numpy()
 
     elapsed = time.perf_counter() - started
     logging.info(
