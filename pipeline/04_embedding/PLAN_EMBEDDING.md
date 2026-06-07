@@ -2,7 +2,8 @@
 
 > **Trạng thái hiện tại:** Chunking hoàn thành (`chunks.parquet` đã có).  
 > **Vấn đề tồn đọng:** `table_integrity_bad_pct = 39.38%` > gate 10% — **chưa fix**, xử lý bằng cách tách biệt hoàn toàn `raw_table` và `weak_table` khỏi dense index.  
-> **Mục tiêu:** Build dense vector index (Qdrant) phục vụ Hybrid RAG.  
+> **Mục tiêu:** Build **dense retriever component** (Qdrant) cho hybrid fusion sau này — không implement BM25/hybrid.  
+> **Output:** `DenseResult = {chunk_id, dense_score, payload, optional_expanded_context}`  
 > **Platform:** Kaggle (GPU T4/P100).  
 > **Embedding model:** [`darklethelong/vnlegal-lal`](https://huggingface.co/darklethelong/vnlegal-lal) — 600M params, 1024-dim, NDCG@10 = 0.8488.
 
@@ -19,20 +20,17 @@ chunks.parquet + metadata.parquet
         │  → payload_df: join metadata (doc_id → title, legal_type, ...)
         ▼
 [Step 2] Batch encoding với VNLegal-LAL
-        │  → vectors: List[np.ndarray] (1024-dim, float16→float32)
-        │  → checkpoint mỗi 1000 chunk
+        │  → save theo shard: vectors_shard_NNN.npy + payload_shard_NNN.parquet
+        │  → manifest.json sau khi shard ghi xong
         ▼
-[Step 3] Qdrant upsert
-        │  → Collection: legal_chunks_v1
-        │  → PointStruct: (chunk_id, vector, payload)
+[Step 3] Qdrant: create collection → payload index → upsert theo shard
+        │  → Collection: legal_chunks_dense_v1
         ▼
-[Step 4] Payload index (filter metadata)
-        │  → Tạo index các trường filter trên Qdrant
+[Step 4] Export snapshot Qdrant → file (Kaggle output)
         ▼
-[Step 5] Export snapshot Qdrant → file (Kaggle output)
-        │
+[Step 5] Smoke test retrieval
         ▼
-[Step 6] Kiểm tra / smoke test retrieval
+[Step 6b] Dense retrieval evaluation (Recall@10, MRR@10, nDCG@10)
 ```
 
 ---
@@ -130,6 +128,7 @@ payload_df = (
             "issuance_date", "effect_status",
             "linh_vuc", "nganh", "pham_vi",
             "effect_date", "effectless_date",
+            # Normalize sang ts (YYYYMMDD int) cho range filter — xem 2.4
         ]),
         left_on="doc_id",
         right_on="id",
@@ -161,6 +160,16 @@ text_to_embed = payload_df["contextual_text"].to_list()
 >     prefix = " | ".join(parts)
 >     return f"[{prefix}]\n\n{row['chunk_text']}" if prefix else row["chunk_text"]
 > ```
+
+### 2.4. Normalize date fields (range filter)
+
+```python
+# Thêm vào payload — index INTEGER trên Qdrant
+"issuance_date_ts": int,      # YYYYMMDD
+"effect_date_ts": int,
+"effectless_date_ts": int | None,
+# Giữ issuance_date string gốc cho citation/display
+```
 
 ---
 
@@ -207,8 +216,8 @@ QUERY_PREFIX = (
 def encode_batch(
     texts: list[str],
     is_query: bool = False,
-    max_len: int = 512,      # chunks thường < 2000 chars ≈ 400-600 tokens
-    batch_size: int = 32,
+    max_len: int = 1024,     # default production; model support 2048
+    batch_size: int = 16,    # T4: bắt đầu 16–24, tăng dần nếu ổn
 ) -> list[list[float]]:
     """Encode list of texts → list of 1024-dim float vectors."""
     all_embs = []
@@ -234,62 +243,48 @@ def encode_batch(
     return all_embs
 ```
 
-**Cấu hình batch_size:**
+**`max_len` theo chunk_type:**
 
-| GPU | Batch size đề xuất | VRAM ước tính |
+| Loại chunk | max_len |
+|---|---|
+| `article`, `clause_group`, `procedure_record` | 1024 |
+| `table_summary`, `preamble`, heading | 512 |
+| `appendix_text` / fallback dài | 1024–1536 |
+| debug run | 512 |
+
+| GPU | Batch size | VRAM ước tính |
 |---|---|---|
-| T4 (16GB) | 32 | ~8-10GB |
-| P100 (16GB) | 48 | ~10-12GB |
+| T4 (16GB) | 16–24 | ~8-10GB |
+| P100 (16GB) | 24–32 | ~10-12GB |
 
-> Nếu OOM: giảm `batch_size` hoặc dùng `max_len=384`.  
-> Chunks prose tối đa ~2500 chars ≈ 600-800 tokens với tokenizer Qwen — safe với `max_len=1024`.
+> Nếu OOM: giảm `batch_size`. Không hạ default `max_len` xuống 512 cho production.
 
-### 3.4. Pipeline encode với checkpoint
+### 3.4. Pipeline encode theo shard (không giữ vectors_dict trong RAM)
 
 ```python
-import json
-import numpy as np
-from pathlib import Path
+SHARD_SIZE = 10_000  # chunks/shard
 
-CHECKPOINT_PATH = Path("/kaggle/working/embed_checkpoint.json")
-VECTORS_PATH = Path("/kaggle/working/vectors.npy")
+# Mỗi shard:
+# 1. encode
+# 2. save vectors_shard_0001.npy  (float16 — không giữ vectors.npy gộp)
+# 3. save payload_shard_0001.parquet
+# 4. update manifest.json (chỉ mark shard done sau khi file ghi xong)
 
-def load_checkpoint() -> set:
-    if CHECKPOINT_PATH.exists():
-        return set(json.loads(CHECKPOINT_PATH.read_text())["done_ids"])
-    return set()
-
-def save_checkpoint(done_ids: list):
-    CHECKPOINT_PATH.write_text(json.dumps({"done_ids": list(done_ids)}))
-
-def run_embedding_pipeline(payload_df, batch_size=32, save_every=1000):
-    done_ids = load_checkpoint()
-    
-    # Filter chưa xử lý
-    todo_df = payload_df.filter(~pl.col("chunk_id").is_in(list(done_ids)))
-    texts = todo_df["contextual_text"].to_list()
-    chunk_ids = todo_df["chunk_id"].to_list()
-    
-    results = {}  # chunk_id → vector
-    
-    for start in tqdm(range(0, len(texts), save_every)):
-        batch_texts = texts[start : start + save_every]
-        batch_ids = chunk_ids[start : start + save_every]
-        
-        vectors = encode_batch(batch_texts, is_query=False, batch_size=batch_size)
-        
-        for cid, vec in zip(batch_ids, vectors):
-            results[cid] = vec
-        
-        done_ids.update(batch_ids)
-        save_checkpoint(list(done_ids))
-        
-        # Interim save (tránh mất nếu crash)
-        interim = {**results}
-        # Có thể ghi parquet interim ở đây
-    
-    return results
+# manifest.json ghi thêm:
+# embedding_model, model_revision, chunker_version, max_len, normalize=True, vector_dtype=float16
 ```
+
+### 3.5. Storage sizing
+
+Corpus thực tế (`embed=True`): **~5.57M chunks** × 1024 × 4 bytes ≈ **22.8 GB** float32 — `/kaggle/working` 20GB **không đủ** khi cộng payload parquet, Qdrant storage (vector + payload + HNSW), zip snapshot.
+
+| Artifact | Ước tính | Ghi chú |
+|---|---|---|
+| `vectors_shard_*.npy` (float16) | ~11.4 GB | Archival; convert float32 chỉ lúc upsert |
+| `payload_shard_*.parquet` | vài GB | |
+| Qdrant local | > raw vectors | Point = vector + payload + index |
+
+**Quy tắc:** không giữ `vectors.npy` gộp; export shard trước; nếu Qdrant full disk → index ngoài Kaggle; cân nhắc split collection theo shard/domain.
 
 ---
 
@@ -314,7 +309,7 @@ client = QdrantClient(path="/kaggle/working/qdrant_storage")
 ### 4.2. Tạo Collection
 
 ```python
-COLLECTION_NAME = "legal_chunks_v1"
+COLLECTION_NAME = "legal_chunks_dense_v1"
 
 client.recreate_collection(
     collection_name=COLLECTION_NAME,
@@ -352,10 +347,23 @@ Mỗi vector point chứa payload sau (để filter và citation):
     "title": str,              # Tên văn bản
     "legal_type": str,         # Loại: Nghị định, Thông tư, ...
     "issuing_authority": str,  # Cơ quan ban hành
-    "issuance_date": str,      # Ngày ban hành (ISO 8601 hoặc "DD/MM/YYYY")
-    "effect_status": str,      # Hiệu lực: "Còn hiệu lực", "Hết hiệu lực"
+    "issuance_date": str,      # Display/citation
+    "issuance_date_ts": int,   # YYYYMMDD — range filter
+    "effect_date_ts": int,
+    "effectless_date_ts": int | None,
+    "effect_status": str,
+    "expansion_status": str,   # "ok" | "missing_raw_table" (table_summary)
     "linh_vuc": str,           # Lĩnh vực pháp lý
     "nganh": str,              # Ngành
+
+    # === Table multi-vector (README_CHUNKING §7) ===
+    "table_id": str,           # Group chunk cùng bảng
+    "summary_of": str,         # raw_table_id alias trên table_summary
+    "answer_source": str,      # "raw_table" | "procedure_record" — enforce expand
+    "do_not_answer_from_summary": bool,  # True trên table_summary
+    "table_columns": list[str],  # Nếu không quá dài; procedure/table_part cần hiểu cột
+    # source_table_hash → local lookup/debug only
+    # table_summary_schema_json → local lookup (payload quá nặng)
 
     # === Navigation (expand context) ===
     "section_path": list[str], # ["Chương II", "Điều 5"]
@@ -389,102 +397,76 @@ def build_point(row: dict, vector: list[float]) -> PointStruct:
         "legal_type": row.get("legal_type") or "",
         "issuing_authority": row.get("issuing_authority") or "",
         "issuance_date": row.get("issuance_date") or "",
+        "issuance_date_ts": int(row.get("issuance_date_ts") or 0),
+        "effect_date_ts": int(row.get("effect_date_ts") or 0),
+        "effectless_date_ts": row.get("effectless_date_ts"),
+        "expansion_status": row.get("expansion_status") or "ok",
         "effect_status": row.get("effect_status") or "",
         "linh_vuc": row.get("linh_vuc") or "",
         "nganh": row.get("nganh") or "",
         "section_path": row.get("section_path") or [],
         "parent_id": row.get("parent_id") or "",
         "raw_table_id": row.get("raw_table_id") or "",
+        "table_id": row.get("table_id") or "",
+        "summary_of": row.get("summary_of") or "",
+        "answer_source": row.get("answer_source") or "",
+        "do_not_answer_from_summary": bool(row.get("do_not_answer_from_summary", False)),
+        "table_columns": row.get("table_columns") or [],
         "procedure_name": row.get("procedure_name") or "",
     }
     return PointStruct(id=point_id, vector=vector, payload=payload)
 
 
-def upsert_all(payload_df, vectors_dict: dict):
-    rows = payload_df.to_dicts()
-    points_batch = []
-    
-    for row in tqdm(rows):
-        cid = row["chunk_id"]
-        if cid not in vectors_dict:
-            continue
-        point = build_point(row, vectors_dict[cid])
-        points_batch.append(point)
-        
-        if len(points_batch) >= UPSERT_BATCH:
-            client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=points_batch,
-                wait=True,
-            )
-            points_batch = []
-    
-    if points_batch:
-        client.upsert(collection_name=COLLECTION_NAME, points=points_batch, wait=True)
-    
-    print(f"Upserted {len(rows)} points to '{COLLECTION_NAME}'")
+def upsert_shard(payload_shard_path, vectors_shard_path):
+    """Upsert từng shard — không load toàn bộ corpus vào RAM."""
+    # load payload_shard + vectors_shard (float16 → float32) → batch upsert
+    # verify: qdrant_count == len(embed_payload)
+    pass
 ```
 
----
-
-## 5. Step 4 — Payload Index cho Metadata Filter
-
-Tạo index trên Qdrant để pre-filter nhanh (không scan toàn collection):
+### 4.5. Payload index — tạo **trước** upsert
 
 ```python
 from qdrant_client.models import PayloadSchemaType
 
-# Filter fields — tạo index
 index_fields = {
-    "effect_status":      PayloadSchemaType.KEYWORD,
+    "doc_id":             PayloadSchemaType.INTEGER,
+    "chunk_type":         PayloadSchemaType.KEYWORD,
     "legal_type":         PayloadSchemaType.KEYWORD,
     "issuing_authority":  PayloadSchemaType.KEYWORD,
+    "effect_status":      PayloadSchemaType.KEYWORD,
     "linh_vuc":           PayloadSchemaType.KEYWORD,
     "nganh":              PayloadSchemaType.KEYWORD,
-    "chunk_type":         PayloadSchemaType.KEYWORD,
-    "doc_id":             PayloadSchemaType.INTEGER,
-    "issuance_date":      PayloadSchemaType.KEYWORD,  # range filter dùng string sort
+    "issuance_date_ts":   PayloadSchemaType.INTEGER,
+    "effect_date_ts":     PayloadSchemaType.INTEGER,
 }
 
 for field, schema in index_fields.items():
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name=field,
-        field_schema=schema,
-    )
+    client.create_payload_index(COLLECTION_NAME, field_name=field, field_schema=schema)
 ```
 
-### 5.1. Ví dụ filter query khi retrieve
+**Thứ tự:** create collection → create payload indexes → upsert theo shard.
+
+### 4.6. Dense retrieval API
 
 ```python
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
-
-# Chỉ tìm trong văn bản còn hiệu lực, lĩnh vực Lao động
-filter_condition = Filter(
-    must=[
-        FieldCondition(
-            key="effect_status",
-            match=MatchValue(value="Còn hiệu lực"),
-        ),
-        FieldCondition(
-            key="linh_vuc",
-            match=MatchValue(value="Lao động"),
-        ),
-    ]
-)
-
-results = client.search(
-    collection_name=COLLECTION_NAME,
-    query_vector=query_vector,   # encode query với QUERY_PREFIX
-    query_filter=filter_condition,
-    limit=10,
-    with_payload=True,
-)
+def dense_search(query: str, filters: dict | None, top_k: int = 20) -> list[DenseHit]:
+    """Output: chunk_id, score, doc_id, chunk_type, section_path, title,
+    document_number, parent_id, raw_table_id, citation."""
+    query_vector = encode_batch([query], is_query=True)[0]
+    # Dùng query_points (Qdrant mới) thay vì search
+    return client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        query_filter=build_filter(filters),
+        limit=top_k,
+        with_payload=True,
+    )
 ```
 
 ---
 
-## 6. Step 5 — Export Snapshot (Kaggle Output)
+## 5. Step 4 — Export Snapshot (Kaggle Output)
 
 Kaggle sessions không persist `/kaggle/working/` sang notebook mới. Export Qdrant collection:
 
@@ -492,7 +474,7 @@ Kaggle sessions không persist `/kaggle/working/` sang notebook mới. Export Qd
 # Option A: Export toàn bộ Qdrant storage folder
 import shutil
 shutil.make_archive(
-    "/kaggle/working/qdrant_legal_chunks_v1",
+    "/kaggle/working/qdrant_legal_chunks_dense_v1",
     "zip",
     "/kaggle/working/qdrant_storage",
 )
@@ -509,50 +491,44 @@ records, _ = client.scroll(
 # → serialize ra file parquet
 ```
 
-> **Khuyến nghị:** Export cả hai — Qdrant snapshot (để load nhanh) và Parquet vector (để rebuild hoặc migrate).
+> **Khuyến nghị:** Export **shard float16 + payload parquet trước** (portable, fit Kaggle output). Qdrant snapshot zip chỉ khi disk đủ; nếu không → build index ngoài Kaggle từ shard export.
 
-### 6.1. Cấu trúc thư mục output trên Kaggle
+### 5.1. Cấu trúc thư mục output trên Kaggle
 
 ```text
 /kaggle/working/
   legal_embedding/
     data/
-      embed_payload.parquet     # chunk + payload đã join (embed=True)
-      vectors.npy               # raw vectors (N × 1024, float32)
-      chunk_id_index.json       # chunk_id → row index trong vectors.npy
+      embed_payload_v0.1.parquet
+      vectors_shard_000.npy
+      payload_shard_000.parquet
+      vectors_shard_001.npy
+      ...
+      manifest.json               # shard status + model metadata
     qdrant/
-      qdrant_storage/           # Qdrant local disk
-      qdrant_legal_chunks_v1.zip
+      qdrant_storage/
+      qdrant_legal_chunks_dense_v1.zip
     logs/
-      embed_checkpoint.json     # resume support
       embed_run.log
+      table_repair_candidates.parquet
 ```
 
 ---
 
-## 7. Step 6 — Expansion Logic (Dense Side)
+## 6. Step 5 — Expansion Logic (Dense Side owns lookup)
 
-Sau khi retrieve top-k, thực hiện expand context theo rule:
+Build `chunk_lookup` từ `chunks.parquet` — **không phụ thuộc BM25 team** cho expansion.
 
-| chunk_type retrieved | Expansion action | Nguồn |
-|---|---|---|
-| `clause_group` | Pull `parent_id` (article) nếu score < threshold hoặc `char_count` < 300 | Lookup `chunks.parquet` theo `parent_id` |
-| `table_summary` | **Bắt buộc** pull `raw_table_id` → lấy `chunk_text` của `raw_table` | `raw_table` chunk từ `chunks.parquet` hoặc BM25 |
-| `procedure_record` | Pull `parent_id` (appendix/article) và `raw_table_id` | Context đủ để hiểu cột |
-| `article` | Giữ nguyên, không expand | — |
-| `appendix_text` | Pull `parent_id` nếu cần heading context | Lookup |
-
-**Quan trọng về `raw_table` expand:**
+| chunk_type retrieved | Expansion action |
+|---|---|
+| `clause_group` | Pull `parent_id` nếu score thấp hoặc chunk ngắn |
+| `table_summary` | Pull `raw_table_id` nếu có; enforce `do_not_answer_from_summary=True`, `answer_source` ∈ {raw_table, procedure_record}; nếu thiếu → `expansion_status="missing_raw_table"` |
+| `procedure_record` | Pull `parent_id` / `raw_table_id` nếu có |
+| `article` | Giữ nguyên |
 
 ```python
-# raw_table: KHÔNG đưa vào re-rank hay similarity scoring
-# Chỉ dùng để RENDER ANSWER (hiển thị bảng đầy đủ cho user)
-# Flow đúng:
-# 1. retrieve top-k qua Qdrant (dense, không có raw_table)
-# 2. nếu chunk_type == "table_summary": lấy raw_table_id
-# 3. fetch raw_table từ BM25 index hoặc chunks.parquet bằng ID lookup
-# 4. render raw_table trong context → LLM generate answer
-# 5. KHÔNG pass raw_table vào cross-encoder reranker
+# raw_table: KHÔNG embed, KHÔNG re-rank — chỉ lookup từ chunks.parquet để render answer
+# Log unresolved: missing_parent_id, missing_raw_table_id, weak_table_context
 ```
 
 ### 7.1. Score threshold cho expansion
@@ -598,36 +574,27 @@ def format_citation(payload: dict) -> str:
 | 0 | Setup: cài `qdrant-client`, `transformers`, `torch`, paths | 2 phút |
 | 1 | Load `chunks.parquet` + `metadata.parquet`, filter embed=True, rebuild contextual_text | 3 phút |
 | 2 | Load VNLegal-LAL model lên GPU, smoke test encode 5 chunks | 3-5 phút |
-| 3 | Batch encode toàn bộ embed chunks (checkpoint mỗi 1000) | **~30-90 phút** (tùy corpus size) |
-| 4 | Khởi tạo Qdrant collection, tạo payload index | 1 phút |
-| 5 | Batch upsert vectors + payload vào Qdrant | 10-20 phút |
-| 6 | Smoke test: 5 câu hỏi mẫu, verify top-3 results | 5 phút |
-| 7 | Export snapshot + vectors.npy → Kaggle output | 5 phút |
+| 3 | Batch encode theo shard (10k/shard) | **~30-90 phút** |
+| 4 | Qdrant: collection → payload index → upsert shard | 10-20 phút |
+| 5 | Smoke test 5 câu | 5 phút |
+| 6 | Dense eval: 100–200 query, Recall@10/MRR@10/nDCG@10 | 30 phút |
+| 7 | Export snapshot + shards → Kaggle output | 5 phút |
 
 ---
 
-## 10. Smoke Test Checklist
+## 10. Smoke Test + Dense Evaluation
 
-Sau khi upsert xong, chạy kiểm tra:
+**Smoke test (5 câu):** verify top-3 không có `raw_table`/`signature`; chunk types hợp lệ.
 
-```python
-TEST_QUERIES = [
-    "Hợp đồng lao động gồm những loại nào?",
-    "Thủ tục đăng ký khai sinh như thế nào?",
-    "Mức phạt vi phạm hành chính về xây dựng không phép?",
-    "Điều kiện để được cấp giấy phép kinh doanh dịch vụ du lịch?",
-    "Quy định về thời giờ làm việc bình thường?",
-]
+**Step 6b — Dense Retrieval Evaluation** (bắt buộc trước production):
 
-for q in TEST_QUERIES:
-    q_vec = encode_batch([q], is_query=True)[0]
-    hits = client.search(COLLECTION_NAME, query_vector=q_vec, limit=3, with_payload=True)
-    for h in hits:
-        print(f"  score={h.score:.4f} | {h.payload['chunk_type']} | {format_citation(h.payload)}")
-    print()
+```text
+- Build 100–200 query set, label gold doc_id / chunk_id / article path
+- Nhóm: article QA, procedure QA, table summary QA, metadata-filter QA
+- Report: Recall@5/10, MRR@10, nDCG@10
+- Split: Recall@10 by chunk_type (article, clause_group, procedure_record, table_summary)
+- filter success rate, expansion success rate, citation correctness
 ```
-
-**Kỳ vọng:** Top-3 phải thuộc `article`, `clause_group`, `procedure_record`, hoặc `table_summary`. Không được có `raw_table` hay `signature` trong kết quả.
 
 ---
 
@@ -644,25 +611,24 @@ Do `table_integrity_bad_pct = 39.38%` vượt gate (< 10%), cần các biện ph
 | **Phase 4 (sau)** | Sau khi fix table repair, rebuild `chunks_v0.2`, re-embed phần bảng |
 
 ```python
-# Guard khi build embed_df
-def is_safe_to_embed(row: dict) -> bool:
-    if not row["embed"]:
-        return False
-    if row["chunk_type"] == "raw_table":
-        return False
-    # table_summary: cho embed nhưng phải có raw_table_id
-    if row["chunk_type"] == "table_summary" and not row.get("raw_table_id"):
-        return False  # hoặc log warning và skip
-    return True
+# table_summary thiếu raw_table_id: VẪN embed nếu summary text tốt
+# → set expansion_status="missing_raw_table", log vào table_repair_candidates.parquet
+# → không dùng cho answer exact values
+
+# Validate trước embed (table_summary):
+if chunk_type == "table_summary":
+    assert do_not_answer_from_summary is True
+    assert answer_source in ("raw_table", "procedure_record")
+# table_summary_schema_json, source_table_hash → chunk_lookup local, không đưa Qdrant payload
 ```
 
 ---
 
-## 12. Doc Handoff cho BM25 Team
+## 12. Interface Contract cho BM25 Team (không phải trách nhiệm implement)
 
 ### 12.1. Payload schema chung
 
-Xem Section 4.3. BM25 team dùng cùng field names để fusion/RRF sau này.
+Xem Section 4.3. Cùng `chunk_id` namespace để fusion/RRF sau này.
 
 ### 12.2. Chunks KHÔNG có trong dense index
 
@@ -684,36 +650,18 @@ bm25_df = chunks_df.filter(
 # raw_table: BM25 CÓ THỂ index (keyword search trên bảng raw vẫn hữu ích)
 ```
 
-### 12.3. Interface fusion
-
-Dense side trả về:
+### 12.3. Fusion interface
 
 ```python
-# Output format từ dense retriever
-List[Tuple[str, float]]  # (chunk_id, cosine_score)
-
-# Example:
-[
-    ("chunk_abc123", 0.912),
-    ("chunk_def456", 0.887),
-    ("chunk_ghi789", 0.854),
-]
+DenseResult = {
+    "chunk_id": str,
+    "dense_score": float,
+    "payload": dict,
+    "optional_expanded_context": str | None,
+}
 ```
 
-BM25 team dùng `chunk_id` để fusion/RRF với BM25 scores.
-
-### 12.4. Expansion request interface
-
-Khi dense side cần raw_table:
-
-```python
-# Dense request: "tôi cần raw_table của chunk này"
-def request_raw_table(raw_table_id: str) -> str:
-    """Fetch chunk_text của raw_table từ chunks.parquet hoặc BM25 store."""
-    # BM25 team có thể expose API này
-    # Hoặc dense side tự lookup chunks.parquet (join trực tiếp)
-    pass
-```
+Dense side owns expansion lookup từ `chunks.parquet`. BM25 team chỉ cần cùng `chunk_id` namespace.
 
 ---
 
@@ -739,12 +687,13 @@ polars >= 0.20.0
 
 | Rủi ro | Xác suất | Mitigation |
 |---|---|---|
-| OOM khi encode batch lớn | Trung bình | Giảm batch_size xuống 16, max_len xuống 512 |
-| Kaggle session timeout (9h) | Thấp | Checkpoint mỗi 1000 chunks, resume tự động |
+| OOM khi encode batch lớn | Trung bình | Giảm batch_size; giữ max_len=1024 cho article/clause |
+| Kaggle session timeout (9h) | Thấp | Shard checkpoint; resume từ manifest.json |
+| Crash giữa encode → mất vector | Trung bình | Chỉ mark shard done sau khi .npy + .parquet ghi xong |
 | `contextual_text` thiếu metadata prefix | Cao | Rebuild contextual_text với metadata.parquet trước khi encode |
-| Qdrant disk full | Thấp | 1M × 1024 × 4 bytes ≈ 4GB — safe trong 20GB Kaggle |
+| Qdrant disk full | **Cao** | ~5.57M × 1024 × 4 ≈ 22.8GB float32 + payload + HNSW > 20GB Kaggle; lưu shard float16 (~11.4GB), upsert/index ngoài Kaggle nếu cần |
 | `raw_table_id` không resolve | Trung bình (39.38% table issue) | Log warning, skip expand, không crash |
-| Vector distribution shift khi re-embed v0.2 | Tương lai | Version collection: `legal_chunks_v1`, `legal_chunks_v2` |
+| Vector distribution shift khi re-embed v0.2 | Tương lai | Version collection: `legal_chunks_dense_v1`, `legal_chunks_dense_v2` |
 
 ---
 
@@ -753,9 +702,10 @@ polars >= 0.20.0
 | Metric | Target |
 |---|---|
 | Số chunks được embed | Tất cả `embed=True` trong chunks.parquet |
-| Qdrant collection size | Theo corpus (ước tính 500K-2M points) |
+| Qdrant collection size | ~5.57M points (`embed=True`); Qdrant storage > 22.8GB raw vectors |
 | Vector dim | 1024 |
-| Smoke test top-3 relevance | Phải trả về chunk thuộc loại article/clause_group/procedure_record |
+| Dense eval nDCG@10 | Baseline trên 100–200 query labeled |
+| Smoke test top-3 relevance | article/clause_group/procedure_record/table_summary |
 | Filter latency | < 50ms (với payload index) |
 | Encode throughput | ~100-200 chunks/s trên T4 GPU (batch 32) |
 
@@ -769,6 +719,19 @@ polars >= 0.20.0
 4. **LightRAG / GraphRAG** — `relationships.parquet` + `parent_id` chain
 5. **Table repair (Phase 4)** — fix `table_integrity_bad_pct`, re-embed `chunks_v0.2`
 6. **End-to-end evaluation** — NDCG@10 trên tập query pháp lý Việt Nam
+
+---
+
+## 17. Task List (condensed)
+
+| Phase | Tasks |
+|---|---|
+| **A — Data freeze** | Freeze `chunks_v0.1.parquet` → `embed_payload_v0.1.parquet`; filter embed=True, ≠raw_table; rebuild contextual_text; normalize date ts |
+| **B — Embedding** | VNLegal-LAL; doc=no prefix, query=prefix; max_len=1024; shard save float16 + manifest |
+| **C — Qdrant** | `legal_chunks_dense_v1`; index trước ingest; upsert shard (float16→float32); verify count; fallback index ngoài Kaggle nếu disk full |
+| **D — API** | `dense_search()` → DenseHit với citation fields |
+| **E — Expansion** | chunk_lookup local; log unresolved expansion |
+| **F — Eval** | 100–200 query; Recall@10, MRR@10, nDCG@10 by chunk_type |
 
 ---
 
