@@ -73,14 +73,18 @@ def ensure_collection(client: QdrantClient, name: str, recreate: bool) -> None:
 
 def main() -> None:
     args = parse_args()
-    if args.storage_dir:
-        args.storage_dir.mkdir(parents=True, exist_ok=True)
     if args.archive is not None and args.storage_dir is None:
         raise ValueError("--archive is only supported with --storage-dir")
-    setup_logging(args.shards_dir / "qdrant_build.log")
-    source_manifest = read_json(args.shards_dir / "manifest.json")
+    source_manifest_path = args.shards_dir / "manifest.json"
+    source_manifest = read_json(source_manifest_path)
     if not source_manifest:
-        raise FileNotFoundError(f"Missing {args.shards_dir / 'manifest.json'}")
+        raise FileNotFoundError(
+            f"Missing {source_manifest_path}. Run embed_shards.py successfully before "
+            "building Qdrant."
+        )
+    if args.storage_dir:
+        args.storage_dir.mkdir(parents=True, exist_ok=True)
+    setup_logging(args.shards_dir / "qdrant_build.log")
     build_manifest_path = args.shards_dir / "qdrant_manifest.json"
     build_manifest = read_json(build_manifest_path, {"shards": {}})
     if build_manifest.get("shards") and not args.recreate:

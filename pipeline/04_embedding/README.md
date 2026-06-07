@@ -30,35 +30,61 @@ Bật GPU và Internet trong Notebook. Thêm dataset chunking có:
   metadata.parquet
 ```
 
-Đưa thư mục `04_embedding` lên Kaggle Dataset hoặc clone repo, sau đó:
+Đưa thư mục `04_embedding` lên Kaggle Dataset hoặc clone repo. Trên Kaggle,
+`/kaggle/input` là read-only nhưng vẫn chạy script được; mọi output phải ghi vào
+`/kaggle/working`.
 
-```bash
-%cd /kaggle/working/VietLegalGraphRAG/pipeline/04_embedding
-!pip install -q -r requirements.txt
-```
+### 1.1. Sửa PyTorch cho P100 trước
 
-`transformers>=4.51.0` là bắt buộc vì model nền dùng kiến trúc Qwen3.
-PyTorch được cài riêng theo GPU, không nằm trong `requirements.txt`, vì wheel PyTorch
-mới có thể không còn kernel cho Tesla P100 (`sm_60`).
-
-Kiểm tra GPU và các CUDA architecture có trong wheel hiện tại:
+Kiểm tra GPU và CUDA architecture có trong wheel hiện tại:
 
 ```python
 import torch
 print(torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_arch_list())
 ```
 
-Nếu GPU là **Tesla P100** và danh sách không có `sm_60`, chạy cell sau **trước khi
-import pipeline**, rồi restart Kaggle session:
+Nếu output là `torch 2.10.0+cu128`, GPU **Tesla P100**, và danh sách không có
+`sm_60`, thay wheel CUDA 12.8 bằng wheel CUDA 12.6 của cùng phiên bản:
 
 ```bash
-!pip install --force-reinstall --no-cache-dir torch==2.7.1 \
-  --index-url https://download.pytorch.org/whl/cu118
+!pip install --force-reinstall --no-cache-dir torch==2.10.0 \
+  --index-url https://download.pytorch.org/whl/cu126
 ```
 
-Sau khi restart, chạy lại cell kiểm tra và xác nhận `sm_60` xuất hiện. Không dùng
-`pip install -U torch` trên P100. Với T4 (`sm_75`), giữ wheel Kaggle mặc định nếu
-`torch.cuda.get_arch_list()` có `sm_75`.
+Sau khi cài xong, dùng menu **Session > Restart Session**, rồi chạy lại cell kiểm
+tra. Không tiếp tục nếu version vẫn là `+cu128` hoặc `sm_60` chưa xuất hiện.
+Không dùng `pip install -U torch` trên P100. Với T4 (`sm_75`), giữ wheel Kaggle
+mặc định nếu `torch.cuda.get_arch_list()` có `sm_75`.
+
+### 1.2. Cài dependency pipeline sau khi restart
+
+```bash
+%cd /kaggle/input/datasets/brdh7940/04-embedding/04_embedding
+!pip install -q -r requirements.txt
+```
+
+`transformers>=4.51.0` là bắt buộc vì model nền dùng kiến trúc Qwen3. PyTorch được
+cài riêng theo GPU và không nằm trong `requirements.txt`.
+
+Các cảnh báo dependency conflict liên quan `dask-cuda`, `cudf`, `cuml`,
+`numba-cuda`, hoặc `cuda-core` là từ RAPIDS có sẵn trong image Kaggle; pipeline
+này không import các package đó. Chúng không phải nguyên nhân của lỗi embedding
+nếu lệnh pip kết thúc với exit code 0. Không cài hoặc nâng riêng `numba`,
+`numba-cuda`, hay `cuda-core` cho pipeline này.
+
+### 1.3. Gate bắt buộc trước khi chạy pipeline
+
+```python
+import torch
+assert torch.cuda.is_available()
+print("GPU count:", torch.cuda.device_count())
+for i in range(torch.cuda.device_count()):
+    capability = torch.cuda.get_device_capability(i)
+    required_arch = f"sm_{capability[0]}{capability[1]}"
+    assert required_arch in torch.cuda.get_arch_list(), (i, required_arch)
+    print(i, torch.cuda.get_device_name(i), required_arch)
+print(torch.__version__, torch.cuda.get_arch_list())
+```
 
 Pipeline kiểm tra compatibility trước khi tải model và sẽ fail-fast với hướng dẫn
 cài đặt thay vì lỗi `no kernel image is available for execution on the device` ở
@@ -121,24 +147,104 @@ Luôn chạy một tập nhỏ trong **output directory riêng**:
 
 Kiểm tra `manifest.json`, shape vector và log trước khi chạy full.
 
+```bash
+!test -f "$WORK/debug_shards/manifest.json" && echo "debug embedding OK"
+```
+
+Chỉ chạy encode full nếu command trên in `debug embedding OK`.
+
 ## 4. Encode full và resume
 
-T4 nên bắt đầu với `batch-size=16`; giảm batch size nếu CUDA OOM. Không giảm
-`max-length=1024` cho production chỉ để tăng tốc.
+Pipeline mặc định gom các text có độ dài gần nhau vào cùng batch để giảm padding. Dùng
+`batch-size` lớn làm giới hạn số row và `token-budget` làm giới hạn bộ nhớ cho batch:
+batch dài sẽ nhỏ, còn batch ngắn có thể chứa nhiều row hơn. Với T4/P100 16 GB, bắt đầu
+với ngân sách tương đương batch 16 ở độ dài 1024:
 
 ```bash
 !python embed_shards.py \
   --payload "$WORK/data/embed_payload_v0.1.parquet" \
   --output-dir "$WORK/data/shards" \
-  --batch-size 16 \
+  --batch-size 128 \
+  --token-budget 16384 \
   --max-length 1024 \
   --shard-size 10000 \
+  --attn-implementation sdpa \
   --cache-dir /kaggle/working/.cache
 ```
+
+Nếu CUDA OOM, giảm `--token-budget` xuống `12288` hoặc `8192`. Nếu GPU còn nhiều VRAM,
+tăng lên `24576` rồi `32768`. Không giảm `max-length=1024` cho production chỉ để tăng
+tốc nếu chưa đánh giá retrieval quality.
+
+Trước khi chạy full, benchmark đúng một shard production trong output directory riêng:
+
+```bash
+!python embed_shards.py \
+  --payload "$WORK/data/embed_payload_v0.1.parquet" \
+  --output-dir "$WORK/benchmark_shard" \
+  --shard-start 0 --shard-stop 1 \
+  --batch-size 128 --token-budget 16384 --max-length 1024 \
+  --shard-size 10000 --attn-implementation sdpa
+```
+
+Mỗi shard log `rows/s`, `real tokens/s`, tỷ lệ padding và thời gian encode. Để hoàn tất
+5 triệu rows trong 12 giờ, throughput trung bình phải đạt ít nhất `116 rows/s`; với
+5,57 triệu rows phải đạt ít nhất `129 rows/s`. Sau shard đầu tiên, ước tính thời gian:
+
+```text
+ETA giờ = tổng số rows / rows_per_second / 3600
+```
+
+Nếu vẫn thấp hơn mục tiêu sau khi tăng `token-budget`, một T4/P100 không đủ để bảo đảm
+deadline 12 giờ với model 600M và `max-length=1024`; cần chia payload và chạy song song
+trên nhiều GPU hoặc dùng GPU nhanh hơn. Không chạy nhiều process trên cùng một GPU.
+
+Ví dụ 5 triệu rows tương ứng 500 shard. Trong cùng runtime T4 x2, phải chạy hai process
+đồng thời, gán rõ một GPU cho mỗi process và dùng output directory riêng. Nếu không gán
+`CUDA_VISIBLE_DEVICES`, cả hai process mặc định sẽ tranh GPU 0:
+
+```bash
+# Chạy trong một cell Kaggle; dấu & làm hai process chạy đồng thời.
+!CUDA_VISIBLE_DEVICES=0 python embed_shards.py \
+  --payload "$WORK/data/embed_payload_v0.1.parquet" \
+  --output-dir "$WORK/data/shards_0" \
+  --shard-start 0 --shard-stop 250 \
+  --batch-size 128 --token-budget 16384 --max-length 1024 \
+  --shard-size 10000 --attn-implementation sdpa \
+  > "$WORK/gpu0.log" 2>&1 & \
+CUDA_VISIBLE_DEVICES=1 python embed_shards.py \
+  --payload "$WORK/data/embed_payload_v0.1.parquet" \
+  --output-dir "$WORK/data/shards_1" \
+  --shard-start 250 --shard-stop 500 \
+  --batch-size 128 --token-budget 16384 --max-length 1024 \
+  --shard-size 10000 --attn-implementation sdpa \
+  > "$WORK/gpu1.log" 2>&1 & \
+wait
+```
+
+Mỗi process chỉ nhìn thấy một T4 và dùng device `cuda` của GPU đó. Kiểm tra lúc chạy:
+
+```bash
+!nvidia-smi
+!tail -n 5 "$WORK/gpu0.log"
+!tail -n 5 "$WORK/gpu1.log"
+```
+
+Sau đó upsert lần lượt hai thư mục vào cùng Qdrant collection; chỉ job đầu tiên dùng
+`--recreate`. Nếu corpus không đúng tròn 5 triệu rows, tính số shard bằng
+`ceil(total_rows / 10000)` rồi chia dải tương ứng.
 
 Chạy lại đúng command để resume. Shard chỉ được đánh dấu `done` sau khi cả
 `.npy` và `.parquet` đã ghi xong. Không đổi model, `max-length`, hoặc
 `shard-size` trong cùng output directory.
+
+```bash
+!test -f "$WORK/data/shards/manifest.json" && echo "full embedding has manifest"
+```
+
+`build_qdrant.py` chỉ được chạy sau khi manifest full embedding tồn tại. Lỗi
+`Missing .../data/shards/manifest.json` nghĩa là bước encode full chưa chạy thành
+công; không phải lỗi Qdrant.
 
 Output mỗi shard:
 

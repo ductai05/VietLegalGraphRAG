@@ -32,8 +32,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--token-budget",
+        type=int,
+        default=None,
+        help="Maximum padded tokens per batch; use with a larger --batch-size.",
+    )
+    parser.add_argument(
+        "--no-sort-by-length",
+        action="store_true",
+        help="Disable length bucketing (slower when text lengths vary).",
+    )
+    parser.add_argument(
+        "--attn-implementation",
+        choices=["eager", "sdpa", "flash_attention_2"],
+        default=None,
+    )
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--shard-size", type=int, default=10_000)
+    parser.add_argument("--shard-start", type=int, default=0, help="First shard index to encode.")
+    parser.add_argument("--shard-stop", type=int, default=None, help="Exclusive shard index.")
     parser.add_argument("--limit", type=int, default=None, help="Debug limit across all shards.")
     parser.add_argument(
         "--include-text-in-payload",
@@ -45,6 +63,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.shard_start < 0 or (
+        args.shard_stop is not None and args.shard_stop <= args.shard_start
+    ):
+        raise ValueError("--shard-stop must be greater than --shard-start")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(args.output_dir / "embed_run.log")
     manifest_path = args.output_dir / "manifest.json"
@@ -54,7 +76,7 @@ def main() -> None:
         raise ValueError("Existing manifest belongs to a different payload file")
 
     tokenizer, model, device, revision = load_encoder(
-        args.model, args.device, args.cache_dir
+        args.model, args.device, args.cache_dir, args.attn_implementation
     )
     config = {
         "embedding_model": args.model,
@@ -65,6 +87,8 @@ def main() -> None:
         "vector_dtype": "float16",
         "vector_size": VECTOR_SIZE,
         "shard_size": args.shard_size,
+        "shard_start": args.shard_start,
+        "shard_stop": args.shard_stop,
         "include_text_in_payload": args.include_text_in_payload,
     }
     if manifest.get("shards"):
@@ -85,6 +109,10 @@ def main() -> None:
     for shard_index, record_batch in enumerate(
         parquet_file.iter_batches(batch_size=args.shard_size)
     ):
+        if shard_index < args.shard_start:
+            continue
+        if args.shard_stop is not None and shard_index >= args.shard_stop:
+            break
         if args.limit is not None and seen >= args.limit:
             break
         shard = pl.from_arrow(record_batch)
@@ -116,6 +144,8 @@ def main() -> None:
             batch_size=args.batch_size,
             max_length=args.max_length,
             is_query=False,
+            sort_by_length=not args.no_sort_by_length,
+            token_budget=args.token_budget,
         )
         if vectors.shape != (shard.height, VECTOR_SIZE):
             raise ValueError(f"Unexpected vector shape {vectors.shape} for shard {shard_key}")

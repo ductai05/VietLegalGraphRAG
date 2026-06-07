@@ -64,12 +64,23 @@ class DenseRetriever:
     ) -> None:
         if (storage_dir is None) == (url is None):
             raise ValueError("Provide exactly one of storage_dir or url")
+        if storage_dir is not None and not storage_dir.exists():
+            raise FileNotFoundError(
+                f"Qdrant storage directory does not exist: {storage_dir}. "
+                "Run build_qdrant.py successfully before retrieval."
+            )
         self.client = (
             QdrantClient(path=str(storage_dir))
             if storage_dir is not None
             else QdrantClient(url=url, api_key=api_key)
         )
         self.collection = collection
+        if not self.client.collection_exists(collection):
+            self.client.close()
+            raise RuntimeError(
+                f"Qdrant collection {collection!r} does not exist. "
+                "Run build_qdrant.py successfully before retrieval."
+            )
         self.tokenizer, self.model, self.device, _ = load_encoder(
             model_name, device, cache_dir
         )

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
@@ -20,8 +21,8 @@ QUERY_PREFIX = (
 VECTOR_SIZE = 1024
 COLLECTION_NAME = "legal_chunks_dense_v1"
 P100_TORCH_INSTALL = (
-    "pip install --force-reinstall --no-cache-dir torch==2.7.1 "
-    "--index-url https://download.pytorch.org/whl/cu118"
+    "pip install --force-reinstall --no-cache-dir torch==2.10.0 "
+    "--index-url https://download.pytorch.org/whl/cu126"
 )
 
 PAYLOAD_FIELDS = [
@@ -158,6 +159,7 @@ def load_encoder(
     model_name: str = MODEL_NAME,
     device: str | None = None,
     cache_dir: str | None = None,
+    attn_implementation: str | None = None,
 ):
     """Load tokenizer/model and return (tokenizer, model, device, revision)."""
     import torch
@@ -166,16 +168,34 @@ def load_encoder(
     resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     validate_cuda_device(torch, resolved_device)
     dtype = torch.float16 if resolved_device.startswith("cuda") else torch.float32
+    if resolved_device.startswith("cuda"):
+        device_index = torch.device(resolved_device).index
+        if device_index is None:
+            device_index = torch.cuda.current_device()
+        logging.info(
+            "Using GPU %s/%s: %s, capability sm_%s%s, dtype=%s",
+            device_index,
+            torch.cuda.device_count(),
+            torch.cuda.get_device_name(device_index),
+            *torch.cuda.get_device_capability(device_index),
+            dtype,
+        )
+    else:
+        logging.warning("Using CPU with dtype=%s; full-corpus embedding will be slow", dtype)
     tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModel.from_pretrained(
-        model_name,
-        cache_dir=cache_dir,
-        torch_dtype=dtype,
-    )
+    model_kwargs = {
+        "cache_dir": cache_dir,
+        "torch_dtype": dtype,
+    }
+    if attn_implementation:
+        model_kwargs["attn_implementation"] = attn_implementation
+    model = AutoModel.from_pretrained(model_name, **model_kwargs)
     model.to(resolved_device)
     model.eval()
+    # Decoder-only embedding needs the final hidden state, never the KV cache.
+    model.config.use_cache = False
     revision = getattr(model.config, "_commit_hash", None) or "unknown"
     return tokenizer, model, resolved_device, revision
 
@@ -190,19 +210,85 @@ def encode_texts(
     max_length: int,
     is_query: bool = False,
     show_progress: bool = True,
+    sort_by_length: bool = False,
+    token_budget: int | None = None,
+    pad_to_multiple_of: int | None = 8,
 ) -> np.ndarray:
     """Encode texts with robust last-token pooling and L2 normalization."""
     import torch
     import torch.nn.functional as functional
     from tqdm.auto import tqdm
 
-    vectors: list[np.ndarray] = []
-    ranges: Iterable[int] = range(0, len(texts), batch_size)
-    if show_progress:
-        ranges = tqdm(ranges, desc="Encoding", unit="batch")
+    if not texts:
+        return np.empty((0, VECTOR_SIZE), dtype=np.float32)
 
-    for start in ranges:
-        batch = list(texts[start : start + batch_size])
+    if sort_by_length or token_budget:
+        lengths = tokenizer(
+            list(texts),
+            add_special_tokens=True,
+            truncation=True,
+            max_length=max_length,
+            return_length=True,
+        )["length"]
+    else:
+        lengths = [min(len(text), max_length) for text in texts]
+    padded_lengths = (
+        [
+            min(
+                max_length,
+                ((length + pad_to_multiple_of - 1) // pad_to_multiple_of)
+                * pad_to_multiple_of,
+            )
+            for length in lengths
+        ]
+        if pad_to_multiple_of
+        else lengths
+    )
+
+    order = (
+        sorted(range(len(texts)), key=lengths.__getitem__)
+        if sort_by_length
+        else list(range(len(texts)))
+    )
+    batches: list[list[int]] = []
+    current: list[int] = []
+    current_max_length = 0
+    for index in order:
+        next_max_length = max(current_max_length, padded_lengths[index])
+        exceeds_budget = bool(
+            token_budget
+            and current
+            and next_max_length * (len(current) + 1) > token_budget
+        )
+        if current and (len(current) >= batch_size or exceeds_budget):
+            batches.append(current)
+            current = []
+            current_max_length = 0
+        current.append(index)
+        current_max_length = max(current_max_length, lengths[index])
+    if current:
+        batches.append(current)
+
+    total_padded_tokens = sum(
+        max(padded_lengths[index] for index in batch) * len(batch) for batch in batches
+    )
+    total_real_tokens = sum(lengths)
+    logging.info(
+        "Encoding plan: %s batches, max batch %s, %.1f%% padding, %s tokens",
+        f"{len(batches):,}",
+        f"{max(map(len, batches)):,}",
+        100 * (total_padded_tokens - total_real_tokens) / max(total_padded_tokens, 1),
+        f"{total_real_tokens:,}",
+    )
+
+    vectors = np.empty((len(texts), VECTOR_SIZE), dtype=np.float32)
+    progress: Iterable[list[int]] = batches
+    if show_progress:
+        progress = tqdm(batches, desc="Encoding", unit="batch")
+    started = time.perf_counter()
+
+    for batch_indices in progress:
+        batch = [texts[index] for index in batch_indices]
         if is_query:
             batch = [QUERY_PREFIX + text for text in batch]
         inputs = tokenizer(
@@ -210,10 +296,11 @@ def encode_texts(
             padding=True,
             truncation=True,
             max_length=max_length,
+            pad_to_multiple_of=pad_to_multiple_of,
             return_tensors="pt",
         ).to(device)
         with torch.inference_mode():
-            output = model(**inputs)
+            output = model(**inputs, use_cache=False)
 
         attention_mask = inputs["attention_mask"]
         sequence_length = attention_mask.shape[1]
@@ -221,8 +308,14 @@ def encode_texts(
         row_indices = torch.arange(len(batch), device=device)
         embeddings = output.last_hidden_state[row_indices, last_indices]
         embeddings = functional.normalize(embeddings.float(), p=2, dim=1)
-        vectors.append(embeddings.cpu().numpy())
+        vectors[batch_indices] = embeddings.cpu().numpy()
 
-    if not vectors:
-        return np.empty((0, VECTOR_SIZE), dtype=np.float32)
-    return np.concatenate(vectors, axis=0).astype(np.float32, copy=False)
+    elapsed = time.perf_counter() - started
+    logging.info(
+        "Encoded %s rows in %.1fs (%.1f rows/s, %.1f real tokens/s)",
+        f"{len(texts):,}",
+        elapsed,
+        len(texts) / max(elapsed, 1e-9),
+        total_real_tokens / max(elapsed, 1e-9),
+    )
+    return vectors

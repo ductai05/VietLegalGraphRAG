@@ -1,8 +1,6 @@
-accelerate>=0.27.0
-numpy>=1.26.0
-polars>=0.20.0
+numpy>=1.26.0,<3
+polars>=0.20.0,<2
 pyarrow>=15.0.0
-qdrant-client>=1.7.0
-sentencepiece>=0.2.0
-transformers>=4.51.0
-tqdm>=4.66.0
+qdrant-client>=1.7.0,<2
+transformers>=4.51.0,<5
+tqdm>=4.66.0,<5

@@ -668,17 +668,15 @@ Dense side owns expansion lookup từ `chunks.parquet`. BM25 team chỉ cần c�
 ## 13. Dependencies & Environment
 
 ```bash
-# Kaggle notebook — cell đầu tiên
-!pip install -q qdrant-client transformers accelerate torch sentencepiece
+# Kaggle notebook — PyTorch cài riêng theo GPU; xem README
+!pip install -q -r requirements.txt
 ```
 
 ```python
 # Versions đề xuất
-qdrant-client >= 1.7.0
-transformers >= 4.40.0
-torch >= 2.1.0
-accelerate >= 0.27.0
-polars >= 0.20.0
+qdrant-client >= 1.7.0, < 2
+transformers >= 4.51.0, < 5
+polars >= 0.20.0, < 2
 ```
 
 ---
