@@ -18,11 +18,14 @@ def parse_args() -> argparse.Namespace:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--storage-dir", type=Path)
     target.add_argument("--url")
+    target.add_argument("--faiss-dir", type=Path)
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--chunks", type=Path, default=None)
     parser.add_argument("--collection", default=COLLECTION_NAME)
     parser.add_argument("--model", default=MODEL_NAME)
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--faiss-nprobe", type=int, default=32)
+    parser.add_argument("--faiss-oversample", type=int, default=20)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache-dir", default=None)
@@ -49,12 +52,15 @@ def main() -> None:
     retriever = DenseRetriever(
         args.storage_dir,
         url=args.url,
+        faiss_dir=args.faiss_dir,
         api_key=args.api_key,
         collection=args.collection,
         model_name=args.model,
         chunks_path=args.chunks,
         device=args.device,
         cache_dir=args.cache_dir,
+        faiss_nprobe=args.faiss_nprobe,
+        faiss_oversample=args.faiss_oversample,
     )
     details = []
     try:

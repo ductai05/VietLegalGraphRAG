@@ -270,7 +270,34 @@ Payload shard mặc định không lặp lại `chunk_text`/`contextual_text` đ
 kiệm disk. Chỉ thêm `--include-text-in-payload` khi chắc chắn muốn lưu
 `chunk_text` trực tiếp trong Qdrant.
 
-## 5. Build Qdrant
+## 5. Build compact FAISS indexes from Kaggle member datasets
+
+When the five member datasets total about 30 GB, do not copy them into a merged
+directory and do not build Qdrant beside them in `/kaggle/working`.
+`KAGGLE_MERGE.py` now keeps member datasets read-only, encodes only missing
+chunks, and builds compact per-member IVF-PQ indexes:
+
+```bash
+%run /kaggle/input/datasets/brdh7940/04-embedding/04_embedding/KAGGLE_MERGE.py
+```
+
+Publish `/kaggle/working/legal_embedding/faiss_members/`. Query it directly:
+
+```bash
+python dense_retrieval.py \
+  --faiss-dir /kaggle/working/legal_embedding/faiss_members \
+  --chunks "$CHUNKS" \
+  --query "Điều kiện cấp giấy phép xây dựng là gì?" \
+  --top-k 5
+```
+
+The default `IVF4096,PQ64x8` stores about 64 bytes per vector plus IVF and
+payload overhead. One shared codebook is trained and reused across all member
+indexes so scores remain comparable when their local top-K results are merged.
+FAISS metadata filters are post-filters; increase `--faiss-oversample` for
+selective filters and measure recall with `evaluate_dense.py`.
+
+## 6. Build Qdrant
 
 ### Qdrant embedded local
 
@@ -301,7 +328,7 @@ python build_qdrant.py \
 
 Nếu server yêu cầu key, thêm `--api-key "$QDRANT_API_KEY"`.
 
-## 6. Smoke test retrieval
+## 7. Smoke test retrieval
 
 Local:
 
@@ -338,7 +365,7 @@ Output mỗi hit có contract:
 `table_summary` được expand sang `raw_table`; `procedure_record` và
 `clause_group` được expand theo rule trong code khi có `chunks.parquet`.
 
-## 7. Dense evaluation
+## 8. Dense evaluation
 
 Tạo file UTF-8 JSONL, mỗi dòng:
 

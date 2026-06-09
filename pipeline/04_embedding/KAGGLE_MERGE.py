@@ -1,57 +1,27 @@
-"""Kaggle launcher — verify + merge 5 member embedding outputs, then build Qdrant.
+"""Kaggle launcher: repair missing member rows and build compact FAISS indexes.
 
-Hướng dẫn chạy
---------------
-1. Notebook Kaggle: bật GPU để encode lại riêng các chunk bị thiếu.
-2. Add dataset `04-embedding` (thư mục pipeline này).
-3. Gather output từ 5 member — **mỗi kernel tải về thư mục riêng** để tránh ghi đè:
-
-   !kaggle kernels output brdh7940/4-embedding -p /kaggle/working/member1
-   !kaggle kernels output dinhducanhkhoa/chunking-2 -p /kaggle/working/member2
-   !kaggle kernels output nguyentrantrungkien/member4 -p /kaggle/working/member4
-   !kaggle kernels output nguynlhongtrung/embedding -p /kaggle/working/member5
-
-   `kaggle kernels output` không có tuỳ chọn skip file — output cũ có thể kèm
-   `legal_embedding/.cache/` (~1.2 GB/model). Sau khi tải, chạy:
-   !rm -rf /kaggle/working/member*/legal_embedding/.cache
-   hoặc để KAGGLE_MERGE tự dọn (bước 0).
-
-4. Add dataset member 3 (ví dụ cieldt):
-   `/kaggle/input/datasets/cieldt/vietlegalgraphrag-legalembedding-member3`
-
-5. Chạy file này. Nó sẽ:
-   - giữ lại embedding đầu tiên cho mỗi `chunk_id`, bỏ bản trùng
-   - encode riêng các `chunk_id` còn thiếu
-   - ghi bộ shard hoàn chỉnh vào `/kaggle/working/legal_embedding/data/shards`
-   - (tuỳ chọn) build Qdrant local nếu `BUILD_QDRANT = True`
-
-Mapping member:
-  1 = brdh7940
-  2 = dinhducanhkhoa
-  3 = cieldt (dataset input)
-  4 = nguyentrantrungkien
-  5 = nguynlhongtrung
+The five member datasets remain read-only inputs. This launcher deliberately
+does not materialize a second 30 GB merged vector directory.
 """
 
 from __future__ import annotations
 
-import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
-import pyarrow.parquet as pq
-
-from member_shards_utils import _load_manifests, discover_member_roots
-
-# === Cấu hình ===
-BUILD_QDRANT = False  # True chỉ khi còn đủ disk (~20GB working thường KHÔNG đủ full Qdrant)
-ALLOW_CPU_REPAIR = False  # True chỉ khi chấp nhận encode missing chunks rất chậm trên CPU
+# === Configuration ===
+ALLOW_CPU_REPAIR = False
+FAISS_FACTORY = "IVF4096,PQ64x8"
+FAISS_TRAIN_SIZE = "200000"
 PIPELINE = "/kaggle/input/datasets/brdh7940/04-embedding/04_embedding"
 WORK = "/kaggle/working/legal_embedding"
-MERGED_SHARDS = f"{WORK}/data/shards"
-QDRANT_STORAGE = f"{WORK}/qdrant/qdrant_storage"
+CHUNKS = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/legal_chunking_dataset/chunks.parquet"
+METADATA = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/legal_chunking_dataset/metadata.parquet"
+REPAIR_SHARDS = f"{WORK}/data/repair_shards"
 REPAIR_WORK = f"{WORK}/data/repair_work"
+FAISS_OUTPUT = f"{WORK}/faiss_members"
 
 SEARCH_ROOTS = [
     "/kaggle/input/datasets/brdh7940/member-1",
@@ -59,95 +29,101 @@ SEARCH_ROOTS = [
     "/kaggle/input/datasets/cieldt/vietlegalgraphrag-legalembedding-member3",
     "/kaggle/input/datasets/nguyentrantrungkien/embedding4",
     "/kaggle/input/datasets/nguynlhongtrung/member-5",
-    "/kaggle/working",  # fallback nếu ai đó tải thẳng vào working
+    "/kaggle/working",
 ]
-# =================
+# =====================
 
 
+def search_root_args() -> list[str]:
+    return [
+        item
+        for root in SEARCH_ROOTS
+        if Path(root).exists()
+        for item in ("--search-root", root)
+    ]
+
+
+def ensure_canonical_payload() -> tuple[Path, bool]:
+    for root in SEARCH_ROOTS:
+        path = Path(root)
+        if path.exists():
+            candidates = list(path.rglob("embed_payload_v0.1.parquet"))
+            if candidates:
+                return max(candidates, key=lambda item: item.stat().st_size), False
+    output = Path(WORK) / "data"
+    subprocess.run(
+        [
+            "python",
+            "prepare_embedding_data.py",
+            "--chunks",
+            CHUNKS,
+            "--metadata",
+            METADATA,
+            "--output-dir",
+            str(output),
+            "--version",
+            "v0.1",
+            "--chunker-version",
+            "v0.1",
+        ],
+        check=True,
+    )
+    return output / "embed_payload_v0.1.parquet", True
 
 
 def main() -> None:
     os.chdir(PIPELINE)
     subprocess.run(["pip", "install", "-q", "-r", "requirements.txt"], check=True)
 
-    roots = [str(Path(path)) for path in SEARCH_ROOTS]
-    member_roots = discover_member_roots([Path(path) for path in SEARCH_ROOTS])
-    canonical_payload = member_roots[1].parent / "embed_payload_v0.1.parquet"
-    if not canonical_payload.exists():
-        raise FileNotFoundError(f"Canonical payload is missing: {canonical_payload}")
-    canonical_ids = {
-        chunk_id
-        for batch in pq.ParquetFile(canonical_payload).iter_batches(
-            batch_size=100_000, columns=["chunk_id"]
-        )
-        for chunk_id in batch.column(0).to_pylist()
-    }
-    manifests = _load_manifests(member_roots)
-    seen_ids: set[str] = set()
-    for entries in manifests.values():
-        for gpu_dir, manifest in entries:
-            for info in manifest["shards"].values():
-                payload_path = gpu_dir / info["payload"]
-                actual_chunk_ids = pq.read_table(payload_path, columns=["chunk_id"]).column(
-                    "chunk_id"
-                ).to_pylist()
-                seen_ids.update(actual_chunk_ids)
-    missing_ids = canonical_ids - seen_ids
-    print(
-        f"Existing outputs: unique={len(seen_ids):,} "
-        f"missing_to_encode={len(missing_ids):,}"
-    )
-    if missing_ids:
-        print(f"Encoding missing chunks now: {len(missing_ids):,}")
-
+    roots = search_root_args()
+    canonical_payload, generated_payload = ensure_canonical_payload()
     repair_cmd = [
         "python",
-        "repair_member_shards.py",
-        *[item for root in roots for item in ("--search-root", root)],
+        "repair_missing_shards.py",
+        *roots,
+        "--canonical-payload",
+        str(canonical_payload),
         "--output-dir",
-        MERGED_SHARDS,
+        REPAIR_SHARDS,
         "--work-dir",
         REPAIR_WORK,
     ]
     if ALLOW_CPU_REPAIR:
         repair_cmd.append("--allow-cpu")
-    print("=== Step 1: deduplicate existing outputs + encode missing chunks ===")
+    print("=== Step 1: verify member datasets + encode only missing chunks ===")
     subprocess.run(repair_cmd, check=True)
 
-    manifest = Path(MERGED_SHARDS) / "manifest.json"
-    manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
-    missing_encoded = manifest_data.get("repair", {}).get("missing_encoded")
-    vector_count = len(list(Path(MERGED_SHARDS).glob("vectors_*.npy")))
-    print(f"\nMerge complete: {manifest}")
-    if missing_encoded is not None:
-        print(f"Missing chunks encoded: {missing_encoded:,}")
-    print(f"Vector shard files: {vector_count}")
-
-    if not BUILD_QDRANT:
-        print(
-            "\nBUILD_QDRANT=False — dừng tại merged shards. "
-            "Build Qdrant trên máy có đủ disk hoặc Qdrant server:"
-        )
-        print(
-            f"  python build_qdrant.py --shards-dir {MERGED_SHARDS} "
-            f"--url http://localhost:6333 --recreate"
-        )
-        return
-
-    print("\n=== Step 2: build Qdrant (local embedded) ===")
+    print("\n=== Step 2: build compact per-member FAISS indexes ===")
     subprocess.run(
         [
             "python",
-            "build_qdrant.py",
-            "--shards-dir",
-            MERGED_SHARDS,
-            "--storage-dir",
-            QDRANT_STORAGE,
-            "--recreate",
+            "build_faiss_members.py",
+            *roots,
+            "--repair-dir",
+            REPAIR_SHARDS,
+            "--output-dir",
+            FAISS_OUTPUT,
+            "--factory",
+            FAISS_FACTORY,
+            "--train-size",
+            FAISS_TRAIN_SIZE,
         ],
         check=True,
     )
-    print(f"Qdrant storage: {QDRANT_STORAGE}")
+    shutil.rmtree(REPAIR_WORK, ignore_errors=True)
+    if generated_payload:
+        canonical_payload.unlink(missing_ok=True)
+        for name in ("prepare_manifest.json", "table_repair_candidates.parquet", "prepare.log"):
+            (canonical_payload.parent / name).unlink(missing_ok=True)
+    print(f"\nQueryable FAISS artifact: {FAISS_OUTPUT}")
+    print(
+        "Publish that directory as the Kaggle output dataset. "
+        "The five original member datasets remain its required inputs."
+    )
+    print(
+        f"Smoke test: python dense_retrieval.py --faiss-dir {FAISS_OUTPUT} "
+        '--chunks <chunks.parquet> --query "Điều kiện cấp giấy phép xây dựng là gì?"'
+    )
 
 
 if __name__ == "__main__":

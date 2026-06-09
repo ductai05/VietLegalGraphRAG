@@ -1,58 +1,40 @@
-# Sau `KAGGLE_MEMBER.py` — chạy trên Kaggle (người merge)
+# After `KAGGLE_MEMBER.py`: compact Kaggle retrieval artifact
 
-Add dataset:
+Add the five member datasets, the `04-embedding` dataset, and
+`vietnamese-legal-documents-cleaned` as notebook inputs. Do not download or
+copy the member datasets into `/kaggle/working`.
 
-- `brdh7940/04-embedding`
-- `cieldt/vietlegalgraphrag-legalembedding-member3`
-
----
-
-**Cell 1 — tải output 4 member**
-
-```python
-!kaggle kernels output brdh7940/4-embedding -p /kaggle/working/member1
-!kaggle kernels output dinhducanhkhoa/chunking-2 -p /kaggle/working/member2
-!kaggle kernels output nguyentrantrungkien/member4 -p /kaggle/working/member4
-!kaggle kernels output nguynlhongtrung/embedding -p /kaggle/working/member5
-!rm -rf /kaggle/working/member*/legal_embedding/.cache
-```
-
----
-
-**Cell 2 — verify + merge**
+Run:
 
 ```python
 %run /kaggle/input/datasets/brdh7940/04-embedding/04_embedding/KAGGLE_MERGE.py
 ```
 
-Pass: in `Member shard verification PASSED` rồi `Merge complete`.
+Despite its legacy name, `KAGGLE_MERGE.py` does not physically merge the
+roughly 30 GB of member vectors. It:
 
-Output: `/kaggle/working/legal_embedding/data/shards/`
+1. scans the five read-only member datasets;
+2. encodes only missing chunk IDs into `data/repair_shards`;
+3. trains one shared IVF-PQ codebook;
+4. writes five compact FAISS indexes plus an optional repair index.
 
----
+Publish only:
 
-**Cell 3 — publish merged shards**
-
-Save Version → Output tab → publish `/kaggle/working/legal_embedding/data/shards/` lên Kaggle Dataset.
-
----
-
-**Máy local — build Qdrant**
-
-```bash
-cd pipeline/04_embedding
-pip install -r requirements.txt
-
-python build_qdrant.py \
-  --shards-dir /path/to/shards \
-  --url http://localhost:6333 \
-  --recreate
+```text
+/kaggle/working/legal_embedding/faiss_members/
 ```
+
+Smoke test:
 
 ```bash
 python dense_retrieval.py \
-  --url http://localhost:6333 \
-  --chunks /path/to/chunks.parquet \
+  --faiss-dir /kaggle/working/legal_embedding/faiss_members \
+  --chunks /kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/legal_chunking_dataset/chunks.parquet \
   --query "Điều kiện cấp giấy phép xây dựng là gì?" \
   --top-k 5
 ```
+
+FAISS filters are applied after ANN retrieval. Increase `--faiss-oversample`
+for highly selective filters. Keep the five original member datasets as the
+portable source vectors; Qdrant remains an optional deployment target outside
+the Kaggle disk constraint.

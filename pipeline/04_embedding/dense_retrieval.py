@@ -1,4 +1,4 @@
-"""Query a local Qdrant dense index and optionally expand retrieved chunks."""
+"""Query Qdrant or compact sharded FAISS indexes and optionally expand chunks."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
+import pyarrow as pa
+import pyarrow.ipc as ipc
 from qdrant_client import QdrantClient, models
 
 from embedding_common import (
@@ -15,6 +18,7 @@ from embedding_common import (
     MODEL_NAME,
     encode_texts,
     load_encoder,
+    read_json,
 )
 
 EXPAND_SCORE_THRESHOLD = 0.75
@@ -48,12 +52,40 @@ def format_citation(payload: dict[str, Any]) -> str:
     return " | ".join(str(part) for part in parts if part)
 
 
+def payload_matches(payload: dict[str, Any], filters: dict[str, Any] | None) -> bool:
+    if not filters:
+        return True
+    for key, expected in filters.items():
+        if key == "ranges":
+            continue
+        actual = payload.get(key)
+        if isinstance(expected, list):
+            if actual not in expected:
+                return False
+        elif actual != expected:
+            return False
+    for key, bounds in filters.get("ranges", {}).items():
+        actual = payload.get(key)
+        if actual is None:
+            return False
+        if "gte" in bounds and actual < bounds["gte"]:
+            return False
+        if "gt" in bounds and actual <= bounds["gt"]:
+            return False
+        if "lte" in bounds and actual > bounds["lte"]:
+            return False
+        if "lt" in bounds and actual >= bounds["lt"]:
+            return False
+    return True
+
+
 class DenseRetriever:
     def __init__(
         self,
         storage_dir: Path | None = None,
         *,
         url: str | None = None,
+        faiss_dir: Path | None = None,
         api_key: str | None = None,
         collection: str = COLLECTION_NAME,
         model_name: str = MODEL_NAME,
@@ -61,34 +93,66 @@ class DenseRetriever:
         device: str | None = None,
         cache_dir: str | None = None,
         query_max_length: int = 512,
+        faiss_nprobe: int = 32,
+        faiss_oversample: int = 20,
     ) -> None:
-        if (storage_dir is None) == (url is None):
-            raise ValueError("Provide exactly one of storage_dir or url")
+        if sum(value is not None for value in (storage_dir, url, faiss_dir)) != 1:
+            raise ValueError("Provide exactly one of storage_dir, url, or faiss_dir")
         if storage_dir is not None and not storage_dir.exists():
             raise FileNotFoundError(
                 f"Qdrant storage directory does not exist: {storage_dir}. "
                 "Run build_qdrant.py successfully before retrieval."
             )
-        self.client = (
-            QdrantClient(path=str(storage_dir))
-            if storage_dir is not None
-            else QdrantClient(url=url, api_key=api_key)
-        )
+        self.client: QdrantClient | None = None
+        self.faiss_indexes: list[tuple[str, Any, pa.Table]] = []
+        self.faiss_handles: list[pa.MemoryMappedFile] = []
+        self.faiss_oversample = faiss_oversample
         self.collection = collection
-        if not self.client.collection_exists(collection):
-            self.client.close()
-            raise RuntimeError(
-                f"Qdrant collection {collection!r} does not exist. "
-                "Run build_qdrant.py successfully before retrieval."
+        if faiss_dir is not None:
+            self._load_faiss(faiss_dir, faiss_nprobe)
+        else:
+            self.client = (
+                QdrantClient(path=str(storage_dir))
+                if storage_dir is not None
+                else QdrantClient(url=url, api_key=api_key)
             )
+            if not self.client.collection_exists(collection):
+                self.client.close()
+                raise RuntimeError(
+                    f"Qdrant collection {collection!r} does not exist. "
+                    "Run build_qdrant.py successfully before retrieval."
+                )
         self.tokenizer, self.model, self.device, _ = load_encoder(
             model_name, device, cache_dir
         )
         self.chunks_path = chunks_path
         self.query_max_length = query_max_length
 
+    def _load_faiss(self, faiss_dir: Path, nprobe: int) -> None:
+        import faiss
+
+        manifest = read_json(faiss_dir / "manifest.json")
+        if not manifest.get("indexes"):
+            raise FileNotFoundError(f"Missing FAISS member manifest: {faiss_dir}")
+        for name, info in sorted(manifest["indexes"].items()):
+            if info.get("status") != "done":
+                continue
+            index = faiss.read_index(str(faiss_dir / info["index"]))
+            if hasattr(index, "nprobe"):
+                index.nprobe = nprobe
+            handle = pa.memory_map(str(faiss_dir / info["payload"]), "r")
+            payload = ipc.open_file(handle).read_all()
+            if index.ntotal != payload.num_rows:
+                handle.close()
+                raise ValueError(f"FAISS/payload row mismatch for {name}")
+            self.faiss_handles.append(handle)
+            self.faiss_indexes.append((name, index, payload))
+
     def close(self) -> None:
-        self.client.close()
+        if self.client is not None:
+            self.client.close()
+        for handle in self.faiss_handles:
+            handle.close()
 
     def _lookup_chunks(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not self.chunks_path or not chunk_ids:
@@ -119,17 +183,10 @@ class DenseRetriever:
             is_query=True,
             show_progress=False,
         )[0]
-        result = self.client.query_points(
-            collection_name=self.collection,
-            query=vector.tolist(),
-            query_filter=build_filter(filters),
-            limit=top_k,
-            with_payload=True,
-        )
+        points = self._search_faiss(vector, filters, top_k) if self.faiss_indexes else self._search_qdrant(vector, filters, top_k)
         hits = []
         expansion_ids: list[str] = []
-        for point in result.points:
-            payload = point.payload or {}
+        for score, payload in points:
             parent_id = payload.get("parent_id") or ""
             raw_table_id = payload.get("raw_table_id") or ""
             if expand and payload.get("chunk_type") == "table_summary" and raw_table_id:
@@ -145,7 +202,7 @@ class DenseRetriever:
             hits.append(
                 {
                     "chunk_id": payload.get("chunk_id"),
-                    "dense_score": point.score,
+                    "dense_score": score,
                     "payload": payload,
                     "citation": format_citation(payload),
                     "optional_expanded_context": None,
@@ -180,12 +237,56 @@ class DenseRetriever:
                 hit["optional_expanded_context"] = lookup[target_id]["chunk_text"]
         return hits
 
+    def _search_qdrant(
+        self, vector: np.ndarray, filters: dict[str, Any] | None, top_k: int
+    ) -> list[tuple[float, dict[str, Any]]]:
+        assert self.client is not None
+        result = self.client.query_points(
+            collection_name=self.collection,
+            query=vector.tolist(),
+            query_filter=build_filter(filters),
+            limit=top_k,
+            with_payload=True,
+        )
+        return [(point.score, point.payload or {}) for point in result.points]
+
+    def _search_faiss(
+        self, vector: np.ndarray, filters: dict[str, Any] | None, top_k: int
+    ) -> list[tuple[float, dict[str, Any]]]:
+        local_k = max(top_k, top_k * self.faiss_oversample if filters else top_k)
+        candidates: list[tuple[float, dict[str, Any]]] = []
+        query = np.asarray(vector, dtype=np.float32).reshape(1, -1)
+        for _, index, payload_table in self.faiss_indexes:
+            scores, indices = index.search(query, min(local_k, index.ntotal))
+            valid = [(float(score), int(row_id)) for score, row_id in zip(scores[0], indices[0]) if row_id >= 0]
+            if not valid:
+                continue
+            rows = payload_table.take(pa.array([row_id for _, row_id in valid])).to_pylist()
+            candidates.extend(
+                (score, payload)
+                for (score, _), payload in zip(valid, rows, strict=True)
+                if payload_matches(payload, filters)
+            )
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        unique: list[tuple[float, dict[str, Any]]] = []
+        seen: set[str] = set()
+        for score, payload in candidates:
+            chunk_id = payload.get("chunk_id")
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            unique.append((score, payload))
+            if len(unique) == top_k:
+                break
+        return unique
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--storage-dir", type=Path)
     target.add_argument("--url")
+    target.add_argument("--faiss-dir", type=Path)
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--query", required=True)
     parser.add_argument("--chunks", type=Path, default=None)
@@ -194,6 +295,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--faiss-nprobe", type=int, default=32)
+    parser.add_argument("--faiss-oversample", type=int, default=20)
     parser.add_argument("--filters", default=None, help="JSON object with exact/range filters.")
     parser.add_argument("--no-expand", action="store_true")
     return parser.parse_args()
@@ -204,12 +307,15 @@ def main() -> None:
     retriever = DenseRetriever(
         args.storage_dir,
         url=args.url,
+        faiss_dir=args.faiss_dir,
         api_key=args.api_key,
         collection=args.collection,
         model_name=args.model,
         chunks_path=args.chunks,
         device=args.device,
         cache_dir=args.cache_dir,
+        faiss_nprobe=args.faiss_nprobe,
+        faiss_oversample=args.faiss_oversample,
     )
     try:
         hits = retriever.search(
