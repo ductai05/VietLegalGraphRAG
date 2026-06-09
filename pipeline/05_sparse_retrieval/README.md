@@ -118,36 +118,72 @@ Attach two Kaggle input datasets:
 - Source dataset containing `VietLegalGraphRAG/pipeline/05_sparse_retrieval`
 - Chunking dataset containing `legal_chunking_dataset/chunks.parquet` and `legal_chunking_dataset/metadata.parquet`
 
-Then run one notebook cell:
+Then install dependencies and run the scripts inside your Kaggle notebook cells.
+
+### 1. Install Dependencies
+
+You can automatically locate and install requirements using this cell:
 
 ```python
-%run /kaggle/input/vietlegalgraphrag-source/VietLegalGraphRAG/pipeline/05_sparse_retrieval/scripts/kaggle_elasticsearch_single_cell.py
+import glob
+req_paths = glob.glob("/kaggle/input/**/05_sparse_retrieval/requirements.txt", recursive=True)
+if req_paths:
+    %pip install -r {req_paths[0]}
+else:
+    print("requirements.txt not found")
 ```
 
-If your dataset slugs are different, set paths before `%run`:
+### 2. Run the Scripts
+
+Choose one of the following runners depending on your task.
+
+#### Option A: Full Pipeline (Elasticsearch Setup, Preparation, Indexing, and Ingest)
+
+This script sets up local Elasticsearch, prepares the data payload, creates the index, and bulk ingests the documents:
 
 ```python
+import glob
+run_paths = glob.glob("/kaggle/input/**/05_sparse_retrieval/scripts/run_pipeline_full.py", recursive=True)
+if run_paths:
+    %run {run_paths[0]}
+```
+
+#### Option B: Tokenization Only
+
+This script splits the chunks and prepares the tokenized payload splits. It is useful for dividing the processing workload:
+
+```python
+import glob
+run_paths = glob.glob("/kaggle/input/**/05_sparse_retrieval/scripts/kaggle_tokenize_only.py", recursive=True)
+if run_paths:
+    %run {run_paths[0]}
+```
+
+#### Option C: Indexing Only
+
+This script sets up Elasticsearch and ingests a pre-tokenized payload:
+
+```python
+import glob
+run_paths = glob.glob("/kaggle/input/**/05_sparse_retrieval/scripts/kaggle_index_only.py", recursive=True)
+if run_paths:
+    %run {run_paths[0]}
+```
+
+### Environment Configuration
+
+The path search helper functions will automatically scan `/kaggle/input` to locate the source directory and dataset files. If you need to override these locations, you can set the environment variables before running the scripts:
+
+```python
+# Optional overrides
 %env SPARSE_DIR=/kaggle/input/vietlegalgraphrag-source/VietLegalGraphRAG/pipeline/05_sparse_retrieval
 %env CHUNKS_PATH=/kaggle/input/vietnamese-legal-documents-cleaned/legal_chunking_dataset/chunks.parquet
 %env METADATA_PATH=/kaggle/input/vietnamese-legal-documents-cleaned/legal_chunking_dataset/metadata.parquet
 %env RECREATE_INDEX=1
-%run /kaggle/input/vietlegalgraphrag-source/VietLegalGraphRAG/pipeline/05_sparse_retrieval/scripts/kaggle_elasticsearch_single_cell.py
 ```
 
-The runner performs these steps in order:
-
-1. Install Python dependencies.
-2. Locate source, chunks and metadata paths.
-3. Download and start Elasticsearch.
-4. Start Cloudflare Tunnel.
-5. Prepare `sparse_payload_v0.1.parquet` and `.ndjson`.
-6. Create or recreate `vietlegal_chunks_sparse_v1`.
-7. Bulk ingest payload and point `vietlegal_chunks_sparse_current` to the index.
-8. Keep the notebook cell alive so Elasticsearch and the tunnel remain available.
-
-Environment variables can override paths, index names and runtime settings. See `config.example.env`.
-
 The Kaggle runner stores Elasticsearch data in `/kaggle/working/legal_sparse/es_data` and prints the Cloudflare public URL when detected.
+
 
 ## Smoke and Evaluation
 

@@ -26,7 +26,7 @@ def find_sparse_dir() -> Path:
             return path
     input_dir = Path("/kaggle/input")
     if input_dir.exists():
-        matches = sorted(input_dir.glob("*/VietLegalGraphRAG/pipeline/05_sparse_retrieval"))
+        matches = sorted(input_dir.glob("**/VietLegalGraphRAG/pipeline/05_sparse_retrieval"))
         if matches:
             return matches[0]
     return candidates[0]

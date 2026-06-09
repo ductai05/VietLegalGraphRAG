@@ -47,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=5000)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--export-ndjson", action="store_true")
+    parser.add_argument("--num-splits", type=int, default=None, help="Number of splits to divide the data into")
+    parser.add_argument("--split-index", type=int, default=None, help="1-based index of the split to process")
     return parser.parse_args()
 
 
@@ -91,6 +93,19 @@ def build_base_payload(args: argparse.Namespace, base_path: Path) -> dict[str, i
             list_expr("table_columns", chunk_columns),
         )
     )
+
+    if args.num_splits and args.split_index:
+        if not (1 <= args.split_index <= args.num_splits):
+            raise ValueError(f"split-index must be between 1 and {args.num_splits}")
+        total_rows = chunks.select(pl.len()).collect().item()
+        split_idx = args.split_index - 1
+        chunk_size = (total_rows + args.num_splits - 1) // args.num_splits
+        start_idx = split_idx * chunk_size
+        length = min(chunk_size, max(0, total_rows - start_idx))
+        chunks = chunks.slice(start_idx, length)
+        logging.getLogger().info("Splitting data: processing split %d/%d (%d rows starting from index %d)", 
+                                 args.split_index, args.num_splits, length, start_idx)
+
     metadata_select = [
         pl.col("id").cast(pl.Int64, strict=False),
         *[
@@ -124,6 +139,7 @@ def build_base_payload(args: argparse.Namespace, base_path: Path) -> dict[str, i
         .alias("source"),
         pl.lit("ok").alias("expansion_status"),
     ).drop(["chunk_source", "metadata_source", "_metadata_exists"])
+
     if args.limit:
         joined = joined.limit(args.limit)
     joined.sink_parquet(base_path, compression="zstd")
@@ -233,11 +249,16 @@ def main() -> None:
     args = parse_args()
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
+    if (args.num_splits is None) != (args.split_index is None):
+        raise ValueError("--num-splits and --split-index must be used together")
+        
     args.output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-    output_path = args.output_dir / f"sparse_payload_{args.version}.parquet"
-    base_path = args.output_dir / f"sparse_base_{args.version}.parquet"
-    ndjson_path = args.output_dir / f"sparse_payload_{args.version}.ndjson"
+    
+    split_suffix = f"_split_{args.split_index}" if args.split_index else ""
+    output_path = args.output_dir / f"sparse_payload_{args.version}{split_suffix}.parquet"
+    base_path = args.output_dir / f"sparse_base_{args.version}{split_suffix}.parquet"
+    ndjson_path = args.output_dir / f"sparse_payload_{args.version}{split_suffix}.ndjson"
 
     base_stats = build_base_payload(args, base_path)
     logging.info("Sparse base payload rows: %s", f"{base_stats['rows']:,}")
