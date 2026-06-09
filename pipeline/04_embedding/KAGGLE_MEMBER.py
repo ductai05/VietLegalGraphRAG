@@ -12,6 +12,7 @@ Hướng dẫn chạy
 6. Sau khi xong: publish output
    `/kaggle/working/legal_embedding/data/shards_member_{MEMBER_ID}/`
    (gồm `gpu0/`, `gpu1/`, log) lên Kaggle Dataset.
+   Không publish `.cache/` — model cache nằm ngoài `/kaggle/working`.
 7. Gửi link dataset cho người merge shard + build Qdrant.
 
 Phân công shard (tự tính theo số row thực tế)
@@ -30,6 +31,7 @@ Resume: chạy lại cùng `MEMBER_ID` — shard đã `done` trong manifest sẽ
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -48,6 +50,8 @@ CHUNKS = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/leg
 METADATA = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/legal_chunking_dataset/metadata.parquet"
 PIPELINE = "/kaggle/input/datasets/brdh7940/04-embedding/04_embedding"
 WORK = "/kaggle/working/legal_embedding"
+# Outside /kaggle/working so kernel output / dataset publish stays small (~GB not +1.2GB).
+HF_CACHE = "/tmp/vnlegal_hf_cache"
 
 BATCH_SIZE = "128"
 TOKEN_BUDGET = "49152"
@@ -168,7 +172,7 @@ base = [
     "--attn-implementation",
     ATTN_IMPL,
     "--cache-dir",
-    f"{WORK}/.cache",
+    HF_CACHE,
     "--device",
     "cuda:0",
 ]
@@ -238,3 +242,8 @@ print(
     f"Member {MEMBER_ID} complete. "
     f"Output: {member_root} (~{expected_rows:,} rows, shards [{shard_start}, {shard_stop}))"
 )
+
+legacy_cache = Path(WORK) / ".cache"
+if legacy_cache.exists():
+    shutil.rmtree(legacy_cache)
+    print(f"Removed legacy model cache from output tree: {legacy_cache}")

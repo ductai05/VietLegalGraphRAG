@@ -166,7 +166,7 @@ Trên T4 16 GB, `131072` gây OOM (~128 rows × 1024 token cần thêm ~8 GB VRA
 
 **Quan trọng khi chạy 2 GPU song song:** notebook/script launcher **không được**
 `import torch` trước khi spawn worker. Parent giữ CUDA context trên GPU 0 sẽ chặn
-worker `CUDA_VISIBLE_DEVICES=0`. Dùng `KAGGLE_T4X2.py` (không import torch ở parent)
+worker `CUDA_VISIBLE_DEVICES=0`. Dùng `KAGGLE_MEMBER.py` (không import torch ở parent)
 hoặc kiểm tra GPU bằng subprocess rồi mới spawn hai process.
 
 ```bash
