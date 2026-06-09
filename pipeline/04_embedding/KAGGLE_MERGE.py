@@ -2,7 +2,7 @@
 
 Hướng dẫn chạy
 --------------
-1. Notebook Kaggle: bật GPU (không bắt buộc cho merge), bật Internet nếu build Qdrant.
+1. Notebook Kaggle: bật GPU để encode lại riêng các chunk bị thiếu.
 2. Add dataset `04-embedding` (thư mục pipeline này).
 3. Gather output từ 5 member — **mỗi kernel tải về thư mục riêng** để tránh ghi đè:
 
@@ -20,8 +20,9 @@ Hướng dẫn chạy
    `/kaggle/input/datasets/cieldt/vietlegalgraphrag-legalembedding-member3`
 
 5. Chạy file này. Nó sẽ:
-   - verify đủ 5 thư mục `shards_member_{1..5}`
-   - merge vào `/kaggle/working/legal_embedding/data/shards`
+   - giữ lại embedding đầu tiên cho mỗi `chunk_id`, bỏ bản trùng
+   - encode riêng các `chunk_id` còn thiếu
+   - ghi bộ shard hoàn chỉnh vào `/kaggle/working/legal_embedding/data/shards`
    - (tuỳ chọn) build Qdrant local nếu `BUILD_QDRANT = True`
 
 Mapping member:
@@ -34,47 +35,35 @@ Mapping member:
 
 from __future__ import annotations
 
+import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
+import pyarrow.parquet as pq
+
+from member_shards_utils import _load_manifests, discover_member_roots
+
 # === Cấu hình ===
 BUILD_QDRANT = False  # True chỉ khi còn đủ disk (~20GB working thường KHÔNG đủ full Qdrant)
+ALLOW_CPU_REPAIR = False  # True chỉ khi chấp nhận encode missing chunks rất chậm trên CPU
 PIPELINE = "/kaggle/input/datasets/brdh7940/04-embedding/04_embedding"
 WORK = "/kaggle/working/legal_embedding"
 MERGED_SHARDS = f"{WORK}/data/shards"
 QDRANT_STORAGE = f"{WORK}/qdrant/qdrant_storage"
+REPAIR_WORK = f"{WORK}/data/repair_work"
 
 SEARCH_ROOTS = [
-    "/kaggle/working/member1",
-    "/kaggle/working/member2",
+    "/kaggle/input/datasets/brdh7940/member-1/member1",
+    "/kaggle/input/datasets/brdh7940/member-1/member2",
     "/kaggle/input/datasets/cieldt/vietlegalgraphrag-legalembedding-member3",
-    "/kaggle/working/member4",
-    "/kaggle/working/member5",
+    "/kaggle/input/datasets/brdh7940/member-1/member4",
+    "/kaggle/input/datasets/brdh7940/member-1/member5",
     "/kaggle/working",  # fallback nếu ai đó tải thẳng vào working
 ]
 # =================
 
 
-def prune_hf_cache(search_roots: list[str]) -> None:
-    """Remove HuggingFace model cache accidentally saved under kernel output."""
-    removed: list[str] = []
-    for root in search_roots:
-        root_path = Path(root)
-        if not root_path.exists():
-            continue
-        for legal_root in root_path.rglob("legal_embedding"):
-            cache_dir = legal_root / ".cache"
-            if cache_dir.is_dir():
-                shutil.rmtree(cache_dir)
-                removed.append(str(cache_dir))
-    if removed:
-        print("Removed HuggingFace cache from downloaded outputs:")
-        for path in removed:
-            print(f"  {path}")
-    else:
-        print("No legal_embedding/.cache directories found under member roots.")
 
 
 def main() -> None:
@@ -82,30 +71,56 @@ def main() -> None:
     subprocess.run(["pip", "install", "-q", "-r", "requirements.txt"], check=True)
 
     roots = [str(Path(path)) for path in SEARCH_ROOTS]
-    print("=== Step 0: prune accidental .cache from kernel outputs ===")
-    prune_hf_cache(roots)
+    member_roots = discover_member_roots([Path(path) for path in SEARCH_ROOTS])
+    canonical_payload = member_roots[1].parent / "embed_payload_v0.1.parquet"
+    if not canonical_payload.exists():
+        raise FileNotFoundError(f"Canonical payload is missing: {canonical_payload}")
+    canonical_ids = {
+        chunk_id
+        for batch in pq.ParquetFile(canonical_payload).iter_batches(
+            batch_size=100_000, columns=["chunk_id"]
+        )
+        for chunk_id in batch.column(0).to_pylist()
+    }
+    manifests = _load_manifests(member_roots)
+    seen_ids: set[str] = set()
+    for entries in manifests.values():
+        for gpu_dir, manifest in entries:
+            for info in manifest["shards"].values():
+                payload_path = gpu_dir / info["payload"]
+                actual_chunk_ids = pq.read_table(payload_path, columns=["chunk_id"]).column(
+                    "chunk_id"
+                ).to_pylist()
+                seen_ids.update(actual_chunk_ids)
+    missing_ids = canonical_ids - seen_ids
+    print(
+        f"Existing outputs: unique={len(seen_ids):,} "
+        f"missing_to_encode={len(missing_ids):,}"
+    )
+    if missing_ids:
+        print(f"Encoding missing chunks now: {len(missing_ids):,}")
 
-    verify_cmd = [
+    repair_cmd = [
         "python",
-        "verify_member_shards.py",
-        *[item for root in roots for item in ("--search-root", root)],
-    ]
-    print("=== Step 1: verify member shards ===")
-    subprocess.run(verify_cmd, check=True)
-
-    merge_cmd = [
-        "python",
-        "merge_member_shards.py",
+        "repair_member_shards.py",
         *[item for root in roots for item in ("--search-root", root)],
         "--output-dir",
         MERGED_SHARDS,
+        "--work-dir",
+        REPAIR_WORK,
     ]
-    print("\n=== Step 2: merge shards ===")
-    subprocess.run(merge_cmd, check=True)
+    if ALLOW_CPU_REPAIR:
+        repair_cmd.append("--allow-cpu")
+    print("=== Step 1: deduplicate existing outputs + encode missing chunks ===")
+    subprocess.run(repair_cmd, check=True)
 
     manifest = Path(MERGED_SHARDS) / "manifest.json"
-    vector_count = len(list(Path(MERGED_SHARDS).glob("vectors_shard_*.npy")))
+    manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+    missing_encoded = manifest_data.get("repair", {}).get("missing_encoded")
+    vector_count = len(list(Path(MERGED_SHARDS).glob("vectors_*.npy")))
     print(f"\nMerge complete: {manifest}")
+    if missing_encoded is not None:
+        print(f"Missing chunks encoded: {missing_encoded:,}")
     print(f"Vector shard files: {vector_count}")
 
     if not BUILD_QDRANT:
@@ -119,7 +134,7 @@ def main() -> None:
         )
         return
 
-    print("\n=== Step 3: build Qdrant (local embedded) ===")
+    print("\n=== Step 2: build Qdrant (local embedded) ===")
     subprocess.run(
         [
             "python",

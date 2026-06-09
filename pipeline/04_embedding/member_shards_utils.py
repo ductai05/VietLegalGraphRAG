@@ -16,10 +16,11 @@ from embedding_common import VECTOR_SIZE, atomic_write_json, read_json
 
 SHARD_SIZE = 10_000
 NUM_MEMBERS = 5
+# Legacy payload_fingerprint values include path and mtime, so they cannot be
+# compared across independently generated Kaggle member outputs.
 CONFIG_KEYS = (
     "embedding_model",
     "model_revision",
-    "payload_fingerprint",
     "max_length",
     "normalize",
     "vector_dtype",
@@ -143,15 +144,27 @@ def verify_member_shards(
     spot_check_vectors: bool = True,
 ) -> VerifyReport:
     member_roots = discover_member_roots(search_roots, num_members)
-    payload_path = find_payload_parquet(search_roots)
-    total_rows = pq.ParquetFile(payload_path).metadata.num_rows
+    payload_path = member_roots[1].parent / "embed_payload_v0.1.parquet"
+    if not payload_path.exists():
+        payload_path = find_payload_parquet(search_roots)
+    payload_file = pq.ParquetFile(payload_path)
+    total_rows = payload_file.metadata.num_rows
     total_shards = (total_rows + shard_size - 1) // shard_size
+    expected_chunk_ids = {
+        chunk_id
+        for batch in payload_file.iter_batches(batch_size=shard_size, columns=["chunk_id"])
+        for chunk_id in batch.column(0).to_pylist()
+    }
+    if len(expected_chunk_ids) != total_rows:
+        raise ValueError(f"Canonical payload has duplicate chunk_id values: {payload_path}")
 
     manifests = _load_manifests(member_roots)
     reference_manifest = manifests[1][0][1]
     reference_config = {key: reference_manifest.get(key) for key in CONFIG_KEYS}
 
     all_shards: dict[str, tuple[int, Path, dict[str, Any]]] = {}
+    all_chunk_ids: dict[str, tuple[str, Path]] = {}
+    duplicate_chunk_ids: list[tuple[str, str, Path, str, Path]] = []
     members: list[MemberReport] = []
 
     for member_id, entries in sorted(manifests.items()):
@@ -179,6 +192,25 @@ def verify_member_shards(
                     )
                 if info.get("rows") is None:
                     raise ValueError(f"Shard {key} in {gpu_dir} has no row count")
+
+                actual_chunk_ids = (
+                    pq.read_table(payload_path_shard, columns=["chunk_id"])
+                    .column("chunk_id")
+                    .to_pylist()
+                )
+                if len(actual_chunk_ids) != info["rows"]:
+                    raise ValueError(
+                        f"Payload row count mismatch for shard {key} in {gpu_dir}: "
+                        f"{len(actual_chunk_ids)} vs {info['rows']}"
+                    )
+                for chunk_id in actual_chunk_ids:
+                    if chunk_id in all_chunk_ids:
+                        previous_key, previous_dir = all_chunk_ids[chunk_id]
+                        duplicate_chunk_ids.append(
+                            (chunk_id, previous_key, previous_dir, key, gpu_dir)
+                        )
+                    else:
+                        all_chunk_ids[chunk_id] = (key, gpu_dir)
 
                 if spot_check_vectors:
                     vectors = np.load(vector_path, mmap_mode="r")
@@ -230,6 +262,26 @@ def verify_member_shards(
     row_count = sum(info["rows"] for _, _, info in all_shards.values())
     if row_count != total_rows:
         raise ValueError(f"Row count mismatch: shards sum to {row_count:,}, payload has {total_rows:,}")
+
+    actual_chunk_ids = set(all_chunk_ids)
+    missing_chunk_ids = expected_chunk_ids - actual_chunk_ids
+    unexpected_chunk_ids = actual_chunk_ids - expected_chunk_ids
+    if duplicate_chunk_ids or missing_chunk_ids or unexpected_chunk_ids:
+        duplicate_examples = [
+            f"{chunk_id}: shard {previous_key} in {previous_dir} and shard {key} in {gpu_dir}"
+            for chunk_id, previous_key, previous_dir, key, gpu_dir
+            in duplicate_chunk_ids[:5]
+        ]
+        raise ValueError(
+            "Combined member outputs are not a complete unique corpus. "
+            f"encoded_rows={row_count:,} unique_encoded_chunks={len(actual_chunk_ids):,} "
+            f"duplicate_rows={len(duplicate_chunk_ids):,} "
+            f"missing_chunks={len(missing_chunk_ids):,} "
+            f"unexpected_chunks={len(unexpected_chunk_ids):,}. "
+            f"duplicate_examples={duplicate_examples} "
+            f"missing_examples={list(sorted(missing_chunk_ids))[:5]} "
+            f"unexpected_examples={list(sorted(unexpected_chunk_ids))[:5]}"
+        )
 
     return VerifyReport(
         payload_path=payload_path,
