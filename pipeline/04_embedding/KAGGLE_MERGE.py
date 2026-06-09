@@ -54,11 +54,11 @@ QDRANT_STORAGE = f"{WORK}/qdrant/qdrant_storage"
 REPAIR_WORK = f"{WORK}/data/repair_work"
 
 SEARCH_ROOTS = [
-    "/kaggle/input/datasets/brdh7940/member-1/member1",
-    "/kaggle/input/datasets/brdh7940/member-1/member2",
+    "/kaggle/input/datasets/brdh7940/member-1",
+    "/kaggle/input/datasets/dinhducanhkhoa/embedding2",
     "/kaggle/input/datasets/cieldt/vietlegalgraphrag-legalembedding-member3",
-    "/kaggle/input/datasets/brdh7940/member-1/member4",
-    "/kaggle/input/datasets/brdh7940/member-1/member5",
+    "/kaggle/input/datasets/nguyentrantrungkien/embedding4",
+    "/kaggle/input/datasets/nguynlhongtrung/member-5",
     "/kaggle/working",  # fallback nếu ai đó tải thẳng vào working
 ]
 # =================
