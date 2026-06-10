@@ -35,10 +35,14 @@ Publish `/kaggle/working/legal_embedding/faiss_members/`. Also record the final
 
 ## FAISS acceptance check
 
-Run this after `KAGGLE_MERGE.py` completes:
+Every fresh environment must install the pipeline dependencies. `faiss-cpu` is the
+package name, while `faiss` is its Python import name:
 
 ```bash
-python pipeline/04_embedding/dense_retrieval.py \
+cd pipeline/04_embedding
+python -m pip install -r requirements.txt
+python -c "import faiss; print(faiss.__version__)"
+python dense_retrieval.py \
   --faiss-dir /data/legal_embedding/faiss_members \
   --chunks /data/legal_chunking_dataset/chunks.parquet \
   --query "Điều kiện cấp giấy phép xây dựng là gì?" \
@@ -67,7 +71,7 @@ First create one deduplicated, complete, Qdrant-ready shard directory:
 
 ```bash
 cd pipeline/04_embedding
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 # Rebuild the canonical payload if it was not included in the hand-off.
 python prepare_embedding_data.py \

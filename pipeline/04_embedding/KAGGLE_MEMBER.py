@@ -13,7 +13,7 @@ Hướng dẫn chạy
    `/kaggle/working/legal_embedding/data/shards_member_{MEMBER_ID}/`
    (gồm `gpu0/`, `gpu1/`, log) lên Kaggle Dataset.
    Không publish `.cache/` — model cache nằm ngoài `/kaggle/working`.
-7. Gửi link dataset cho người merge shard + build Qdrant.
+7. Gửi link dataset cho người repair/build FAISS hoặc build Qdrant sau này.
 
 Phân công shard (tự tính theo số row thực tế)
 ---------------------------------------------
@@ -30,14 +30,13 @@ Resume: chạy lại cùng `MEMBER_ID` — shard đã `done` trong manifest sẽ
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
-
-import pyarrow.parquet as pq
-from tqdm.auto import tqdm
 
 # === CHỈ SỬA DÒNG NÀY ===
 MEMBER_ID = 1  # 1 | 2 | 3 | 4 | 5
@@ -95,7 +94,7 @@ def tail_text(path: Path, lines: int = 40) -> str:
 def check_gpus() -> None:
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-c",
             (
                 "import torch; "
@@ -121,11 +120,16 @@ if MEMBER_ID < 1 or MEMBER_ID > NUM_MEMBERS:
 check_gpus()
 
 os.chdir(PIPELINE)
-subprocess.run(["pip", "install", "-q", "-r", "requirements.txt"], check=True)
+subprocess.run(
+    [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"],
+    check=True,
+)
+pq = importlib.import_module("pyarrow.parquet")
+tqdm = importlib.import_module("tqdm.auto").tqdm
 
 subprocess.run(
     [
-        "python",
+        sys.executable,
         "prepare_embedding_data.py",
         "--chunks",
         CHUNKS,
@@ -157,7 +161,7 @@ member_root = Path(f"{WORK}/data/shards_member_{MEMBER_ID}")
 member_root.mkdir(parents=True, exist_ok=True)
 
 base = [
-    "python",
+    sys.executable,
     "embed_shards.py",
     "--payload",
     payload,

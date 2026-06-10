@@ -12,7 +12,7 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
-from embedding_common import VECTOR_SIZE, atomic_write_json, read_json
+from embedding_common import VECTOR_SIZE, atomic_write_json, load_faiss_module, read_json
 from member_shards_utils import discover_member_roots
 
 MANIFEST_FORMAT = "faiss_members_v2_deduplicated"
@@ -87,7 +87,7 @@ def write_source_index(
     add_batch_size: int,
     seen_ids: set[str],
 ) -> dict[str, Any]:
-    import faiss
+    faiss = load_faiss_module()
 
     shards = list(iter_shards(entries))
     input_rows = sum(rows for _, _, rows in shards)
@@ -181,6 +181,7 @@ def read_indexed_chunk_ids(payload_path: Path) -> set[str]:
 
 def main() -> None:
     args = parse_args()
+    faiss = load_faiss_module()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.output_dir / "manifest.json"
     manifest = read_json(manifest_path, {"format": MANIFEST_FORMAT, "indexes": {}})
@@ -198,12 +199,8 @@ def main() -> None:
     sources = source_shards(args.search_root, args.num_members, args.repair_dir)
     trained_path = args.output_dir / "trained.faiss"
     if trained_path.exists() and not rebuild_all:
-        import faiss
-
         trained_index = faiss.read_index(str(trained_path))
     else:
-        import faiss
-
         all_shards = [
             shard
             for _, entries in sources

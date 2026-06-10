@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -191,7 +192,7 @@ def main() -> None:
     write_missing_payload(canonical_payload, missing_ids, missing_payload)
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "embed_shards.py",
             "--payload",
             str(missing_payload),

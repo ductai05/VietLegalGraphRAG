@@ -18,6 +18,13 @@ Pipeline này hiện thực kế hoạch trong `PLAN_EMBEDDING.md` cho model
 | `build_qdrant.py` | Tạo collection/index và resume upsert shard |
 | `dense_retrieval.py` | Query prefix, filter, citation và expansion từ `chunks.parquet` |
 | `evaluate_dense.py` | Tính Recall@K, MRR@K, nDCG@K từ gold JSONL |
+| `build_faiss_members.py` | Build compact deduplicated FAISS indexes từ member shards |
+| `KAGGLE_MEMBER.py` | Launcher encode phân tán cho từng thành viên |
+| `KAGGLE_MERGE.py` | Launcher repair missing rows và build FAISS trên Kaggle |
+| `member_shards_utils.py` | Discover, verify và merge member shards |
+| `repair_missing_shards.py` | Encode canonical chunk còn thiếu trước khi build FAISS |
+| `repair_member_shards.py` | Tạo canonical deduplicated shards để build Qdrant |
+| `merge_member_shards.py` / `verify_member_shards.py` | CLI merge/verify strict member outputs |
 | `embedding_common.py` | Hằng số và utility dùng chung |
 
 ## 1. Chuẩn bị Kaggle
@@ -60,8 +67,13 @@ mặc định nếu `torch.cuda.get_arch_list()` có `sm_75`.
 
 ```bash
 %cd /kaggle/input/datasets/brdh7940/04-embedding/04_embedding
-!pip install -q -r requirements.txt
+!python -m pip install -q -r requirements.txt
+!python -c "import faiss, polars, pyarrow, qdrant_client, transformers; print('embedding dependencies OK')"
 ```
+
+Luôn dùng `python -m pip` để cài vào đúng interpreter chạy script. Package
+`faiss-cpu` cung cấp module import tên `faiss`. Kaggle restart session sẽ mất các
+package đã cài; chạy lại hai lệnh trên trong mỗi session mới.
 
 `transformers>=4.51.0` là bắt buộc vì model nền dùng kiến trúc Qwen3. PyTorch được
 cài riêng theo GPU và không nằm trong `requirements.txt`.
@@ -238,8 +250,12 @@ Mỗi process chỉ nhìn thấy một T4 và dùng device `cuda` của GPU đó
 !tail -n 5 "$WORK/gpu1.log"
 ```
 
-Sau đó upsert lần lượt hai thư mục vào cùng Qdrant collection; chỉ job đầu tiên dùng
-`--recreate`. Nếu corpus không đúng tròn 5 triệu rows, tính số shard bằng
+Không upsert riêng từng thư mục `shards_0`/`shards_1` vào cùng Qdrant collection:
+`build_qdrant.py` kiểm tra point count theo một manifest hoàn chỉnh. Hai thư mục từ ví
+dụ thủ công này không trực tiếp Qdrant-ready khi đứng riêng. Với production phân tán,
+dùng layout `KAGGLE_MEMBER.py` rồi tạo canonical shards bằng `repair_member_shards.py`;
+`merge_member_shards.py` chỉ dùng cho member outputs strict, đầy đủ và không duplicate.
+Nếu corpus không đúng tròn 5 triệu rows, tính số shard bằng
 `ceil(total_rows / 10000)` rồi chia dải tương ứng.
 
 Chạy lại đúng command để resume. Shard chỉ được đánh dấu `done` sau khi cả
@@ -282,9 +298,14 @@ builds compact deduplicated per-member IVF-PQ indexes:
 %run /kaggle/input/datasets/brdh7940/04-embedding/04_embedding/KAGGLE_MERGE.py
 ```
 
-Publish `/kaggle/working/legal_embedding/faiss_members/`. Query it directly:
+Publish `/kaggle/working/legal_embedding/faiss_members/`. Trong cùng session chạy
+`KAGGLE_MERGE.py`, launcher đã cài và kiểm tra `faiss`. Trong session mới hoặc khi
+chỉ add published FAISS dataset, phải cài dependency lại trước khi query:
 
 ```bash
+cd /kaggle/input/datasets/brdh7940/04-embedding/04_embedding
+python -m pip install -q -r requirements.txt
+python -c "import faiss; print(faiss.__version__)"
 python dense_retrieval.py \
   --faiss-dir /kaggle/working/legal_embedding/faiss_members \
   --chunks "$CHUNKS" \

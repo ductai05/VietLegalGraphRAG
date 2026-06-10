@@ -11,13 +11,20 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 import pyarrow.ipc as ipc
-from qdrant_client import QdrantClient, models
+try:
+    from qdrant_client import QdrantClient, models
+except ModuleNotFoundError as exc:
+    if exc.name != "qdrant_client":
+        raise
+    QdrantClient = None
+    models = None
 
 from embedding_common import (
     COLLECTION_NAME,
     MODEL_NAME,
     encode_texts,
     load_encoder,
+    load_faiss_module,
     read_json,
 )
 
@@ -28,6 +35,11 @@ EXPAND_MIN_CHARS = 300
 def build_filter(filters: dict[str, Any] | None) -> models.Filter | None:
     if not filters:
         return None
+    if models is None:
+        raise ModuleNotFoundError(
+            "Qdrant retrieval requires qdrant-client. Install it with "
+            "`python -m pip install qdrant-client`."
+        )
     must: list[models.FieldCondition] = []
     ranges = filters.get("ranges", {})
     for key, value in filters.items():
@@ -111,6 +123,11 @@ class DenseRetriever:
         if faiss_dir is not None:
             self._load_faiss(faiss_dir, faiss_nprobe)
         else:
+            if QdrantClient is None:
+                raise ModuleNotFoundError(
+                    "Qdrant retrieval requires qdrant-client. Install it with "
+                    "`python -m pip install qdrant-client`."
+                )
             self.client = (
                 QdrantClient(path=str(storage_dir))
                 if storage_dir is not None
@@ -129,7 +146,7 @@ class DenseRetriever:
         self.query_max_length = query_max_length
 
     def _load_faiss(self, faiss_dir: Path, nprobe: int) -> None:
-        import faiss
+        faiss = load_faiss_module()
 
         manifest = read_json(faiss_dir / "manifest.json")
         if not manifest.get("indexes"):
