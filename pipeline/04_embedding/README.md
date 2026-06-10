@@ -274,8 +274,9 @@ kiệm disk. Chỉ thêm `--include-text-in-payload` khi chắc chắn muốn l�
 
 When the five member datasets total about 30 GB, do not copy them into a merged
 directory and do not build Qdrant beside them in `/kaggle/working`.
-`KAGGLE_MERGE.py` now keeps member datasets read-only, encodes only missing
-chunks, and builds compact per-member IVF-PQ indexes:
+`KAGGLE_MERGE.py` now keeps member datasets read-only, ignores duplicate member
+rows using first-occurrence-wins ordering, encodes only missing chunks, and
+builds compact deduplicated per-member IVF-PQ indexes:
 
 ```bash
 %run /kaggle/input/datasets/brdh7940/04-embedding/04_embedding/KAGGLE_MERGE.py

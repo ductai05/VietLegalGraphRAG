@@ -1,4 +1,4 @@
-"""Build compact FAISS IVF-PQ indexes directly from read-only member shards."""
+"""Build compact deduplicated FAISS indexes from read-only member shards."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import pyarrow.parquet as pq
 
 from embedding_common import VECTOR_SIZE, atomic_write_json, read_json
 from member_shards_utils import discover_member_roots
+
+MANIFEST_FORMAT = "faiss_members_v2_deduplicated"
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,11 +85,12 @@ def write_source_index(
     output_dir: Path,
     trained_index: Any,
     add_batch_size: int,
+    seen_ids: set[str],
 ) -> dict[str, Any]:
     import faiss
 
     shards = list(iter_shards(entries))
-    expected_rows = sum(rows for _, _, rows in shards)
+    input_rows = sum(rows for _, _, rows in shards)
     if not shards:
         raise ValueError(f"No completed shards found for {name}")
 
@@ -99,19 +102,28 @@ def write_source_index(
         if path.exists():
             path.unlink()
 
-    print(f"Building {name}: rows={expected_rows:,}")
+    print(f"Building {name}: input_rows={input_rows:,}")
     index = faiss.clone_index(trained_index)
 
     payload_sink = pa.OSFile(str(payload_tmp), "wb")
     payload_writer: ipc.RecordBatchFileWriter | None = None
     payload_schema: pa.Schema | None = None
     added = 0
+    duplicates_removed = 0
     try:
         for vector_path, shard_payload_path, rows in shards:
             vectors = np.load(vector_path, mmap_mode="r")
             payload = pq.read_table(shard_payload_path)
             if len(vectors) != rows or payload.num_rows != rows:
                 raise ValueError(f"Row mismatch in {vector_path} / {shard_payload_path}")
+            chunk_ids = payload.column("chunk_id").to_pylist()
+            keep = np.zeros(rows, dtype=np.bool_)
+            for row, chunk_id in enumerate(chunk_ids):
+                if chunk_id not in seen_ids:
+                    keep[row] = True
+                    seen_ids.add(chunk_id)
+            duplicates_removed += int((~keep).sum())
+
             if payload_writer is None:
                 payload_schema = payload.schema
                 payload_writer = ipc.new_file(
@@ -121,44 +133,71 @@ def write_source_index(
                 )
             elif payload.schema != payload_schema:
                 payload = payload.cast(payload_schema)
-            payload_writer.write_table(payload)
+            payload_writer.write_table(payload.filter(pa.array(keep)))
             for start in range(0, rows, add_batch_size):
                 stop = min(start + add_batch_size, rows)
-                index.add(np.asarray(vectors[start:stop], dtype=np.float32))
-            added += rows
-            print(f"  {name}: indexed {added:,}/{expected_rows:,}")
+                selected = np.asarray(vectors[start:stop], dtype=np.float32)[
+                    keep[start:stop]
+                ]
+                if len(selected):
+                    index.add(selected)
+            added += int(keep.sum())
+            print(
+                f"  {name}: indexed_unique={added:,} "
+                f"duplicates_removed={duplicates_removed:,}"
+            )
     finally:
         if payload_writer is not None:
             payload_writer.close()
         payload_sink.close()
 
-    if index.ntotal != expected_rows:
-        raise ValueError(f"{name} index has {index.ntotal:,}/{expected_rows:,} vectors")
+    if index.ntotal != added:
+        raise ValueError(f"{name} index has {index.ntotal:,}/{added:,} unique vectors")
     faiss.write_index(index, str(index_tmp))
     os.replace(index_tmp, index_path)
     os.replace(payload_tmp, payload_path)
     return {
         "status": "done",
-        "rows": expected_rows,
+        "rows": added,
+        "input_rows": input_rows,
+        "duplicates_removed": duplicates_removed,
         "index": index_path.name,
         "payload": payload_path.name,
     }
+
+
+def read_indexed_chunk_ids(payload_path: Path) -> set[str]:
+    handle = pa.memory_map(str(payload_path), "r")
+    try:
+        payload = ipc.open_file(handle).read_all()
+        chunk_ids = payload.column("chunk_id").to_pylist()
+        unique_ids = set(chunk_ids)
+        if len(unique_ids) != len(chunk_ids):
+            raise ValueError(f"Existing FAISS payload contains duplicate chunk IDs: {payload_path}")
+        return unique_ids
+    finally:
+        handle.close()
 
 
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.output_dir / "manifest.json"
-    manifest = read_json(manifest_path, {"format": "faiss_members_v1", "indexes": {}})
+    manifest = read_json(manifest_path, {"format": MANIFEST_FORMAT, "indexes": {}})
+    rebuild_all = args.recreate
+    if manifest.get("format") != MANIFEST_FORMAT:
+        print("Existing FAISS manifest predates deduplication; rebuilding all indexes.")
+        manifest = {"format": MANIFEST_FORMAT, "indexes": {}}
+        rebuild_all = True
     if manifest.get("factory") not in (None, args.factory) and not args.recreate:
         raise ValueError("Existing FAISS output uses a different factory; pass --recreate")
     if args.recreate:
-        manifest = {"format": "faiss_members_v1", "indexes": {}}
+        manifest = {"format": MANIFEST_FORMAT, "indexes": {}}
     manifest["factory"] = args.factory
 
     sources = source_shards(args.search_root, args.num_members, args.repair_dir)
     trained_path = args.output_dir / "trained.faiss"
-    if trained_path.exists() and not args.recreate:
+    if trained_path.exists() and not rebuild_all:
         import faiss
 
         trained_index = faiss.read_index(str(trained_path))
@@ -179,9 +218,18 @@ def main() -> None:
         del sample
         faiss.write_index(trained_index, str(trained_path))
 
+    seen_ids: set[str] = set()
     for name, entries in sources:
         existing = manifest["indexes"].get(name)
-        if existing and existing.get("status") == "done" and not args.recreate:
+        if existing and existing.get("status") == "done" and not rebuild_all:
+            indexed_ids = read_indexed_chunk_ids(args.output_dir / existing["payload"])
+            overlap = seen_ids.intersection(indexed_ids)
+            if overlap:
+                raise ValueError(
+                    f"Existing FAISS indexes contain {len(overlap):,} duplicate chunk IDs; "
+                    "rerun with --recreate"
+                )
+            seen_ids.update(indexed_ids)
             print(f"Skipping completed index: {name}")
             continue
         manifest["indexes"][name] = write_source_index(
@@ -190,14 +238,35 @@ def main() -> None:
             args.output_dir,
             trained_index,
             args.add_batch_size,
+            seen_ids,
         )
         manifest["completed_rows"] = sum(
             item["rows"] for item in manifest["indexes"].values() if item.get("status") == "done"
         )
         atomic_write_json(manifest_path, manifest)
 
+    repair_summary = (
+        read_json(args.repair_dir / "repair_summary.json")
+        if args.repair_dir is not None
+        else {}
+    )
+    canonical_rows = repair_summary.get("canonical_rows")
+    if canonical_rows is not None and len(seen_ids) != canonical_rows:
+        raise ValueError(
+            f"Deduplicated FAISS indexes contain {len(seen_ids):,}/{canonical_rows:,} "
+            "canonical chunks"
+        )
+    manifest["unique_rows"] = len(seen_ids)
+    manifest["completed_rows"] = sum(
+        item["rows"] for item in manifest["indexes"].values() if item.get("status") == "done"
+    )
+    manifest["duplicates_removed"] = sum(
+        item.get("duplicates_removed", 0) for item in manifest["indexes"].values()
+    )
+    atomic_write_json(manifest_path, manifest)
     print(
-        f"FAISS member indexes complete: {manifest['completed_rows']:,} rows "
+        f"FAISS member indexes complete: unique={manifest['unique_rows']:,} "
+        f"duplicates_removed={manifest['duplicates_removed']:,} "
         f"in {args.output_dir}"
     )
 

@@ -90,10 +90,10 @@ def main() -> None:
     ]
     if ALLOW_CPU_REPAIR:
         repair_cmd.append("--allow-cpu")
-    print("=== Step 1: verify member datasets + encode only missing chunks ===")
+    print("=== Step 1: verify members, accept duplicates, encode only missing chunks ===")
     subprocess.run(repair_cmd, check=True)
 
-    print("\n=== Step 2: build compact per-member FAISS indexes ===")
+    print("\n=== Step 2: build compact deduplicated per-member FAISS indexes ===")
     subprocess.run(
         [
             "python",

@@ -145,6 +145,9 @@ class DenseRetriever:
             if index.ntotal != payload.num_rows:
                 handle.close()
                 raise ValueError(f"FAISS/payload row mismatch for {name}")
+            if index.ntotal == 0:
+                handle.close()
+                continue
             self.faiss_handles.append(handle)
             self.faiss_indexes.append((name, index, payload))
 

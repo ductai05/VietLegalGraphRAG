@@ -1,4 +1,4 @@
-"""Encode only chunk IDs missing from the combined read-only member datasets."""
+"""Validate read-only member datasets and encode only missing unique chunk IDs."""
 
 from __future__ import annotations
 
@@ -141,25 +141,22 @@ def main() -> None:
     if not canonical_payload.exists():
         raise FileNotFoundError(f"Canonical payload is missing: {canonical_payload}")
 
+    canonical_file = pq.ParquetFile(canonical_payload)
     canonical_ids = {
         chunk_id
-        for batch in pq.ParquetFile(canonical_payload).iter_batches(
+        for batch in canonical_file.iter_batches(
             batch_size=100_000, columns=["chunk_id"]
         )
         for chunk_id in batch.column(0).to_pylist()
     }
+    if len(canonical_ids) != canonical_file.metadata.num_rows:
+        raise ValueError(f"Canonical payload contains duplicate chunk IDs: {canonical_payload}")
     seen_ids, duplicate_rows, config = scan_member_ids(member_roots)
     unexpected_ids = seen_ids - canonical_ids
     if unexpected_ids:
         raise ValueError(
             f"Member outputs contain unexpected chunk IDs: {sorted(unexpected_ids)[:5]}"
         )
-    if duplicate_rows:
-        raise ValueError(
-            f"Member outputs contain {duplicate_rows:,} duplicate rows. "
-            "Fix the member datasets before building FAISS."
-        )
-
     missing_ids = canonical_ids - seen_ids
     existing_repair_ids = completed_output_ids(args.output_dir)
     stale_repair_ids = existing_repair_ids - missing_ids
@@ -171,6 +168,7 @@ def main() -> None:
         )
     print(
         f"Member outputs: unique={len(seen_ids):,} "
+        f"duplicates_to_ignore={duplicate_rows:,} "
         f"missing_to_encode={len(missing_ids):,}"
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +176,7 @@ def main() -> None:
         **config,
         "canonical_rows": len(canonical_ids),
         "member_rows": len(seen_ids),
+        "member_duplicate_rows": duplicate_rows,
         "missing_encoded": len(missing_ids),
         "canonical_payload": str(canonical_payload),
     }
