@@ -12,6 +12,7 @@ Hướng dẫn chạy
 6. Sau khi xong: publish output
    `/kaggle/working/legal_embedding/data/shards_member_{MEMBER_ID}/`
    (gồm `gpu0/`, `gpu1/`, log) lên Kaggle Dataset.
+   Không publish `.cache/` — model cache nằm ngoài `/kaggle/working`.
 7. Gửi link dataset cho người merge shard + build Qdrant.
 
 Phân công shard (tự tính theo số row thực tế)
@@ -30,6 +31,7 @@ Resume: chạy lại cùng `MEMBER_ID` — shard đã `done` trong manifest sẽ
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -41,21 +43,21 @@ from tqdm.auto import tqdm
 MEMBER_ID = 1  # 1 | 2 | 3 | 4 | 5
 # ========================
 
-NUM_MEMBERS = 5
+NUM_MEMBERS = 1
 SHARD_SIZE = 10_000
 
-CHUNKS = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/legal_chunking_dataset/chunks.parquet"
-METADATA = "/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/legal_chunking_dataset/metadata.parquet"
-PIPELINE = "/kaggle/input/datasets/brdh7940/04-embedding/04_embedding"
-WORK = "/kaggle/working/legal_embedding"
+CHUNKS = "/home/ml/VietLegalGraphRAG/data/legal_chunking_dataset/chunks.parquet"
+METADATA = "/home/ml/VietLegalGraphRAG/data/legal_chunking_dataset/metadata.parquet"
+PIPELINE = "/home/ml/VietLegalGraphRAG/pipeline/04_embedding"
+WORK = "/home/ml/VietLegalGraphRAG/data/legal_embedding"
+HF_CACHE = "/home/ml/.cache/vnlegal_hf_cache"
 
-BATCH_SIZE = "128"
-TOKEN_BUDGET = "49152"
+BATCH_SIZE = "1024"
+TOKEN_BUDGET = "1048576"
 MAX_LENGTH = "1024"
 ATTN_IMPL = "sdpa"
 WORKER_STAGGER_S = 45
 PYTORCH_ALLOC = "expandable_segments:True"
-
 
 def member_shard_range(member_id: int, total_shards: int, num_members: int) -> tuple[int, int]:
     if not 1 <= member_id <= num_members:
@@ -72,11 +74,7 @@ def gpu_jobs(shard_start: int, shard_stop: int) -> list[tuple[int, int, int]]:
     count = shard_stop - shard_start
     if count <= 0:
         raise ValueError(f"Empty shard range [{shard_start}, {shard_stop})")
-    mid = shard_start + (count + 1) // 2
-    jobs = [(0, shard_start, mid)]
-    if mid < shard_stop:
-        jobs.append((1, mid, shard_stop))
-    return jobs
+    return [(0, shard_start, shard_stop)]
 
 
 def tail_text(path: Path, lines: int = 40) -> str:
@@ -91,13 +89,12 @@ def tail_text(path: Path, lines: int = 40) -> str:
 def check_gpus() -> None:
     subprocess.run(
         [
-            "python",
+            "python3",
             "-c",
             (
                 "import torch; "
-                "assert torch.cuda.is_available() and torch.cuda.device_count() == 2; "
-                "assert all(torch.cuda.get_device_capability(i) == (7, 5) for i in range(2)); "
-                "[print(i, torch.cuda.get_device_name(i)) for i in range(2)]"
+                "assert torch.cuda.is_available() and torch.cuda.device_count() >= 1; "
+                "[print(i, torch.cuda.get_device_name(i)) for i in range(torch.cuda.device_count())]"
             ),
         ],
         check=True,
@@ -117,11 +114,11 @@ if MEMBER_ID < 1 or MEMBER_ID > NUM_MEMBERS:
 check_gpus()
 
 os.chdir(PIPELINE)
-subprocess.run(["pip", "install", "-q", "-r", "requirements.txt"], check=True)
+subprocess.run(["pip3", "install", "-q", "--break-system-packages", "-r", "requirements.txt"], check=True)
 
 subprocess.run(
     [
-        "python",
+        "python3",
         "prepare_embedding_data.py",
         "--chunks",
         CHUNKS,
@@ -153,7 +150,7 @@ member_root = Path(f"{WORK}/data/shards_member_{MEMBER_ID}")
 member_root.mkdir(parents=True, exist_ok=True)
 
 base = [
-    "python",
+    "python3",
     "embed_shards.py",
     "--payload",
     payload,
@@ -168,7 +165,7 @@ base = [
     "--attn-implementation",
     ATTN_IMPL,
     "--cache-dir",
-    f"{WORK}/.cache",
+    HF_CACHE,
     "--device",
     "cuda:0",
 ]
@@ -238,3 +235,8 @@ print(
     f"Member {MEMBER_ID} complete. "
     f"Output: {member_root} (~{expected_rows:,} rows, shards [{shard_start}, {shard_stop}))"
 )
+
+legacy_cache = Path(WORK) / ".cache"
+if legacy_cache.exists():
+    shutil.rmtree(legacy_cache)
+    print(f"Removed legacy model cache from output tree: {legacy_cache}")

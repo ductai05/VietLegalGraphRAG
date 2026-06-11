@@ -137,9 +137,18 @@ def validate_cuda_device(torch: Any, device: str) -> None:
     device_index = torch.device(device).index
     if device_index is None:
         device_index = torch.cuda.current_device()
-    capability = torch.cuda.get_device_capability(device_index)
-    required_arch = f"sm_{capability[0]}{capability[1]}"
+    
     wheel_arches = set(torch.cuda.get_arch_list())
+    is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
+
+    if is_rocm:
+        device_properties = torch.cuda.get_device_properties(device_index)
+        gcn_arch = getattr(device_properties, "gcnArchName", "")
+        required_arch = gcn_arch.split(":")[0]
+    else:
+        capability = torch.cuda.get_device_capability(device_index)
+        required_arch = f"sm_{capability[0]}{capability[1]}"
+
     if wheel_arches and required_arch not in wheel_arches:
         gpu_name = torch.cuda.get_device_name(device_index)
         install_hint = (

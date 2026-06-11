@@ -18,11 +18,14 @@ def parse_args() -> argparse.Namespace:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--storage-dir", type=Path)
     target.add_argument("--url")
+    target.add_argument("--faiss-dir", type=Path)
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--chunks", type=Path, default=None)
     parser.add_argument("--collection", default=COLLECTION_NAME)
     parser.add_argument("--model", default=MODEL_NAME)
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--faiss-nprobe", type=int, default=32)
+    parser.add_argument("--faiss-oversample", type=int, default=20)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache-dir", default=None)
@@ -34,13 +37,28 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def relevance(hit: dict[str, Any], row: dict[str, Any]) -> int:
-    chunk_ids = set(row.get("relevant_chunk_ids") or [])
-    doc_ids = set(row.get("relevant_doc_ids") or [])
-    return int(
-        hit.get("chunk_id") in chunk_ids
-        or hit.get("payload", {}).get("doc_id") in doc_ids
-    )
+def evaluate_hits_relevance(hits: list[dict[str, Any]], row: dict[str, Any]) -> list[int]:
+    groups = row.get("relevant_chunk_groups")
+    if not groups:
+        # Fallback to simple chunk_id check if groups are not present
+        chunk_ids = set(row.get("relevant_chunk_ids") or [])
+        return [int(hit.get("chunk_id") in chunk_ids) for hit in hits]
+        
+    rel = []
+    matched_groups = set()
+    for hit in hits:
+        hit_id = hit.get("chunk_id")
+        matched = False
+        for g_idx, group in enumerate(groups):
+            if hit_id in group:
+                if g_idx not in matched_groups:
+                    matched_groups.add(g_idx)
+                    rel.append(1)
+                    matched = True
+                    break
+        if not matched:
+            rel.append(0)
+    return rel
 
 
 def main() -> None:
@@ -49,12 +67,15 @@ def main() -> None:
     retriever = DenseRetriever(
         args.storage_dir,
         url=args.url,
+        faiss_dir=args.faiss_dir,
         api_key=args.api_key,
         collection=args.collection,
         model_name=args.model,
         chunks_path=args.chunks,
         device=args.device,
         cache_dir=args.cache_dir,
+        faiss_nprobe=args.faiss_nprobe,
+        faiss_oversample=args.faiss_oversample,
     )
     details = []
     try:
@@ -65,11 +86,10 @@ def main() -> None:
                 top_k=args.top_k,
                 expand=False,
             )
-            rel = [relevance(hit, row) for hit in hits]
+            rel = evaluate_hits_relevance(hits, row)
             first = next((index + 1 for index, value in enumerate(rel) if value), None)
             relevant_total = max(
-                len(row.get("relevant_chunk_ids") or []),
-                len(row.get("relevant_doc_ids") or []),
+                len(row.get("relevant_chunk_groups") or row.get("relevant_chunk_ids") or []),
                 1,
             )
             recall = min(sum(rel) / relevant_total, 1.0)

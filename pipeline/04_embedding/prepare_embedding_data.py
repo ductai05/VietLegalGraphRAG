@@ -216,6 +216,9 @@ def main() -> None:
     if not args.keep_existing_context:
         payload = payload.with_columns(build_contextual_text_expr())
 
+    # Hash joins may emit rows in a different order across machines. Stable ordering is
+    # required because member assignment is based on global shard indexes.
+    payload = payload.sort("chunk_id")
     payload.sink_parquet(output_path, compression="zstd")
 
     stats = (
