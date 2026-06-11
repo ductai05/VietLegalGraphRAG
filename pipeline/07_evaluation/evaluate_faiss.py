@@ -27,26 +27,14 @@ def parse_args():
     return parser.parse_args()
 
 def convert_to_gold_jsonl(eval_file: Path) -> Path:
-    gold_file = eval_file.parent / "eval_questions_gold.jsonl"
-    print(f"Converting {eval_file} to JSONL gold format at {gold_file}...")
-    
-    with open(eval_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        
-    questions = data.get("questions", [])
-    
-    with open(gold_file, "w", encoding="utf-8") as f:
-        for q in questions:
-            gold_row = {
-                "query": q["question"],
-                "relevant_chunk_ids": q["evidence"]["chunk_ids"],
-                "relevant_doc_ids": [q["evidence"]["doc_id"]],
-                "group": q.get("question_type", "unknown")
-            }
-            f.write(json.dumps(gold_row, ensure_ascii=False) + "\n")
-            
-    print(f"Successfully converted {len(questions)} questions.")
-    return gold_file
+    # Delegate to convert_eval_to_gold to ensure text-equivalent chunk IDs are resolved
+    import sys
+    sys.path.append(str(Path(__file__).resolve().parent))
+    import convert_eval_to_gold
+    convert_eval_to_gold.EVAL_FILE = eval_file
+    convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold.jsonl"
+    convert_eval_to_gold.main()
+    return convert_eval_to_gold.GOLD_FILE
 
 def main():
     args = parse_args()
