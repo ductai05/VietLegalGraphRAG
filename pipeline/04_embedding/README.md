@@ -409,6 +409,29 @@ Chạy:
 
 Báo cáo gồm Recall@10, MRR@10, nDCG@10 tổng và theo `group`.
 
+## Dense retrieval + reranking
+
+Reranking retrieves and deduplicates a larger dense candidate pool before scoring
+metadata-aware `(query, passage_text)` pairs. If model initialization or scoring
+fails, evaluation logs the exception and falls back to dense order.
+
+```bash
+python pipeline/04_embedding/evaluate_dense.py \
+  --gold pipeline/07_evaluation/eval_questions_gold.jsonl \
+  --url http://129.212.184.109:8333/ \
+  --chunks data/legal_chunking_dataset/chunks.parquet \
+  --candidate-k 100 \
+  --top-k 10 \
+  --rerank \
+  --reranker-model BAAI/bge-reranker-v2-m3 \
+  --output data/legal_embedding/dense_rerank_eval_results.json
+```
+
+GPU is selected automatically when available, or explicitly with `--device`.
+Use `--rerank-batch-size` to control reranker memory usage. The output contains
+both dense baseline and reranked metrics, candidate dense scores, rerank scores,
+and final ordered results.
+
 ## Lưu ý vận hành
 
 - Document được encode **không có query prefix**. Prefix chỉ dùng trong
