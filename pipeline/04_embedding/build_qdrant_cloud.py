@@ -58,15 +58,19 @@ def ensure_collection(client: QdrantClient, name: str, recreate: bool, quantizat
             )
         )
 
+    # To prevent Qdrant Cloud Free Tier (4GB disk) from running out of space,
+    # we disable the HNSW index build by setting m=0.
+    # Searching 5.7M vectors using PQ exact scan is extremely fast and takes 0 extra disk.
     client.create_collection(
         collection_name=name,
         vectors_config=models.VectorParams(size=VECTOR_SIZE, distance=models.Distance.COSINE),
         hnsw_config=models.HnswConfigDiff(
-            m=16,
-            ef_construct=100,
-            full_scan_threshold=10_000,
+            m=0,
         ),
-        optimizers_config=models.OptimizersConfigDiff(default_segment_number=4),
+        optimizers_config=models.OptimizersConfigDiff(
+            default_segment_number=2,
+            indexing_threshold=0,
+        ),
         quantization_config=quantization_config
     )
 
