@@ -9,10 +9,7 @@ This stage builds Elasticsearch BM25 retrieval for VietLegalGraphRAG from the ch
 | `scripts/prepare_sparse_data.py` | Join chunks with metadata, normalize fields, tokenize Vietnamese text and write `sparse_payload_v0.1.parquet` |
 | `scripts/create_index.py` | Create the versioned Elasticsearch index from the mapping JSON |
 | `scripts/ingest_chunks.py` | Bulk ingest sparse payload and update the stable alias |
-| `src/sparse_retriever.py` | Query router, BM25 DSL, exact document-number search and output formatting |
-| `scripts/smoke_test.py` | Run JSONL smoke queries |
-| `scripts/evaluate_sparse.py` | Compute Recall, MRR and nDCG from a small gold set |
-| `scripts/kaggle_elasticsearch_single_cell.py` | Kaggle runner that starts Elasticsearch and Cloudflare Tunnel |
+| `scripts/run_pipeline_full.py` | Kaggle runner that starts Elasticsearch, builds data payload, creates index and ingests |
 
 ## Data Contract
 
@@ -74,42 +71,7 @@ python scripts/ingest_chunks.py \
   --refresh
 ```
 
-Query:
 
-```bash
-python -m src.sparse_retriever \
-  --url http://127.0.0.1:9200 \
-  --query "điều kiện hưởng bảo hiểm xã hội" \
-  --top-k 5
-```
-
-With metadata filter:
-
-```bash
-python -m src.sparse_retriever \
-  --url http://127.0.0.1:9200 \
-  --query "cấp giấy phép xây dựng" \
-  --filters '{"effect_status":"Còn hiệu lực","ranges":{"issuance_date":{"gte":"2020-01-01"}}}' \
-  --top-k 5
-```
-
-## Output Format
-
-Each hit follows the sparse contract:
-
-```json
-{
-  "chunk_id": "...",
-  "score": 12.34,
-  "retriever": "sparse",
-  "rank": 1,
-  "payload": {},
-  "citation": "...",
-  "optional_expanded_context": null
-}
-```
-
-`table_summary`, `procedure_record` and `clause_group` can expand context from `raw_table_id` or `parent_id` when `expand=True`.
 
 ## Kaggle Runner
 
@@ -172,38 +134,16 @@ if run_paths:
 
 ### Environment Configuration
 
-The path search helper functions will automatically scan `/kaggle/input` to locate the source directory and dataset files. If you need to override these locations, you can set the environment variables before running the scripts:
+You must set the environment variables to specify the correct paths before running the scripts:
 
 ```python
-# Optional overrides
 %env SPARSE_DIR=/kaggle/input/vietlegalgraphrag-source/VietLegalGraphRAG/pipeline/05_sparse_retrieval
 %env CHUNKS_PATH=/kaggle/input/vietnamese-legal-documents-cleaned/legal_chunking_dataset/chunks.parquet
 %env METADATA_PATH=/kaggle/input/vietnamese-legal-documents-cleaned/legal_chunking_dataset/metadata.parquet
+%env PAYLOAD_PATH=/kaggle/input/vietnamese-legal-documents-cleaned/sparse_payload_v0.1.parquet
 %env RECREATE_INDEX=1
 ```
 
 The Kaggle runner stores Elasticsearch data in `/kaggle/working/legal_sparse/es_data` and prints the Cloudflare public URL when detected.
 
 
-## Smoke and Evaluation
-
-Smoke:
-
-```bash
-python scripts/smoke_test.py \
-  --queries eval/smoke_queries.jsonl \
-  --url http://127.0.0.1:9200 \
-  --top-k 5
-```
-
-Evaluation:
-
-```bash
-python scripts/evaluate_sparse.py \
-  --gold eval/smoke_queries.jsonl \
-  --url http://127.0.0.1:9200 \
-  --top-k 10 \
-  --output /path/to/legal_sparse/logs/sparse_eval.json
-```
-
-Fill `expected_doc_ids` or `expected_chunk_ids` in the JSONL file before treating metrics as a real baseline.

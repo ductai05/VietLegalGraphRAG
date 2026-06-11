@@ -54,37 +54,6 @@ PAYLOAD_FIELDS = [
     "expansion_status",
 ]
 
-VI_SEARCH_FIELDS = [
-    "title_vi^3.0",
-    "procedure_name_vi^2.5",
-    "section_path_vi^2.0",
-    "chunk_text_vi^1.0",
-    "contextual_text_vi^0.7",
-    "issuing_authority_vi^1.2",
-]
-
-FOLDED_SEARCH_FIELDS = [
-    "title_folded^2.4",
-    "procedure_name_folded^2.0",
-    "section_path_folded^1.6",
-    "chunk_text_folded^0.9",
-    "issuing_authority_folded^1.0",
-]
-
-RAW_SEARCH_FIELDS = [
-    "title^1.5",
-    "procedure_name^1.2",
-    "section_path^1.0",
-    "chunk_text^0.8",
-    "contextual_text^0.5",
-]
-
-FILTER_FIELD_ALIASES = {
-    "issuing_authority": "issuing_authority.keyword",
-    "procedure_name": "procedure_name.keyword",
-    "title": "title.keyword",
-}
-
 
 def setup_logging(log_path: Path | None = None) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler()]
@@ -119,10 +88,6 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
 
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
 
 
 def batched(items: Sequence[Any], batch_size: int) -> Iterator[Sequence[Any]]:
@@ -183,44 +148,6 @@ def payload_from_source(source: dict[str, Any]) -> dict[str, Any]:
         if field in source
     }
 
-
-def format_citation(payload: dict[str, Any]) -> str:
-    section_path = payload.get("section_path") or []
-    if isinstance(section_path, str):
-        section_text = section_path
-    else:
-        section_text = " > ".join(str(part) for part in section_path if part)
-    parts = [
-        payload.get("document_number"),
-        payload.get("title"),
-        section_text,
-    ]
-    if payload.get("procedure_name"):
-        parts.append(f"[TTHC: {payload['procedure_name']}]")
-    parts.append(f"chunk_id: {payload.get('chunk_id', '')}")
-    return " | ".join(str(part) for part in parts if part)
-
-
-def build_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not filters:
-        return []
-    clauses: list[dict[str, Any]] = []
-    ranges = filters.get("ranges", {}) or {}
-    for key, value in filters.items():
-        if key == "ranges" or value in (None, "", []):
-            continue
-        field = FILTER_FIELD_ALIASES.get(key, key)
-        if isinstance(value, dict):
-            clauses.append({"range": {field: value}})
-        elif isinstance(value, list):
-            clauses.append({"terms": {field: value}})
-        else:
-            clauses.append({"term": {field: value}})
-    for key, bounds in ranges.items():
-        if bounds:
-            field = FILTER_FIELD_ALIASES.get(key, key)
-            clauses.append({"range": {field: bounds}})
-    return clauses
 
 
 def iter_bulk_ndjson(

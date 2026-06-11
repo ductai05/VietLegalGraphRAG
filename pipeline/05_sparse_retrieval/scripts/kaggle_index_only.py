@@ -15,43 +15,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-def find_sparse_dir() -> Path:
-    candidates = [
-        Path("/kaggle/input/vietlegalgraphrag-source/VietLegalGraphRAG/pipeline/05_sparse_retrieval"),
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    input_dir = Path("/kaggle/input")
-    if input_dir.exists():
-        matches = sorted(input_dir.glob("**/VietLegalGraphRAG/pipeline/05_sparse_retrieval"))
-        if matches:
-            return matches[0]
-    return candidates[0]
-
-def find_merged_payload(version: str) -> Path:
-    candidates = [
-        Path(f"/kaggle/input/vietnamese-legal-documents-cleaned/sparse_payload_{version}.parquet"),
-        Path(f"/kaggle/input/datasets/brdh7940/vietnamese-legal-documents-cleaned/sparse_payload_{version}.parquet"),
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    input_dir = Path("/kaggle/input")
-    if input_dir.exists():
-        matches = sorted(input_dir.glob(f"*/sparse_payload_{version}.parquet"))
-        if matches:
-            return matches[0]
-        matches = sorted(input_dir.glob(f"**/sparse_payload_{version}.parquet"))
-        if matches:
-            return matches[0]
-    return candidates[0]
-
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 SPARSE_VERSION = os.environ.get("SPARSE_VERSION", "v0.1")
-SPARSE_DIR = Path(os.environ.get("SPARSE_DIR", str(find_sparse_dir())))
-PAYLOAD_PATH = Path(os.environ.get("PAYLOAD_PATH", str(find_merged_payload(SPARSE_VERSION))))
+SPARSE_DIR = Path(os.environ["SPARSE_DIR"]) if "SPARSE_DIR" in os.environ else None
+PAYLOAD_PATH = Path(os.environ["PAYLOAD_PATH"]) if "PAYLOAD_PATH" in os.environ else None
 WORK_DIR = Path(os.environ.get("SPARSE_WORK_DIR", "/kaggle/working/legal_sparse"))
 ELASTIC_VERSION = os.environ.get("ELASTIC_VERSION", "8.15.3")
 ELASTIC_URL = os.environ.get("ELASTIC_URL", "http://127.0.0.1:9200")
@@ -212,8 +180,8 @@ def start_cloudflared() -> tuple[subprocess.Popen, str | None]:
 def run_step(args: list[str]) -> None:
     subprocess.run([sys.executable, *args], cwd=SPARSE_DIR, check=True)
 
-def require_path(name: str, path: Path, env_var: str | None = None) -> None:
-    if not path.exists():
+def require_path(name: str, path: Path | None, env_var: str | None = None) -> None:
+    if path is None or not path.exists():
         hint = f" Override this path with the {env_var} environment variable." if env_var else ""
         raise FileNotFoundError(f"{name} not found: {path}.{hint}")
 

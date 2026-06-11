@@ -1,5 +1,0 @@
-{"query_id":"exact_doc_number_001","query":"115/NQ-HĐBCQG","query_type":"document_number","expected_doc_ids":[693036],"expected_chunk_ids":[],"filters":null,"top_k":5,"notes":"Exact document number query from metadata sample."}
-{"query_id":"keyword_001","query":"điều kiện hưởng bảo hiểm xã hội một lần","query_type":"keyword","expected_doc_ids":[],"expected_chunk_ids":[],"filters":null,"top_k":5,"notes":"General Vietnamese legal keyword query."}
-{"query_id":"folded_001","query":"dieu kien huong bao hiem xa hoi mot lan","query_type":"folded_keyword","expected_doc_ids":[],"expected_chunk_ids":[],"filters":null,"top_k":5,"notes":"Accentless query should hit folded fields."}
-{"query_id":"metadata_filter_001","query":"cấp giấy phép xây dựng","query_type":"metadata_filter","expected_doc_ids":[],"expected_chunk_ids":[],"filters":{"effect_status":"Còn hiệu lực"},"top_k":5,"notes":"Filter should be applied in bool.filter."}
-{"query_id":"table_001","query":"mức phí thủ tục hành chính","query_type":"table","expected_doc_ids":[],"expected_chunk_ids":[],"filters":null,"top_k":5,"notes":"Table-oriented query for raw_table and procedure_record recall."}
