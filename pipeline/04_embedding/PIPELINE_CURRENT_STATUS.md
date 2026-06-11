@@ -1,6 +1,6 @@
 # Dense Retrieval Pipeline - Current Status
 
-**Last updated:** 2026-06-11  
+**Last updated:** 2026-06-12
 **Scope:** `pipeline/04_embedding` dense retrieval path for VietLegalGraphRAG
 
 ## 1. Current working state
@@ -48,6 +48,11 @@ Observed result on the current setup:
 - `evaluate_dense.py`
   - Computes `Recall@K`, `MRR@K`, `nDCG@K`
   - Matches gold by `chunk_id` or `doc_id`
+  - Supports optional reranking over a larger dense candidate pool
+- `rerank.py`
+  - Provides `BaseReranker`, `BGEReranker`, and `QwenReranker`
+  - Formats metadata-aware passage text for cross-encoder scoring
+  - Falls back to dense order if reranker initialization or scoring fails
 
 ## 3. Current retrieval configuration
 
@@ -86,7 +91,8 @@ The retrieval code can also fall back to FAISS member shards when Qdrant is not 
 
 - Query representation may be too weak for legal question matching.
 - Indexing granularity may be mismatched with the gold relevance labels.
-- Single-stage dense retrieval may need hybrid retrieval or reranking.
+- Single-stage dense retrieval may still benefit from hybrid retrieval, but reranking is already implemented.
+- BM25 is not implemented in the current pipeline, so lexical retrieval is not yet available as a baseline or hybrid signal.
 - Metadata filters and context expansion may not be enough to recover hard cases.
 - `max_length=512` for queries may truncate useful legal intent.
 - The current evaluation uses `expand=False`, so retrieval quality is measured before any optional context expansion.
