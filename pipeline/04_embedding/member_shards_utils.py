@@ -84,10 +84,9 @@ def find_payload_parquet(search_roots: list[Path]) -> Path:
 
 
 def gpu_dirs(member_root: Path) -> list[Path]:
-    dirs = [member_root / "gpu0", member_root / "gpu1"]
-    missing = [str(path) for path in dirs if not path.is_dir()]
-    if missing:
-        raise FileNotFoundError(f"Missing GPU output dir(s) under {member_root}: {missing}")
+    dirs = sorted([d for d in member_root.glob("gpu*") if d.is_dir()])
+    if not dirs:
+        raise FileNotFoundError(f"No GPU output dir(s) (gpu*) found under {member_root}")
     return dirs
 
 

@@ -47,13 +47,34 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def relevance(hit: dict[str, Any], row: dict[str, Any]) -> int:
-    chunk_ids = set(row.get("relevant_chunk_ids") or [])
-    doc_ids = set(row.get("relevant_doc_ids") or [])
-    return int(
-        hit.get("chunk_id") in chunk_ids
-        or hit.get("payload", {}).get("doc_id") in doc_ids
-    )
+def evaluate_hits_relevance(hits: list[dict[str, Any]], row: dict[str, Any]) -> list[int]:
+    groups = row.get("relevant_chunk_groups")
+    if not groups:
+        chunk_ids = set(row.get("relevant_chunk_ids") or [])
+        doc_ids = set(row.get("relevant_doc_ids") or [])
+        return [
+            int(
+                hit.get("chunk_id") in chunk_ids
+                or hit.get("payload", {}).get("doc_id") in doc_ids
+            )
+            for hit in hits
+        ]
+
+    rel: list[int] = []
+    matched_groups: set[int] = set()
+    for hit in hits:
+        hit_id = hit.get("chunk_id")
+        matched = False
+        for g_idx, group in enumerate(groups):
+            if hit_id in group:
+                if g_idx not in matched_groups:
+                    matched_groups.add(g_idx)
+                    rel.append(1)
+                    matched = True
+                    break
+        if not matched:
+            rel.append(0)
+    return rel
 
 
 def deduplicate_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -71,11 +92,15 @@ def deduplicate_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def metrics_for_hits(
     hits: list[dict[str, Any]], row: dict[str, Any], top_k: int
 ) -> dict[str, float]:
-    rel = [relevance(hit, row) for hit in hits[:top_k]]
+    rel = evaluate_hits_relevance(hits[:top_k], row)
     first = next((index + 1 for index, value in enumerate(rel) if value), None)
     relevant_total = max(
-        len(row.get("relevant_chunk_ids") or []),
-        len(row.get("relevant_doc_ids") or []),
+        len(
+            row.get("relevant_chunk_groups")
+            or row.get("relevant_chunk_ids")
+            or row.get("relevant_doc_ids")
+            or []
+        ),
         1,
     )
     dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
