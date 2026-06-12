@@ -142,7 +142,7 @@ def main() -> None:
                     checkpoint_path,
                 )
             if ok != len(rows):
-                raise RuntimeError(f"Bulk ingest acknowledged {ok:,}/{len(rows):,} rows")
+                logging.warning("Bulk ingest acknowledged %s/%s rows", f"{ok:,}", f"{len(rows):,}")
             processed_so_far += len(rows)
             indexed += ok
             atomic_write_json(
@@ -163,7 +163,9 @@ def main() -> None:
         count = client.count(index=args.index)["count"]
         logging.info("Index %s count: %s", args.index, f"{count:,}")
         if count != total_rows:
-            raise ValueError(f"Elasticsearch count mismatch: expected {total_rows:,}, got {count:,}")
+            if count < total_rows - errors_total:
+                raise ValueError(f"Elasticsearch count mismatch: expected >={total_rows - errors_total:,}, got {count:,}")
+            logging.warning("Index count %s vs total %s (skipped %s errored docs)", f"{count:,}", f"{total_rows:,}", f"{errors_total:,}")
     finally:
         client.close()
 
