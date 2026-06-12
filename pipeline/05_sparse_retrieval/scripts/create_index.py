@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import sys
+for _key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
+    os.environ.pop(_key, None)
+
 import argparse
 import json
 import logging
 from pathlib import Path
-import sys
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -43,7 +47,15 @@ def main() -> None:
         request_timeout=args.request_timeout,
     )
     try:
-        exists = client.indices.exists(index=args.index)
+        try:
+            exists = client.indices.exists(index=args.index)
+        except Exception as err:
+            logging.error("Index check failed. Error: %s", err)
+            if hasattr(err, "body"):
+                logging.error("Response body: %s", err.body)
+            if hasattr(err, "meta"):
+                logging.error("Response meta: %s", err.meta)
+            raise err
         if exists and args.recreate:
             logging.info("Deleting existing index %s", args.index)
             client.indices.delete(index=args.index)

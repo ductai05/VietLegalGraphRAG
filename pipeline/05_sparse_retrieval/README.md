@@ -144,6 +144,6 @@ You must set the environment variables to specify the correct paths before runni
 %env RECREATE_INDEX=1
 ```
 
-The Kaggle runner stores Elasticsearch data in `/kaggle/working/legal_sparse/es_data` and prints the Cloudflare public URL when detected.
+The Kaggle runner stores Elasticsearch data in `/kaggle/working/legal_sparse/es_data`.
 
 

@@ -104,6 +104,8 @@ def build_elasticsearch_client(
     verify_certs: bool = True,
     request_timeout: int = 60,
 ) -> Elasticsearch:
+    for key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
+        os.environ.pop(key, None)
     kwargs: dict[str, Any] = {
         "request_timeout": request_timeout,
         "verify_certs": verify_certs,

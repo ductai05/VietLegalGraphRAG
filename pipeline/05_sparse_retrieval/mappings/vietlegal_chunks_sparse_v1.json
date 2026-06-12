@@ -22,7 +22,7 @@
     "dynamic": false,
     "properties": {
       "chunk_id": { "type": "keyword" },
-      "doc_id": { "type": "long" },
+      "doc_id": { "type": "keyword" },
       "source": { "type": "keyword" },
       "chunk_text": { "type": "text", "analyzer": "standard" },
       "contextual_text": { "type": "text", "analyzer": "standard" },

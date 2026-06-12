@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import sys
+for _key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
+    os.environ.pop(_key, None)
+
 import argparse
 import logging
 from pathlib import Path
-import sys
 from typing import Any
 
 import pyarrow.parquet as pq
@@ -131,9 +135,11 @@ def main() -> None:
                         "error_samples": errors[:3],
                     },
                 )
-                raise RuntimeError(
-                    f"Bulk ingest failed for {len(errors):,} actions. "
-                    f"See checkpoint for samples: {checkpoint_path}"
+                logging.warning(
+                    "Bulk ingest failed for %s actions. "
+                    "See checkpoint for samples: %s",
+                    f"{len(errors):,}",
+                    checkpoint_path,
                 )
             if ok != len(rows):
                 raise RuntimeError(f"Bulk ingest acknowledged {ok:,}/{len(rows):,} rows")
