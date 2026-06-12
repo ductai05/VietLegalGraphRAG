@@ -32,3 +32,4 @@ venv/
 
 # Kaggle temp files
 /kaggle/
+/data/preprocessed
