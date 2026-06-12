@@ -174,10 +174,17 @@ def build_elasticsearch_filter(
     for field, expected in filters.items():
         if field == "ranges":
             continue
+        target_field = f"{field}.keyword" if field in TEXT_FIELDS else field
+        if field == "doc_id":
+            expected = (
+                [str(value) for value in expected]
+                if isinstance(expected, list)
+                else str(expected)
+            )
         if isinstance(expected, list):
-            clauses.append({"terms": {field: expected}})
+            clauses.append({"terms": {target_field: expected}})
         else:
-            clauses.append({"term": {field: expected}})
+            clauses.append({"term": {target_field: expected}})
     for field, bounds in ranges.items():
         clauses.append({"range": {field: bounds}})
     return clauses

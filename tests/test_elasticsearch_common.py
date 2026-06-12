@@ -95,6 +95,8 @@ class ElasticsearchCommonTests(unittest.TestCase):
             {
                 "effect_status": "Con hieu luc",
                 "legal_type": ["Nghi dinh", "Thong tu"],
+                "title": "Luat Dat dai",
+                "doc_id": 42,
                 "ranges": {"issuance_date_ts": {"gte": 20200101}},
             }
         )
@@ -104,6 +106,8 @@ class ElasticsearchCommonTests(unittest.TestCase):
             [
                 {"term": {"effect_status": "Con hieu luc"}},
                 {"terms": {"legal_type": ["Nghi dinh", "Thong tu"]}},
+                {"term": {"title.keyword": "Luat Dat dai"}},
+                {"term": {"doc_id": "42"}},
                 {"range": {"issuance_date_ts": {"gte": 20200101}}},
             ],
         )

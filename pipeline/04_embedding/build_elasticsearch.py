@@ -33,6 +33,7 @@ from embedding_common import (  # noqa: E402
     file_fingerprint,
     read_json,
     setup_logging,
+    stable_point_id,
 )
 
 RETRY_STATUSES = (429, 502, 503, 504)
@@ -135,6 +136,53 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--max-shards must be positive")
 
 
+def prepare_build_manifest(
+    build_manifest: dict[str, Any],
+    *,
+    index: str,
+    source_manifest_fingerprint: str,
+    recreate: bool,
+    workers: int,
+    batch_size: int,
+    max_chunk_mb: int,
+    queue_size: int,
+) -> dict[str, Any]:
+    """Validate resume identity and mark the current ingest run as active."""
+    if recreate:
+        build_manifest.clear()
+        build_manifest["shards"] = {}
+    else:
+        previous_index = build_manifest.get("index")
+        if previous_index not in (None, index):
+            raise ValueError(
+                "Existing Elasticsearch manifest belongs to index "
+                f"{previous_index!r}; use the matching --index or --recreate"
+            )
+        previous_fingerprint = build_manifest.get("source_manifest_fingerprint")
+        if (
+            previous_fingerprint is not None
+            and previous_fingerprint != source_manifest_fingerprint
+        ):
+            raise ValueError(
+                "The embedding source manifest changed since the previous upload; "
+                "use --recreate to avoid skipping incompatible shard checkpoints"
+            )
+
+    build_manifest.update(
+        {
+            "index": index,
+            "source_manifest_fingerprint": source_manifest_fingerprint,
+            "workers": workers,
+            "batch_size": batch_size,
+            "max_chunk_mb": max_chunk_mb,
+            "queue_size": queue_size,
+            "finalized": False,
+        }
+    )
+    build_manifest.setdefault("shards", {})
+    return build_manifest
+
+
 def _shorten(text: Any, max_len: int = 1000) -> str | None:
     if text is None:
         return None
@@ -184,6 +232,19 @@ def _iter_actions(
         yield make_index_action(index, row, vectors[row_index])
 
 
+def _iter_actions_for_ids(
+    index: str,
+    payload_df: Any,
+    vectors: np.ndarray,
+    point_ids: set[str],
+) -> Iterable[dict[str, Any]]:
+    for row_index, row in enumerate(payload_df.iter_rows(named=True)):
+        chunk_id = row.get("chunk_id")
+        if chunk_id is None or stable_point_id(str(chunk_id)) not in point_ids:
+            continue
+        yield make_index_action(index, row, vectors[row_index])
+
+
 def upload_shard(
     *,
     es: Any,
@@ -195,6 +256,8 @@ def upload_shard(
     max_chunk_bytes: int,
     queue_size: int,
     parallel_bulk_fn: Callable[..., Iterable[tuple[bool, Any]]] | None = None,
+    max_retries: int = 5,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> UploadResult:
     """Upload one source shard; raise unless every action succeeds."""
     if payload_df.height != len(vectors):
@@ -210,6 +273,8 @@ def upload_shard(
     }.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive")
+    if max_retries < 0:
+        raise ValueError("max_retries cannot be negative")
 
     bulk = parallel_bulk_fn
     if bulk is None:
@@ -223,26 +288,58 @@ def upload_shard(
     uploaded = 0
     failures: list[dict[str, Any]] = []
     started = time.perf_counter()
-    results = bulk(
-        es,
-        _iter_actions(index, payload_df, vectors),
-        thread_count=workers,
-        chunk_size=batch_size,
-        max_chunk_bytes=max_chunk_bytes,
-        queue_size=queue_size,
-        raise_on_error=False,
-        raise_on_exception=False,
-        max_retries=5,
-        initial_backoff=2,
-        max_backoff=60,
-        retry_on_status=RETRY_STATUSES,
-        yield_ok=True,
+    pending_actions: Iterable[dict[str, Any]] = _iter_actions(
+        index,
+        payload_df,
+        vectors,
     )
-    for success, info in results:
-        if success:
-            uploaded += 1
-        elif len(failures) < 10:
-            failures.append(summarize_bulk_error(info))
+    attempt = 0
+    while True:
+        retry_ids: set[str] = set()
+        results = bulk(
+            es,
+            pending_actions,
+            thread_count=workers,
+            chunk_size=batch_size,
+            max_chunk_bytes=max_chunk_bytes,
+            queue_size=queue_size,
+            raise_on_error=False,
+            raise_on_exception=False,
+        )
+        for success, info in results:
+            if success:
+                uploaded += 1
+                continue
+            failure = summarize_bulk_error(info)
+            point_id = failure.get("_id")
+            status = failure.get("status")
+            if (
+                attempt < max_retries
+                and status in RETRY_STATUSES
+                and point_id is not None
+            ):
+                retry_ids.add(str(point_id))
+            elif len(failures) < 10:
+                failures.append(failure)
+
+        if not retry_ids:
+            break
+        delay = min(60, 2 * (2**attempt))
+        attempt += 1
+        logging.warning(
+            "Retrying %s document(s) after %.1fs (attempt %s/%s)",
+            len(retry_ids),
+            delay,
+            attempt,
+            max_retries,
+        )
+        sleep_fn(delay)
+        pending_actions = _iter_actions_for_ids(
+            index,
+            payload_df,
+            vectors,
+            retry_ids,
+        )
 
     elapsed = max(time.perf_counter() - started, 1e-9)
     failed = payload_df.height - uploaded
@@ -279,6 +376,8 @@ def upload_and_checkpoint_shard(
     max_chunk_bytes: int,
     queue_size: int,
     parallel_bulk_fn: Callable[..., Iterable[tuple[bool, Any]]] | None = None,
+    max_retries: int = 5,
+    sleep_fn: Callable[[float], None] = time.sleep,
     write_manifest_fn: Callable[[Path, dict[str, Any]], None] = atomic_write_json,
 ) -> UploadResult:
     """Upload a complete shard before atomically recording its checkpoint."""
@@ -292,6 +391,8 @@ def upload_and_checkpoint_shard(
         max_chunk_bytes=max_chunk_bytes,
         queue_size=queue_size,
         parallel_bulk_fn=parallel_bulk_fn,
+        max_retries=max_retries,
+        sleep_fn=sleep_fn,
     )
     build_manifest.setdefault("shards", {})[shard_key] = {
         "status": "done",
@@ -401,13 +502,26 @@ def main() -> None:
     setup_logging(args.shards_dir / "elasticsearch_build.log")
     build_manifest_path = args.shards_dir / "elasticsearch_manifest.json"
     build_manifest = read_json(build_manifest_path, {"shards": {}})
-    if args.recreate:
-        build_manifest = {"shards": {}}
-    if build_manifest.get("index") not in (None, args.index):
-        raise ValueError(
-            "Existing Elasticsearch manifest belongs to index "
-            f"{build_manifest['index']!r}; use the matching --index or --recreate"
-        )
+    source_manifest_fingerprint = file_fingerprint(source_manifest_path)
+    prepare_build_manifest(
+        build_manifest,
+        index=args.index,
+        source_manifest_fingerprint=source_manifest_fingerprint,
+        recreate=args.recreate,
+        workers=args.workers,
+        batch_size=args.upsert_batch,
+        max_chunk_mb=args.max_chunk_mb,
+        queue_size=args.queue_size,
+    )
+    completed = sorted(
+        (key, item)
+        for key, item in source_manifest["shards"].items()
+        if item.get("status") == "done"
+    )
+    if args.max_shards is not None:
+        completed = completed[: args.max_shards]
+    if not completed:
+        raise ValueError("No completed embedding shards were selected")
 
     es = Elasticsearch(
         cloud_id=cloud_id,
@@ -426,27 +540,6 @@ def main() -> None:
             number_of_shards=args.number_of_shards,
         )
 
-        completed = sorted(
-            (key, item)
-            for key, item in source_manifest["shards"].items()
-            if item.get("status") == "done"
-        )
-        if args.max_shards is not None:
-            completed = completed[: args.max_shards]
-        if not completed:
-            raise ValueError("No completed embedding shards were selected")
-
-        build_manifest.update(
-            {
-                "index": args.index,
-                "source_manifest_fingerprint": file_fingerprint(source_manifest_path),
-                "workers": args.workers,
-                "batch_size": args.upsert_batch,
-                "max_chunk_mb": args.max_chunk_mb,
-                "queue_size": args.queue_size,
-            }
-        )
-        build_manifest.setdefault("shards", {})
         atomic_write_json(build_manifest_path, build_manifest)
 
         logging.info(

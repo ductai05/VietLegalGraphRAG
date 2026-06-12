@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import types
 import unittest
@@ -55,6 +56,23 @@ class FakeElasticsearchClient:
 
 
 class ElasticsearchRetrievalTests(unittest.TestCase):
+    def test_cli_help_does_not_require_optional_storage_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        scripts = [
+            root / "pipeline" / "04_embedding" / "dense_retrieval.py",
+            root / "pipeline" / "07_evaluation" / "evaluate_dense.py",
+        ]
+        for script in scripts:
+            with self.subTest(script=script.name):
+                result = subprocess.run(
+                    [sys.executable, str(script), "--help"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("--elastic-cloud-id", result.stdout)
+
     def test_search_builds_knn_prefilter_and_normalizes_cosine_score(self):
         client = FakeElasticsearchClient()
         retriever = DenseRetriever.__new__(DenseRetriever)

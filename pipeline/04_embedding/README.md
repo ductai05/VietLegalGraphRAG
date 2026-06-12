@@ -344,6 +344,114 @@ python build_qdrant.py \
 
 Nếu server yêu cầu key, thêm `--api-key "$QDRANT_API_KEY"`.
 
+## Elasticsearch on Elastic Cloud
+
+Install the official Python client through the project requirements:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+The API key previously pasted into a terminal or chat must be revoked in Elastic
+Cloud and replaced. Keep the replacement credentials out of source files, logs,
+and manifests. Environment variables avoid putting the key in process arguments,
+but a literal assignment can still remain in PowerShell history. Prefer a secret
+manager or a non-persisted shell session:
+
+```powershell
+$env:ELASTIC_CLOUD_ID="your-deployment-cloud-id"
+$env:ELASTIC_API_KEY="your-new-api-key"
+```
+
+### Trial-safe upload
+
+Benchmark one source shard before uploading the whole corpus:
+
+```powershell
+python pipeline/04_embedding/build_elasticsearch.py `
+  --shards-dir "data/embedding/shards" `
+  --index "legal_chunks_dense_v1" `
+  --recreate `
+  --max-shards 1 `
+  --workers 2 `
+  --upsert-batch 500 `
+  --max-chunk-mb 20 `
+  --queue-size 2
+```
+
+If the benchmark is stable, resume the remaining source shards by removing
+`--recreate` and `--max-shards`:
+
+```powershell
+python pipeline/04_embedding/build_elasticsearch.py `
+  --shards-dir "data/embedding/shards" `
+  --index "legal_chunks_dense_v1" `
+  --workers 2 `
+  --upsert-batch 500 `
+  --max-chunk-mb 20 `
+  --queue-size 2
+```
+
+Source shard files are processed sequentially so a completed shard can be resumed
+deterministically. Within each source shard, `--workers` sends multiple bulk HTTP
+requests concurrently. Do not run multiple uploader processes against the same
+manifest.
+
+For a trial deployment, start with 2 workers and 500 documents per request. Watch
+`elasticsearch_build.log` and Elastic Cloud monitoring for HTTP 429 responses,
+CPU saturation, JVM memory pressure, and falling rows per second. Change only one
+setting per benchmark. If the cluster remains stable, try 3 workers or a batch of
+750. If 429 responses or long retries appear, reduce workers first, then reduce
+the batch size. More client threads can make a small trial deployment slower.
+
+Capacity remains a separate constraint from upload speed. About 5.7 million
+1024-dimensional float32 vectors require roughly 23.3 GB for raw vector values
+before metadata and ANN index overhead. A small trial deployment may not fit the
+full corpus. After the one-shard benchmark, compare projected index size, JVM
+memory pressure, and remaining disk capacity before starting the complete upload.
+
+During ingest the script sets `refresh_interval=-1` and zero replicas. It restores
+the configured final settings only after all selected source shards are complete.
+Use `--recreate` only when intentionally deleting and rebuilding the target index.
+
+The resumable checkpoint is written to
+`data/embedding/shards/elasticsearch_manifest.json`. Credentials are never written
+to this file.
+
+### Elasticsearch retrieval
+
+```powershell
+python pipeline/04_embedding/dense_retrieval.py `
+  --elastic-cloud-id $env:ELASTIC_CLOUD_ID `
+  --elastic-index "legal_chunks_dense_v1" `
+  --chunks "data/legal_chunking_dataset/chunks.parquet" `
+  --query "Dieu kien cap giay phep xay dung la gi?" `
+  --top-k 5 `
+  --elastic-num-candidates 100
+```
+
+`ELASTIC_API_KEY` is read from the environment. Exact, list, and range filters use
+Elasticsearch kNN pre-filtering. Returned scores are converted from Elasticsearch's
+positive `_score` representation back to raw cosine similarity so they remain
+comparable with the existing dense retrieval contract.
+
+### Elasticsearch evaluation
+
+```powershell
+python pipeline/07_evaluation/evaluate_dense.py `
+  --gold "output/eval_questions_gold.jsonl" `
+  --elastic-cloud-id $env:ELASTIC_CLOUD_ID `
+  --elastic-index "legal_chunks_dense_v1" `
+  --elastic-num-candidates 2000 `
+  --chunks "data/legal_chunking_dataset/chunks.parquet" `
+  --candidate-k 100 `
+  --top-k 10 `
+  --output "output/elasticsearch_dense_eval.json"
+```
+
+Increase `--elastic-num-candidates` only when evaluation shows a useful recall gain;
+larger values increase query CPU and latency.
+
 ## 7. Smoke test retrieval
 
 Local:

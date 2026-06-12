@@ -8,9 +8,20 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import polars as pl
-import pyarrow as pa
-import pyarrow.ipc as ipc
+try:
+    import polars as pl
+except ModuleNotFoundError as exc:
+    if exc.name != "polars":
+        raise
+    pl = None
+try:
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pyarrow", "pyarrow.ipc"}:
+        raise
+    pa = None
+    ipc = None
 try:
     from elasticsearch import Elasticsearch
 except ModuleNotFoundError as exc:
@@ -189,6 +200,11 @@ class DenseRetriever:
         self.query_max_length = query_max_length
 
     def _load_faiss(self, faiss_dir: Path, nprobe: int) -> None:
+        if pa is None or ipc is None:
+            raise ModuleNotFoundError(
+                "FAISS payload retrieval requires pyarrow. Install project "
+                "requirements with `python -m pip install -r requirements.txt`."
+            )
         faiss = load_faiss_module()
 
         manifest = read_json(faiss_dir / "manifest.json")
@@ -222,6 +238,11 @@ class DenseRetriever:
     def _lookup_chunks(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not self.chunks_path or not chunk_ids:
             return {}
+        if pl is None:
+            raise ModuleNotFoundError(
+                "Chunk expansion requires polars. Install project requirements "
+                "with `python -m pip install -r requirements.txt`."
+            )
         rows = (
             pl.scan_parquet(self.chunks_path, glob=False)
             .filter(pl.col("chunk_id").is_in(chunk_ids))

@@ -50,6 +50,7 @@ class ElasticsearchEvaluationTests(unittest.TestCase):
             with (
                 patch("evaluate_dense.DenseRetriever", return_value=retriever) as factory,
                 patch("evaluate_dense.setup_logging"),
+                patch("builtins.print"),
                 patch.object(sys, "argv", argv),
             ):
                 main()

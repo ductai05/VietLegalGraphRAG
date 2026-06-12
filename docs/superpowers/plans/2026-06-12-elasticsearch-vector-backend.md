@@ -4,7 +4,7 @@
 
 **Goal:** Add Elasticsearch as a complete dense retrieval backend and make Elastic Cloud shard ingestion faster with bounded parallel bulk requests that remain safe for a trial cluster.
 
-**Architecture:** Put Elasticsearch-specific data translation in a lightweight `elasticsearch_common.py` module so mapping, credentials, filters, actions, and response normalization can be unit tested without loading the embedding model. Keep source shards sequential for deterministic resume, but use `parallel_bulk` inside each shard with a bounded queue and retries. Extend the existing `DenseRetriever` and evaluation CLI rather than creating a second retrieval contract.
+**Architecture:** Put Elasticsearch-specific data translation in a lightweight `elasticsearch_common.py` module so mapping, credentials, filters, actions, and response normalization can be unit tested without loading the embedding model. Keep source shards sequential for deterministic resume, use `parallel_bulk` inside each shard with a bounded queue, and retry only failed retryable documents with bounded backoff. Extend the existing `DenseRetriever` and evaluation CLI rather than creating a second retrieval contract.
 
 **Tech Stack:** Python 3.14, NumPy, Polars, Elasticsearch Python client, standard-library `unittest`, existing transformer encoder.
 
@@ -168,7 +168,8 @@ Refactor `build_elasticsearch.py` to:
 - resolve credentials from arguments or environment;
 - add `--workers` default `2`, `--upsert-batch` default `500`, `--max-chunk-mb` default `20`, `--queue-size` default `2`, `--number-of-shards` default `1`, `--final-replicas` default `0`, and `--final-refresh-interval` default `5s`;
 - stream actions from shard rows instead of accumulating separate 100-item lists;
-- consume `helpers.parallel_bulk(...)` with `thread_count`, `chunk_size`, `max_chunk_bytes`, `queue_size`, `max_retries=5`, `initial_backoff=2`, `max_backoff=60`, and retry statuses `(429, 502, 503, 504)`;
+- consume `helpers.parallel_bulk(...)` with `thread_count`, `chunk_size`, `max_chunk_bytes`, and `queue_size`;
+- collect failed document IDs for statuses `(429, 502, 503, 504)` and resubmit only those documents with up to five bounded exponential-backoff attempts;
 - summarize failures without vector data;
 - checkpoint only after zero failed actions;
 - log elapsed seconds and rows per second per shard;
@@ -331,7 +332,7 @@ Run:
 
 ```powershell
 git diff --check
-rg -n "MnlFc3|ml-lawbot:|ELASTIC_API_KEY=.*[A-Za-z0-9+/]{20}" . -g '!output/**' -g '!data/**'
+gitleaks detect --no-banner --redact
 git status --short
 ```
 

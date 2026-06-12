@@ -7,7 +7,12 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Sequence
 
-import polars as pl
+try:
+    import polars as pl
+except ModuleNotFoundError as exc:
+    if exc.name != "polars":
+        raise
+    pl = None
 
 DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 PASSAGE_FIELDS = (
@@ -53,6 +58,11 @@ class PassageLoader:
         self.chunks_path = chunks_path
         self.columns: list[str] = []
         if chunks_path is not None:
+            if pl is None:
+                raise ModuleNotFoundError(
+                    "Parquet passage loading requires polars. Install project "
+                    "requirements with `python -m pip install -r requirements.txt`."
+                )
             schema = pl.scan_parquet(chunks_path, glob=False).collect_schema()
             self.columns = ["chunk_id", *[field for field in PASSAGE_FIELDS if field in schema]]
 
