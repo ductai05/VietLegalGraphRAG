@@ -53,7 +53,7 @@ class PassageLoader:
         self.chunks_path = chunks_path
         self.columns: list[str] = []
         if chunks_path is not None:
-            schema = pl.scan_parquet(chunks_path).collect_schema()
+            schema = pl.scan_parquet(chunks_path, glob=False).collect_schema()
             self.columns = ["chunk_id", *[field for field in PASSAGE_FIELDS if field in schema]]
 
     def build_passages(self, hits: Sequence[dict[str, Any]]) -> list[str]:
@@ -61,7 +61,7 @@ class PassageLoader:
         rows: dict[str, dict[str, Any]] = {}
         if self.chunks_path is not None and chunk_ids:
             frame = (
-                pl.scan_parquet(self.chunks_path)
+                pl.scan_parquet(self.chunks_path, glob=False)
                 .filter(pl.col("chunk_id").is_in(chunk_ids))
                 .select(self.columns)
                 .collect()

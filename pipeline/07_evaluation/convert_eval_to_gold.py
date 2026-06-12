@@ -3,9 +3,9 @@ import polars as pl
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-EVAL_FILE = BASE_DIR / "pipeline" / "07_evaluation" / "eval_questions.json"
-GOLD_FILE = BASE_DIR / "pipeline" / "07_evaluation" / "eval_questions_gold.jsonl"
-CHUNKS_FILE = BASE_DIR / "data" / "legal_chunking_dataset" / "chunks.parquet"
+EVAL_FILE = BASE_DIR / "output" / "eval_questions.json"
+GOLD_FILE = BASE_DIR / "output" / "eval_questions_gold.jsonl"
+CHUNKS_FILE = BASE_DIR / "data" / "preprocessed" / "chunking" / "chunks.parquet"
 
 def main():
     if not EVAL_FILE.exists():
@@ -27,7 +27,7 @@ def main():
         all_orig_ids.update(q["evidence"]["chunk_ids"])
 
     print("Resolving text-equivalent chunk IDs from chunks.parquet...")
-    lazy_chunks = pl.scan_parquet(CHUNKS_FILE)
+    lazy_chunks = pl.scan_parquet(CHUNKS_FILE, glob=False)
     
     # Get texts of evidence chunks
     evidence_chunks = (

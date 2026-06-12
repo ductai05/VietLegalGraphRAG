@@ -103,7 +103,7 @@ def main():
             
         payload_path = args.shards_dir / shard_info["payload"]
         vector_path = args.shards_dir / shard_info["vectors"]
-        payload_df = pl.read_parquet(payload_path)
+        payload_df = pl.read_parquet(payload_path, glob=False)
         vectors = np.load(vector_path, mmap_mode="r")
 
         rows = payload_df.to_dicts()

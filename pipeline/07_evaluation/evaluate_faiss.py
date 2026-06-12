@@ -5,10 +5,10 @@ import argparse
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DEFAULT_EVAL_FILE = BASE_DIR / "pipeline" / "07_evaluation" / "eval_questions.json"
-DEFAULT_FAISS_DIR = BASE_DIR / "data" / "legal_embedding" / "faiss_huy"
-DEFAULT_CHUNKS_PATH = BASE_DIR / "data" / "legal_chunking_dataset" / "chunks.parquet"
-DEFAULT_OUTPUT_FILE = BASE_DIR / "data" / "legal_embedding" / "dense_faiss_eval_results_huy.json"
+DEFAULT_EVAL_FILE = BASE_DIR / "output" / "eval_questions.json"
+DEFAULT_FAISS_DIR = BASE_DIR / "data" / "embedding" / "faiss"
+DEFAULT_CHUNKS_PATH = BASE_DIR / "data" / "preprocessed" / "chunking" / "chunks.parquet"
+DEFAULT_OUTPUT_FILE = BASE_DIR / "output" / "dense_faiss_eval_results_huy.json"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate FAISS index offline using eval_questions.json")
@@ -59,6 +59,7 @@ def main():
     eval_script = BASE_DIR / "pipeline" / "04_embedding" / "evaluate_dense.py"
     cmd = [
         sys.executable,
+        "-u",
         str(eval_script),
         "--gold", str(gold_file),
         "--faiss-dir", str(args.faiss_dir),

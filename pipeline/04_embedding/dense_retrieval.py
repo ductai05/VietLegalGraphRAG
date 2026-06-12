@@ -178,7 +178,7 @@ class DenseRetriever:
         if not self.chunks_path or not chunk_ids:
             return {}
         rows = (
-            pl.scan_parquet(self.chunks_path)
+            pl.scan_parquet(self.chunks_path, glob=False)
             .filter(pl.col("chunk_id").is_in(chunk_ids))
             .select("chunk_id", "chunk_text", "chunk_type", "parent_id", "raw_table_id")
             .collect()

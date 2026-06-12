@@ -116,7 +116,7 @@ def main() -> None:
             continue
         payload_path = args.shards_dir / shard_info["payload"]
         vector_path = args.shards_dir / shard_info["vectors"]
-        payload_df = pl.read_parquet(payload_path)
+        payload_df = pl.read_parquet(payload_path, glob=False)
         if args.include_text and "chunk_text" not in payload_df.columns:
             raise ValueError(
                 "--include-text requires shards created with --include-text-in-payload"

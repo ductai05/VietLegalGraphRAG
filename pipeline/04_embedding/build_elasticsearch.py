@@ -266,7 +266,7 @@ def main():
         print(f"  payload: {payload_path}")
         print(f"  vectors: {vector_path}")
 
-        payload_df = pl.read_parquet(payload_path)
+        payload_df = pl.read_parquet(payload_path, glob=False)
         vectors = np.load(vector_path, mmap_mode="r")
 
         if payload_df.height != vectors.shape[0]:

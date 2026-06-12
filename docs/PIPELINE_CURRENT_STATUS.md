@@ -11,7 +11,7 @@ The pipeline is runnable end-to-end for dense retrieval evaluation:
 python pipeline/04_embedding/evaluate_dense.py \
   --gold pipeline/07_evaluation/eval_questions_gold.jsonl \
   --url http://129.212.184.109:8333/ \
-  --chunks data/legal_chunking_dataset/chunks.parquet \
+  --chunks data/preprocessed/chunking/chunks.parquet \
   --top-k 10 \
   --output data/legal_embedding/dense_qdrant_eval_results.json
 ```

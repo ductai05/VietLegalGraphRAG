@@ -42,10 +42,10 @@ from google.genai import types
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # project root
-DATA_DIR = BASE_DIR / "data" / "legal_chunking_dataset"
+DATA_DIR = BASE_DIR / "data" / "preprocessed" / "chunking"
 CHUNKS_PATH = DATA_DIR / "chunks.parquet"
 META_PATH = DATA_DIR / "metadata.parquet"
-OUTPUT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_FILE = OUTPUT_DIR / "eval_questions.json"
 CHECKPOINT_FILE = OUTPUT_DIR / "_checkpoint.json"
 SAMPLED_DATA_FILE = OUTPUT_DIR / "_sampled_data.json"
@@ -96,7 +96,7 @@ def load_metadata() -> pl.DataFrame:
     """Load metadata parquet using Polars."""
     logger.info("Loading metadata from %s", META_PATH)
     needed = ["id", "title", "legal_type", "effect_status", "issuing_authority"]
-    df = pl.read_parquet(META_PATH, columns=needed)
+    df = pl.scan_parquet(META_PATH, glob=False).select(needed).collect()
     logger.info("Metadata loaded: %d documents", df.height)
     return df
 
@@ -195,7 +195,7 @@ def collect_chunks_for_docs(
                 len(target_ids))
 
     # Use Polars lazy frame for fast columnar scanning
-    lf = pl.scan_parquet(CHUNKS_PATH).select(needed_cols)
+    lf = pl.scan_parquet(CHUNKS_PATH, glob=False).select(needed_cols)
     
     # Apply filters
     filtered_df = lf.filter(

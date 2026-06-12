@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def require_columns(path: Path, required: set[str]) -> list[str]:
-    columns = pl.scan_parquet(path).collect_schema().names()
+    columns = pl.scan_parquet(path, glob=False).collect_schema().names()
     missing = required.difference(columns)
     if missing:
         raise ValueError(f"{path} is missing required columns: {sorted(missing)}")
@@ -147,7 +147,7 @@ def main() -> None:
         "table_columns",
     ]
     chunks = (
-        pl.scan_parquet(args.chunks)
+        pl.scan_parquet(args.chunks, glob=False)
         .filter(pl.col("embed").fill_null(False))
         .filter(pl.col("chunk_type") != "raw_table")
         .select(
@@ -172,7 +172,7 @@ def main() -> None:
             ~pl.col("quality_flags_json").fill_null("").str.contains("hard_char_split")
         ).drop("quality_flags_json")
 
-    metadata = pl.scan_parquet(args.metadata).select(
+    metadata = pl.scan_parquet(args.metadata, glob=False).select(
         *[
             (pl.col(name).cast(pl.Int64, strict=False) if name == "id" else string_col(name, metadata_columns))
             for name in METADATA_COLUMNS
@@ -196,7 +196,7 @@ def main() -> None:
     payload = payload.drop("_metadata_exists")
 
     raw_ids = (
-        pl.scan_parquet(args.chunks)
+        pl.scan_parquet(args.chunks, glob=False)
         .filter(pl.col("chunk_type") == "raw_table")
         .select(pl.col("chunk_id").alias("_raw_table_id"))
         .with_columns(pl.lit(True).alias("_raw_exists"))
@@ -222,7 +222,7 @@ def main() -> None:
     payload.sink_parquet(output_path, compression="zstd")
 
     stats = (
-        pl.scan_parquet(output_path)
+        pl.scan_parquet(output_path, glob=False)
         .select(
             pl.len().alias("rows"),
             pl.col("chunk_id").n_unique().alias("unique_chunk_ids"),
@@ -246,7 +246,7 @@ def main() -> None:
     if stats["raw_tables"] or stats["null_contexts"] or stats["invalid_table_summary_rules"]:
         raise ValueError(f"Embedding payload invariant failed: {stats}")
     (
-        pl.scan_parquet(output_path)
+        pl.scan_parquet(output_path, glob=False)
         .filter(pl.col("expansion_status") == "missing_raw_table")
         .select("chunk_id", "doc_id", "chunk_type", "raw_table_id", "table_id", "summary_of")
         .sink_parquet(args.output_dir / "table_repair_candidates.parquet", compression="zstd")
