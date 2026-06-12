@@ -40,8 +40,8 @@ def resolve_credentials(
     return resolved_cloud_id, resolved_api_key
 
 
-def _keyword_mapping() -> dict[str, str]:
-    return {"type": "keyword"}
+def _keyword_mapping() -> dict[str, Any]:
+    return {"type": "keyword", "ignore_above": 8192}
 
 
 def _text_mapping() -> dict[str, Any]:

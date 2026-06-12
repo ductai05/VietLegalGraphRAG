@@ -169,6 +169,7 @@ class DenseRetriever:
             self.elasticsearch_client = Elasticsearch(
                 cloud_id=resolved_cloud_id,
                 api_key=resolved_api_key,
+                request_timeout=60,
             )
             if not self.elasticsearch_client.indices.exists(index=elastic_index):
                 self.elasticsearch_client.close()

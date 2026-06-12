@@ -442,18 +442,42 @@ def ensure_index(
         logging.info("Deleted existing index %s", index)
         exists = False
     if not exists:
-        es.indices.create(
-            index=index,
-            body=build_index_definition(number_of_shards, number_of_replicas=0),
-        )
-        logging.info("Created index %s", index)
+        body = build_index_definition(number_of_shards, number_of_replicas=0)
+        try:
+            es.indices.create(
+                index=index,
+                body=body,
+            )
+            logging.info("Created index %s", index)
+        except Exception as exc:
+            if "serverless" in str(exc).lower():
+                logging.info("Serverless mode detected. Retrying index creation without number_of_shards/number_of_replicas...")
+                body["settings"]["index"].pop("number_of_shards", None)
+                body["settings"]["index"].pop("number_of_replicas", None)
+                es.indices.create(
+                    index=index,
+                    body=body,
+                )
+                logging.info("Created serverless index %s", index)
+            else:
+                raise
         return
 
     _validate_existing_index(es, index)
-    es.indices.put_settings(
-        index=index,
-        settings={"index": {"refresh_interval": "-1", "number_of_replicas": 0}},
-    )
+    try:
+        es.indices.put_settings(
+            index=index,
+            settings={"index": {"refresh_interval": "-1", "number_of_replicas": 0}},
+        )
+    except Exception as exc:
+        if "serverless" in str(exc).lower():
+            logging.info("Serverless mode detected. Disabling refresh_interval without replicas...")
+            es.indices.put_settings(
+                index=index,
+                settings={"index": {"refresh_interval": "-1"}},
+            )
+        else:
+            raise
     logging.info("Using existing compatible index %s", index)
 
 
@@ -464,15 +488,29 @@ def finalize_index(
     refresh_interval: str,
     replicas: int,
 ) -> None:
-    es.indices.put_settings(
-        index=index,
-        settings={
-            "index": {
-                "refresh_interval": refresh_interval,
-                "number_of_replicas": replicas,
-            }
-        },
-    )
+    try:
+        es.indices.put_settings(
+            index=index,
+            settings={
+                "index": {
+                    "refresh_interval": refresh_interval,
+                    "number_of_replicas": replicas,
+                }
+            },
+        )
+    except Exception as exc:
+        if "serverless" in str(exc).lower():
+            logging.info("Serverless mode detected. Restoring refresh_interval without replicas...")
+            es.indices.put_settings(
+                index=index,
+                settings={
+                    "index": {
+                        "refresh_interval": refresh_interval,
+                    }
+                },
+            )
+        else:
+            raise
     es.indices.refresh(index=index)
 
 
