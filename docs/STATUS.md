@@ -7,17 +7,16 @@
 
 ## ✅ Đã hoàn thành
 
-### 1. **KAGGLE_MEMBER.py** (5 members)
+### 1. **Parallel Member Runs**
 
 - ✔️ Encode distributed documents từ `chunks.parquet` sử dụng model `darklethelong/vnlegal-lal`
 - ✔️ Output: 5 member shards directories (`shards_member_1/` → `shards_member_5/`)
 - ✔️ Mỗi shard chứa: vectors (`.npy`), payload metadata (`.parquet`), manifest
 
-### 2. **KAGGLE_MERGE.py**
+### 2. **manage_shards.py** (Unified Shard Management)
 
-- ✔️ Verify + merge 5 member shards
-- ✔️ Repair missing chunks (nếu có)
-- ✔️ Build compact FAISS index (`faiss_members/`)
+- ✔️ Verify, merge, and repair member shards using `manage_shards.py`
+- ✔️ Build compact merged FAISS index (`faiss_members/`)
 - ✔️ Output: Deduplicated canonical shards + FAISS artifact
 
 **Artifacts hiện có:**
@@ -41,7 +40,13 @@ _Chưa khởi động_
 **Công việc:**
 
 1. Setup Qdrant server (`http://localhost:6333`) hoặc cloud Qdrant
-2. Chạy `repair_member_shards.py` → rebuild canonical shards (deduplicated, complete)
+2. Chạy `manage_shards.py repair-member-shards` → rebuild canonical shards (deduplicated, complete)
+   ```bash
+   python manage_shards.py repair-member-shards \
+     --search-root /data/legal_embedding/member_inputs \
+     --output-dir /data/legal_embedding/canonical_shards \
+     --work-dir /data/legal_embedding/repair_work
+   ```
 3. Chạy `build_qdrant.py` → upsert toàn bộ canonical shards vào Qdrant collection
    ```bash
    python build_qdrant.py \
@@ -66,7 +71,7 @@ _Phụ thuộc vào Step 3_
 Sau khi Qdrant server chạy:
 
 1. **Smoke test retrieval:** `dense_retrieval.py` → verify rank/score có ý nghĩa
-2. **Evaluation:** `evaluate_dense.py` → tính **Recall@10, MRR@10, nDCG@10**
+2. **Evaluation:** `pipeline/07_evaluation/evaluate_dense.py` → tính **Recall@10, MRR@10, nDCG@10**
    - So sánh với gold standard từ JSONL eval set
    - Expected NDCG@10 ≈ **0.8488** (model SOTA)
 

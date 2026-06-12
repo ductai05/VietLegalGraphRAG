@@ -8,7 +8,7 @@
 The pipeline is runnable end-to-end for dense retrieval evaluation:
 
 ```bash
-python pipeline/04_embedding/evaluate_dense.py \
+python pipeline/07_evaluation/evaluate_dense.py \
   --gold pipeline/07_evaluation/eval_questions_gold.jsonl \
   --url http://129.212.184.109:8333/ \
   --chunks data/preprocessed/chunking/chunks.parquet \
@@ -45,7 +45,7 @@ Observed result on the current setup:
   - Uses the query prefix defined in `embedding_common.py`
   - Supports Qdrant and compact FAISS member indexes
   - Supports metadata filters and optional context expansion
-- `evaluate_dense.py`
+- `pipeline/07_evaluation/evaluate_dense.py`
   - Computes `Recall@K`, `MRR@K`, `nDCG@K`
   - Matches gold by `chunk_id` or `doc_id`
   - Supports optional reranking over a larger dense candidate pool
@@ -74,7 +74,7 @@ Typical artifacts currently produced by the pipeline:
 - `prepare_manifest.json`
 - shard directories from `embed_shards.py`
 - `qdrant_manifest.json`
-- evaluation output JSON from `evaluate_dense.py`
+- evaluation output JSON from `pipeline/07_evaluation/evaluate_dense.py`
 
 The retrieval code can also fall back to FAISS member shards when Qdrant is not used.
 
@@ -103,6 +103,6 @@ The retrieval code can also fall back to FAISS member shards when Qdrant is not 
 - `embed_shards.py`
 - `build_qdrant.py`
 - `dense_retrieval.py`
-- `evaluate_dense.py`
+- `pipeline/07_evaluation/evaluate_dense.py`
 - `embedding_common.py`
 

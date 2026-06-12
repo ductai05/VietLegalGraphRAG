@@ -56,7 +56,7 @@ def main():
     gold_file = convert_to_gold_jsonl(args.eval_questions)
 
     # 3. Run evaluation script
-    eval_script = BASE_DIR / "pipeline" / "04_embedding" / "evaluate_dense.py"
+    eval_script = Path(__file__).resolve().parent / "evaluate_dense.py"
     cmd = [
         sys.executable,
         "-u",

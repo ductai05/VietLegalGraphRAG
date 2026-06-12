@@ -1,7 +1,7 @@
 """Evaluate dense retrieval, optionally reranking a larger candidate pool.
 
 Example:
-python pipeline/04_embedding/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --url http://129.212.184.109:8333/ --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output data/legal_embedding/dense_rerank_eval_results.json
+python pipeline/07_evaluation/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --url http://129.212.184.109:8333/ --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output data/legal_embedding/dense_rerank_eval_results.json
 """
 
 from __future__ import annotations
@@ -10,8 +10,12 @@ import argparse
 import json
 import logging
 import math
+import sys
 from pathlib import Path
 from typing import Any
+
+# Add pipeline/04_embedding to search path for dense_retrieval, embedding_common, rerank imports
+sys.path.append(str(Path(__file__).resolve().parent.parent / "04_embedding"))
 
 from dense_retrieval import DenseRetriever
 from embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging

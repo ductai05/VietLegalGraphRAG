@@ -17,15 +17,9 @@ Pipeline này hiện thực kế hoạch trong `PLAN_EMBEDDING.md` cho model
 | `embed_shards.py` | Encode document theo shard, checkpoint bằng `manifest.json` |
 | `build_qdrant.py` | Tạo collection/index và resume upsert shard |
 | `dense_retrieval.py` | Query prefix, filter, citation và expansion từ `chunks.parquet` |
-| `evaluate_dense.py` | Tính Recall@K, MRR@K, nDCG@K từ gold JSONL |
-| `build_faiss.py` | Build compact deduplicated FAISS indexes từ member shards |
-| `KAGGLE_MEMBER.py` | Launcher encode phân tán cho từng thành viên |
-| `KAGGLE_MERGE.py` | Launcher repair missing rows và build FAISS trên Kaggle |
-| `member_shards_utils.py` | Discover, verify và merge member shards |
-| `repair_missing_shards.py` | Encode canonical chunk còn thiếu trước khi build FAISS |
-| `repair_member_shards.py` | Tạo canonical deduplicated shards để build Qdrant |
-| `merge_member_shards.py` / `verify_member_shards.py` | CLI merge/verify strict member outputs |
+| `manage_shards.py` | CLI quản lý shard (verify, merge shards/faiss, repair) |
 | `embedding_common.py` | Hằng số và utility dùng chung |
+| `pipeline/07_evaluation/evaluate_dense.py` | Tính Recall@K, MRR@K, nDCG@K từ gold JSONL |
 
 ## 1. Chuẩn bị Kaggle
 
@@ -399,7 +393,7 @@ Tạo file UTF-8 JSONL, mỗi dòng:
 Chạy:
 
 ```bash
-!python evaluate_dense.py \
+!python pipeline/07_evaluation/evaluate_dense.py \
   --gold /kaggle/input/<eval-dataset>/dense_gold.jsonl \
   --storage-dir "$WORK/qdrant/qdrant_storage" \
   --chunks "$CHUNKS" \
@@ -416,7 +410,7 @@ metadata-aware `(query, passage_text)` pairs. If model initialization or scoring
 fails, evaluation logs the exception and falls back to dense order.
 
 ```bash
-python pipeline/04_embedding/evaluate_dense.py \
+python pipeline/07_evaluation/evaluate_dense.py \
   --gold pipeline/07_evaluation/eval_questions_gold.jsonl \
   --url http://129.212.184.109:8333/ \
   --chunks data/legal_chunking_dataset/chunks.parquet \

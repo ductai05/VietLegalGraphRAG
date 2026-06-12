@@ -2,14 +2,14 @@
 
 ## Current status
 
-- All five members finished `KAGGLE_MEMBER.py`.
-- The embedding owner is running `KAGGLE_MERGE.py` on Kaggle.
+- All five members finished running their shard encoding.
+- The embedding owner runs `manage_shards.py` CLI commands (such as `verify`, `merge-shards`, `merge-faiss`, and `repair-member-shards`) on Kaggle or a local environment.
 - Model/config are frozen: `darklethelong/vnlegal-lal`, 1024 dimensions,
   cosine similarity, normalized vectors, document `max_length=1024`.
 - Query encoding must use the prefix already implemented in
   `dense_retrieval.py`. Never add that prefix to indexed documents.
 
-`KAGGLE_MERGE.py` does not copy the roughly 30 GB of member vectors. It verifies
+`manage_shards.py` does not copy the roughly 30 GB of member vectors when compiling FAISS. It verifies
 the five read-only datasets, ignores duplicate chunk IDs, repairs missing
 chunks, and builds compact deduplicated FAISS indexes.
 
@@ -81,7 +81,7 @@ python prepare_embedding_data.py \
   --version v0.1 \
   --chunker-version v0.1
 
-python repair_member_shards.py \
+python manage_shards.py repair-member-shards \
   --search-root /data/legal_embedding/member_inputs \
   --output-dir /data/legal_embedding/canonical_shards \
   --work-dir /data/legal_embedding/repair_work
@@ -140,7 +140,7 @@ Create a UTF-8 JSONL gold set with `query`, optional `group`, relevant chunk or
 document IDs, and optional filters. Evaluate either Qdrant or FAISS:
 
 ```bash
-python evaluate_dense.py \
+python pipeline/07_evaluation/evaluate_dense.py \
   --gold /data/evaluation/dense_gold.jsonl \
   --url http://localhost:6333 \
   --chunks /data/legal_chunking_dataset/chunks.parquet \
