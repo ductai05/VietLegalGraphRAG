@@ -1,0 +1,91 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "analysis": {
+      "analyzer": {
+        "vi_whitespace": {
+          "type": "custom",
+          "tokenizer": "whitespace",
+          "filter": ["lowercase"]
+        }
+      },
+      "normalizer": {
+        "lowercase_norm": {
+          "type": "custom",
+          "filter": ["lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "dynamic": false,
+    "properties": {
+      "chunk_id": { "type": "keyword" },
+      "doc_id": { "type": "keyword" },
+      "source": { "type": "keyword" },
+      "chunk_text": { "type": "text", "analyzer": "standard" },
+      "contextual_text": { "type": "text", "analyzer": "standard" },
+      "chunk_type": { "type": "keyword" },
+      "section_path": { "type": "text", "analyzer": "standard" },
+      "procedure_name": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 512 }
+        }
+      },
+      "embed": { "type": "boolean" },
+      "keyword_index": { "type": "boolean" },
+      "parent_id": { "type": "keyword" },
+      "prev_chunk_id": { "type": "keyword" },
+      "next_chunk_id": { "type": "keyword" },
+      "table_id": { "type": "keyword" },
+      "raw_table_id": { "type": "keyword" },
+      "summary_of": { "type": "keyword" },
+      "answer_source": { "type": "keyword" },
+      "do_not_answer_from_summary": { "type": "boolean" },
+      "token_estimate": { "type": "integer" },
+      "char_count": { "type": "integer" },
+      "quality_flags": { "type": "keyword" },
+      "table_columns": { "type": "keyword" },
+      "document_number": { "type": "keyword" },
+      "document_number_norm": { "type": "keyword", "normalizer": "lowercase_norm" },
+      "title": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 1024 }
+        }
+      },
+      "legal_type": { "type": "keyword" },
+      "legal_sectors": { "type": "keyword" },
+      "issuing_authority": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 512 }
+        }
+      },
+      "issuance_date": { "type": "date", "ignore_malformed": true },
+      "effect_date": { "type": "date", "ignore_malformed": true },
+      "effectless_date": { "type": "date", "ignore_malformed": true },
+      "effect_status": { "type": "keyword" },
+      "linh_vuc": { "type": "keyword" },
+      "nganh": { "type": "keyword" },
+      "pham_vi": { "type": "keyword" },
+      "expansion_status": { "type": "keyword" },
+      "chunk_text_vi": { "type": "text", "analyzer": "vi_whitespace" },
+      "contextual_text_vi": { "type": "text", "analyzer": "vi_whitespace" },
+      "title_vi": { "type": "text", "analyzer": "vi_whitespace" },
+      "section_path_vi": { "type": "text", "analyzer": "vi_whitespace" },
+      "procedure_name_vi": { "type": "text", "analyzer": "vi_whitespace" },
+      "issuing_authority_vi": { "type": "text", "analyzer": "vi_whitespace" },
+      "chunk_text_folded": { "type": "text", "analyzer": "vi_whitespace" },
+      "title_folded": { "type": "text", "analyzer": "vi_whitespace" },
+      "section_path_folded": { "type": "text", "analyzer": "vi_whitespace" },
+      "procedure_name_folded": { "type": "text", "analyzer": "vi_whitespace" },
+      "issuing_authority_folded": { "type": "text", "analyzer": "vi_whitespace" }
+    }
+  }
+}
