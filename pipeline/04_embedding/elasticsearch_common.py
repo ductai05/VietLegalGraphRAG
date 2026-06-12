@@ -185,13 +185,18 @@ def build_elasticsearch_filter(
 
 def normalize_search_hits(
     hits: list[dict[str, Any]],
+    *,
+    cosine_score: bool = False,
 ) -> list[tuple[float, dict[str, Any]]]:
     """Normalize Elasticsearch hits to the retriever's score/payload contract."""
     normalized: list[tuple[float, dict[str, Any]]] = []
     for hit in hits:
         payload = dict(hit.get("_source") or {})
         payload.pop("vector", None)
-        normalized.append((float(hit.get("_score") or 0.0), payload))
+        score = float(hit.get("_score") or 0.0)
+        if cosine_score:
+            score = 2.0 * score - 1.0
+        normalized.append((score, payload))
     return normalized
 
 

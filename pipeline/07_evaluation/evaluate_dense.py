@@ -29,7 +29,11 @@ def parse_args() -> argparse.Namespace:
     target.add_argument("--storage-dir", type=Path)
     target.add_argument("--url")
     target.add_argument("--faiss-dir", type=Path)
+    target.add_argument("--elastic-cloud-id")
     parser.add_argument("--api-key", default=None)
+    parser.add_argument("--elastic-api-key", default=None)
+    parser.add_argument("--elastic-index", default=COLLECTION_NAME)
+    parser.add_argument("--elastic-num-candidates", type=int, default=None)
     parser.add_argument("--chunks", type=Path, default=None)
     parser.add_argument("--collection", default=COLLECTION_NAME)
     parser.add_argument("--model", default=MODEL_NAME)
@@ -162,6 +166,10 @@ def main() -> None:
         cache_dir=args.cache_dir,
         faiss_nprobe=args.faiss_nprobe,
         faiss_oversample=args.faiss_oversample,
+        elastic_cloud_id=args.elastic_cloud_id,
+        elastic_api_key=args.elastic_api_key,
+        elastic_index=args.elastic_index,
+        elastic_num_candidates=args.elastic_num_candidates,
     )
     reranker: BaseReranker | None = None
     passage_loader: PassageLoader | None = None
@@ -169,7 +177,7 @@ def main() -> None:
         if args.chunks is None:
             logging.warning(
                 "--chunks was not provided; reranking passages will rely only on "
-                "Qdrant/FAISS payload fields and may have empty chunk text"
+                "Elasticsearch/Qdrant/FAISS payload fields and may have empty chunk text"
             )
         try:
             passage_loader = PassageLoader(args.chunks)
