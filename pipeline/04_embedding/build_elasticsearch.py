@@ -12,7 +12,7 @@ from elasticsearch import Elasticsearch, helpers
 from elasticsearch.helpers import BulkIndexError
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from embedding_common import read_json, stable_point_id  # noqa: E402
+from embedding_common import atomic_write_json, read_json, stable_point_id  # noqa: E402
 
 
 VECTOR_DIMS = 1024
@@ -229,6 +229,9 @@ def main():
     if not source_manifest:
         raise FileNotFoundError(f"Missing or empty manifest: {source_manifest_path}")
 
+    build_manifest_path = args.shards_dir / "elasticsearch_manifest.json"
+    build_manifest = read_json(build_manifest_path, {"shards": {}})
+
     es = Elasticsearch(
         cloud_id=args.cloud_id,
         api_key=args.api_key,
@@ -241,6 +244,8 @@ def main():
     print(f"Connected to Elasticsearch cluster: {info.get('cluster_name')}")
 
     ensure_index(es, args.index, args.recreate)
+    if args.recreate:
+        build_manifest = {"shards": {}}
 
     completed = sorted(
         [
@@ -259,6 +264,14 @@ def main():
     total_skipped = 0
 
     for shard_key, shard_info in completed:
+        previous = build_manifest["shards"].get(shard_key, {})
+        if (
+            previous.get("status") == "done"
+            and previous.get("rows") == shard_info["rows"]
+        ):
+            print(f"Skipping upserted shard {shard_key}")
+            continue
+
         payload_path = args.shards_dir / shard_info["payload"]
         vector_path = args.shards_dir / shard_info["vectors"]
 
@@ -305,6 +318,12 @@ def main():
             uploaded = run_bulk(es, actions)
             shard_uploaded += uploaded
             total_uploaded += uploaded
+
+        build_manifest["shards"][shard_key] = {
+            "status": "done",
+            "rows": payload_df.height,
+        }
+        atomic_write_json(build_manifest_path, build_manifest)
 
         print(
             f"  Uploaded shard {shard_key}: "

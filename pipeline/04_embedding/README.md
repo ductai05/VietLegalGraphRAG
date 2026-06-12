@@ -18,7 +18,7 @@ Pipeline này hiện thực kế hoạch trong `PLAN_EMBEDDING.md` cho model
 | `build_qdrant.py` | Tạo collection/index và resume upsert shard |
 | `dense_retrieval.py` | Query prefix, filter, citation và expansion từ `chunks.parquet` |
 | `evaluate_dense.py` | Tính Recall@K, MRR@K, nDCG@K từ gold JSONL |
-| `build_faiss_members.py` | Build compact deduplicated FAISS indexes từ member shards |
+| `build_faiss.py` | Build compact deduplicated FAISS indexes từ member shards |
 | `KAGGLE_MEMBER.py` | Launcher encode phân tán cho từng thành viên |
 | `KAGGLE_MERGE.py` | Launcher repair missing rows và build FAISS trên Kaggle |
 | `member_shards_utils.py` | Discover, verify và merge member shards |

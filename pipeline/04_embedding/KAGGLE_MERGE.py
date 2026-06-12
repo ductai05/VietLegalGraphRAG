@@ -105,7 +105,7 @@ def main() -> None:
     subprocess.run(
         [
             sys.executable,
-            "build_faiss_members.py",
+            "build_faiss.py",
             *roots,
             "--repair-dir",
             REPAIR_SHARDS,
