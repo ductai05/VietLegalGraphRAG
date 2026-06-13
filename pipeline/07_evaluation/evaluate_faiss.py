@@ -26,13 +26,14 @@ def parse_args():
                         help="Device to run query encoder on (e.g. cuda:0, cpu)")
     return parser.parse_args()
 
-def convert_to_gold_jsonl(eval_file: Path) -> Path:
+def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path) -> Path:
     # Delegate to convert_eval_to_gold to ensure text-equivalent chunk IDs are resolved
     import sys
     sys.path.append(str(Path(__file__).resolve().parent))
     import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
     convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold.jsonl"
+    convert_eval_to_gold.CHUNKS_FILE = chunks_file
     convert_eval_to_gold.main()
     return convert_eval_to_gold.GOLD_FILE
 
@@ -53,7 +54,7 @@ def main():
         sys.exit(1)
 
     # 2. Convert eval_questions.json to gold jsonl format
-    gold_file = convert_to_gold_jsonl(args.eval_questions)
+    gold_file = convert_to_gold_jsonl(args.eval_questions, args.chunks)
 
     # 3. Run evaluation script
     eval_script = Path(__file__).resolve().parent / "evaluate_dense.py"

@@ -20,8 +20,8 @@ sys.path.append(str(BASE_DIR / "pipeline" / "05_sparse_retrieval"))
 from src.elastic_client import build_elasticsearch_client
 from src.tokenizer import tokenize_vi
 
-DEFAULT_EVAL_FILE = BASE_DIR / "pipeline" / "07_evaluation" / "eval_questions.json"
-DEFAULT_OUTPUT_FILE = BASE_DIR / "data" / "legal_embedding" / "sparse_eval_results.json"
+DEFAULT_EVAL_FILE = BASE_DIR / "output" / "eval_questions.json"
+DEFAULT_OUTPUT_FILE = BASE_DIR / "output" / "sparse_eval_results.json"
 
 
 def load_env_file(path: Path) -> None:
@@ -58,6 +58,8 @@ def parse_args() -> argparse.Namespace:
                         help="Path to save evaluation results JSON")
     parser.add_argument("--top-k", type=int, default=10,
                         help="Recall/MRR/nDCG top-k threshold")
+    parser.add_argument("--k-values", type=int, nargs="+", default=[1, 3, 5, 10],
+                        help="List of k values for evaluation metrics")
     parser.add_argument("--chunks", type=Path, default=os.environ.get("CHUNKS_PATH"),
                         help="Path to chunks.parquet or sparse_base.parquet to resolve duplicate chunk texts")
     parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "05_sparse_retrieval" / "config.env",
@@ -173,8 +175,12 @@ def main() -> None:
         password=args.password,
     )
     
-    print("Converting evaluation file to gold standard...")
-    gold_file = convert_to_gold_jsonl(args.eval_questions, chunks_file=args.chunks)
+    if args.eval_questions.suffix == ".jsonl":
+        print("Input file is already JSONL format, skipping conversion.")
+        gold_file = args.eval_questions
+    else:
+        print("Converting evaluation file to gold standard...")
+        gold_file = convert_to_gold_jsonl(args.eval_questions, chunks_file=args.chunks)
     
     print(f"Loading gold file: {gold_file}")
     rows = load_jsonl(gold_file)
@@ -187,26 +193,31 @@ def main() -> None:
             hits = retriever.search(
                 row["query"],
                 filters=row.get("filters"),
-                top_k=args.top_k
+                top_k=max(args.k_values)
             )
-            rel = evaluate_hits_relevance(hits, row)
-            first = next((index + 1 for index, value in enumerate(rel) if value), None)
-            relevant_total = max(
-                len(row.get("relevant_chunk_groups") or row.get("relevant_chunk_ids") or []),
-                1,
-            )
-            recall = min(sum(rel) / relevant_total, 1.0)
-            mrr = 1.0 / first if first else 0.0
-            dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
-            ideal_hits = min(relevant_total, args.top_k)
-            idcg = sum(1.0 / math.log2(index + 2) for index in range(ideal_hits))
+            
+            metrics = {}
+            for k in args.k_values:
+                rel = evaluate_hits_relevance(hits[:k], row)
+                first = next((index + 1 for index, value in enumerate(rel) if value), None)
+                relevant_total = max(
+                    len(row.get("relevant_chunk_groups") or row.get("relevant_chunk_ids") or []),
+                    1,
+                )
+                recall = min(sum(rel) / relevant_total, 1.0)
+                mrr = 1.0 / first if first else 0.0
+                dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
+                ideal_hits = min(relevant_total, k)
+                idcg = sum(1.0 / math.log2(index + 2) for index in range(ideal_hits))
+                metrics[f"recall@{k}"] = recall
+                metrics[f"mrr@{k}"] = mrr
+                metrics[f"ndcg@{k}"] = dcg / idcg if idcg else 0.0
+
             details.append(
                 {
                     "query": row["query"],
                     "group": row.get("group", "unknown"),
-                    "recall": recall,
-                    "mrr": mrr,
-                    "ndcg": dcg / idcg if idcg else 0.0,
+                    **metrics,
                     "top_chunk_ids": [hit["chunk_id"] for hit in hits],
                 }
             )
@@ -215,28 +226,33 @@ def main() -> None:
                 print(f"Processed {idx + 1}/{len(rows)} queries...")
     finally:
         retriever.close()
-        gold_file.unlink(missing_ok=True)
+        if gold_file != args.eval_questions:
+            gold_file.unlink(missing_ok=True)
 
     def mean(key: str, subset: list[dict[str, Any]]) -> float:
         return sum(item[key] for item in subset) / len(subset) if subset else 0.0
 
     groups = sorted({item["group"] for item in details})
-    report = {
+    report: dict[str, Any] = {
         "queries": len(details),
-        f"recall@{args.top_k}": mean("recall", details),
-        f"mrr@{args.top_k}": mean("mrr", details),
-        f"ndcg@{args.top_k}": mean("ndcg", details),
-        "by_group": {
-            group: {
-                "queries": len(subset := [item for item in details if item["group"] == group]),
-                f"recall@{args.top_k}": mean("recall", subset),
-                f"mrr@{args.top_k}": mean("mrr", subset),
-                f"ndcg@{args.top_k}": mean("ndcg", subset),
-            }
-            for group in groups
-        },
-        "details": details,
     }
+    
+    for k in args.k_values:
+        report[f"recall@{k}"] = mean(f"recall@{k}", details)
+        report[f"mrr@{k}"] = mean(f"mrr@{k}", details)
+        report[f"ndcg@{k}"] = mean(f"ndcg@{k}", details)
+        
+    report["by_group"] = {}
+    for group in groups:
+        subset = [item for item in details if item["group"] == group]
+        group_summary: dict[str, Any] = {"queries": len(subset)}
+        for k in args.k_values:
+            group_summary[f"recall@{k}"] = mean(f"recall@{k}", subset)
+            group_summary[f"mrr@{k}"] = mean(f"mrr@{k}", subset)
+            group_summary[f"ndcg@{k}"] = mean(f"ndcg@{k}", subset)
+        report["by_group"][group] = group_summary
+        
+    report["details"] = details
     
     try:
         args.output.parent.mkdir(parents=True, exist_ok=True)

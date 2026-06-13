@@ -66,50 +66,55 @@ def evaluate_hits_relevance(hits: list[dict[str, Any]], row: dict[str, Any]) -> 
 
 
 def metrics_for_hits(
-    hits: list[dict[str, Any]], row: dict[str, Any], top_k: int
+    hits: list[dict[str, Any]], row: dict[str, Any], k_values: list[int]
 ) -> dict[str, float]:
-    rel = evaluate_hits_relevance(hits[:top_k], row)
-    first = next((index + 1 for index, value in enumerate(rel) if value), None)
-    relevant_total = max(
-        len(
-            row.get("relevant_chunk_groups")
-            or row.get("relevant_chunk_ids")
-            or row.get("relevant_doc_ids")
-            or []
-        ),
-        1,
-    )
-    dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
-    ideal_hits = min(relevant_total, top_k)
-    idcg = sum(1.0 / math.log2(index + 2) for index in range(ideal_hits))
-    return {
-        "recall": min(sum(rel) / relevant_total, 1.0),
-        "mrr": 1.0 / first if first else 0.0,
-        "ndcg": dcg / idcg if idcg else 0.0,
-    }
+    metrics = {}
+    for k in k_values:
+        rel = evaluate_hits_relevance(hits[:k], row)
+        first = next((index + 1 for index, value in enumerate(rel) if value), None)
+        relevant_total = max(
+            len(
+                row.get("relevant_chunk_groups")
+                or row.get("relevant_chunk_ids")
+                or row.get("relevant_doc_ids")
+                or []
+            ),
+            1,
+        )
+        dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
+        ideal_hits = min(relevant_total, k)
+        idcg = sum(1.0 / math.log2(index + 2) for index in range(ideal_hits))
+        
+        metrics[f"recall@{k}"] = min(sum(rel) / relevant_total, 1.0)
+        metrics[f"mrr@{k}"] = 1.0 / first if first else 0.0
+        metrics[f"ndcg@{k}"] = dcg / idcg if idcg else 0.0
+    return metrics
 
 
 def mean(key: str, subset: list[dict[str, Any]]) -> float:
     return sum(item[key] for item in subset) / len(subset) if subset else 0.0
 
 
-def summarize(details: list[dict[str, Any]], top_k: int) -> dict[str, Any]:
+def summarize(details: list[dict[str, Any]], k_values: list[int], prefix: str = "") -> dict[str, Any]:
     groups = sorted({item["group"] for item in details})
-    return {
-        "queries": len(details),
-        f"recall@{top_k}": mean("recall", details),
-        f"mrr@{top_k}": mean("mrr", details),
-        f"ndcg@{top_k}": mean("ndcg", details),
-        "by_group": {
-            group: {
-                "queries": len(subset := [item for item in details if item["group"] == group]),
-                f"recall@{top_k}": mean("recall", subset),
-                f"mrr@{top_k}": mean("mrr", subset),
-                f"ndcg@{top_k}": mean("ndcg", subset),
-            }
-            for group in groups
-        },
-    }
+    summary: dict[str, Any] = {"queries": len(details)}
+    
+    for k in k_values:
+        summary[f"{prefix}recall@{k}"] = mean(f"{prefix}recall@{k}", details)
+        summary[f"{prefix}mrr@{k}"] = mean(f"{prefix}mrr@{k}", details)
+        summary[f"{prefix}ndcg@{k}"] = mean(f"{prefix}ndcg@{k}", details)
+        
+    summary["by_group"] = {}
+    for group in groups:
+        subset = [item for item in details if item["group"] == group]
+        group_summary: dict[str, Any] = {"queries": len(subset)}
+        for k in k_values:
+            group_summary[f"{prefix}recall@{k}"] = mean(f"{prefix}recall@{k}", subset)
+            group_summary[f"{prefix}mrr@{k}"] = mean(f"{prefix}mrr@{k}", subset)
+            group_summary[f"{prefix}ndcg@{k}"] = mean(f"{prefix}ndcg@{k}", subset)
+        summary["by_group"][group] = group_summary
+
+    return summary
 
 
 class HybridRetriever:
@@ -326,14 +331,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunks", type=Path, default=None, help="Path to chunks.parquet to hydrate full metadata")
     parser.add_argument("--candidate-k", type=int, default=100, help="RRF candidate pool size")
     parser.add_argument("--top-k", type=int, default=10, help="Final return top_k")
+    parser.add_argument("--k-values", type=int, nargs="+", default=[1, 3, 5, 10], help="List of k values for evaluation metrics")
     parser.add_argument("--rerank", action="store_true", help="Enable cross-encoder reranking")
     parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL, help="Hugging Face reranker model name")
     parser.add_argument("--rerank-batch-size", type=int, default=8)
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache-dir", default=None)
-    parser.add_argument("--output", type=Path, help="Path to save evaluation output results JSON")
+    parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "hybrid_eval_results.json", help="Path to save evaluation output results JSON")
     
     return parser.parse_args()
+
+
+def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path | None = None) -> Path:
+    sys.path.append(str(Path(__file__).resolve().parent))
+    import convert_eval_to_gold
+    convert_eval_to_gold.EVAL_FILE = eval_file
+    convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold_hybrid.jsonl"
+    if chunks_file:
+        convert_eval_to_gold.CHUNKS_FILE = chunks_file
+    convert_eval_to_gold.main()
+    return convert_eval_to_gold.GOLD_FILE
 
 
 def main() -> None:
@@ -406,10 +423,15 @@ def main() -> None:
 
         # 2. Evaluation Mode
         elif args.gold:
-            print(f"\nRunning evaluation on gold file: {args.gold}")
-            rows = load_jsonl(args.gold) if args.gold.suffix == ".jsonl" else json.loads(args.gold.read_text(encoding="utf-8"))
-            if isinstance(rows, dict) and "questions" in rows:
-                rows = rows["questions"]
+            gold_file = args.gold
+            is_temp_gold = False
+            if args.gold.suffix != ".jsonl":
+                print("\nConverting evaluation file to gold standard...")
+                gold_file = convert_to_gold_jsonl(args.gold, chunks_file=args.chunks)
+                is_temp_gold = True
+
+            print(f"\nRunning evaluation on gold file: {gold_file}")
+            rows = load_jsonl(gold_file)
             
             details = []
             for i, row in enumerate(rows):
@@ -419,7 +441,7 @@ def main() -> None:
                     candidate_k=args.candidate_k
                 )
 
-                rrf_hits = candidates[:args.top_k]
+                rrf_hits = candidates[:max(args.k_values)]
                 final_hits = rrf_hits
                 rerank_scores = None
 
@@ -436,7 +458,7 @@ def main() -> None:
                             reverse=True
                         )
                         final_hits = []
-                        for hit, score in scored[:args.top_k]:
+                        for hit, score in scored[:max(args.k_values)]:
                             h = dict(hit)
                             h["rerank_score"] = score
                             final_hits.append(h)
@@ -444,18 +466,14 @@ def main() -> None:
                         logging.warning("Reranking failed for query %r, falling back to RRF order.", row["query"], exc_info=True)
                         final_hits = rrf_hits
 
-                rrf_metrics = metrics_for_hits(rrf_hits, row, args.top_k)
-                final_metrics = metrics_for_hits(final_hits, row, args.top_k)
+                rrf_metrics = metrics_for_hits(rrf_hits, row, args.k_values)
+                final_metrics = metrics_for_hits(final_hits, row, args.k_values)
 
                 details.append({
                     "query": row["query"],
                     "group": row.get("group", "unknown"),
-                    "recall": final_metrics["recall"],
-                    "mrr": final_metrics["mrr"],
-                    "ndcg": final_metrics["ndcg"],
-                    "rrf_recall": rrf_metrics["recall"],
-                    "rrf_mrr": rrf_metrics["mrr"],
-                    "rrf_ndcg": rrf_metrics["ndcg"],
+                    **final_metrics,
+                    **{f"rrf_{key}": value for key, value in rrf_metrics.items()},
                     "top_chunk_ids": [hit["chunk_id"] for hit in final_hits],
                     "final_ordered_results": [
                         {
@@ -471,23 +489,9 @@ def main() -> None:
 
             # Summarize results
             report = {
-                "queries": len(details),
-                "recall@10": mean("recall", details),
-                "mrr@10": mean("mrr", details),
-                "ndcg@10": mean("ndcg", details),
-                "rrf_metrics": {
-                    "recall@10": mean("rrf_recall", details),
-                    "mrr@10": mean("rrf_mrr", details),
-                    "ndcg@10": mean("rrf_ndcg", details),
-                },
-                "by_group": {
-                    group: {
-                        "queries": len(subset := [item for item in details if item["group"] == group]),
-                        "recall@10": mean("recall", subset),
-                        "mrr@10": mean("mrr", subset),
-                        "ndcg@10": mean("ndcg", subset),
-                    } for group in sorted({item["group"] for item in details})
-                },
+                **summarize(details, args.k_values),
+                "rrf_metrics": summarize(details, args.k_values, prefix="rrf_"),
+                "rerank_enabled": args.rerank,
                 "details": details
             }
 
@@ -498,6 +502,9 @@ def main() -> None:
 
             print("\nEvaluation Completed!")
             print(json.dumps({k: v for k, v in report.items() if k != "details"}, ensure_ascii=False, indent=2))
+
+            if is_temp_gold:
+                gold_file.unlink(missing_ok=True)
 
     finally:
         retriever.close()

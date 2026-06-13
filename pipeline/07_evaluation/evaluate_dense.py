@@ -1,7 +1,7 @@
 """Evaluate dense retrieval, optionally reranking a larger candidate pool.
 
 Example:
-python pipeline/07_evaluation/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --url http://129.212.184.109:8333/ --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output data/legal_embedding/dense_rerank_eval_results.json
+python pipeline/07_evaluation/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --url http://129.212.184.109:8333/ --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output output/dense_rerank_eval_results.json
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import math
 import sys
 from pathlib import Path
 from typing import Any
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Add pipeline/04_embedding to search path for dense_retrieval, embedding_common, rerank imports
 sys.path.append(str(Path(__file__).resolve().parent.parent / "04_embedding"))
@@ -39,12 +41,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=MODEL_NAME)
     parser.add_argument("--candidate-k", type=int, default=100)
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--k-values", type=int, nargs="+", default=[1, 3, 5, 10])
     parser.add_argument("--rerank", action="store_true")
     parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL)
     parser.add_argument("--rerank-batch-size", type=int, default=8)
     parser.add_argument("--faiss-nprobe", type=int, default=32)
     parser.add_argument("--faiss-oversample", type=int, default=20)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "dense_eval_results.json",
+                        help="Path to save evaluation results JSON")
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache-dir", default=None)
     return parser.parse_args()
@@ -98,50 +102,55 @@ def deduplicate_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def metrics_for_hits(
-    hits: list[dict[str, Any]], row: dict[str, Any], top_k: int
+    hits: list[dict[str, Any]], row: dict[str, Any], k_values: list[int]
 ) -> dict[str, float]:
-    rel = evaluate_hits_relevance(hits[:top_k], row)
-    first = next((index + 1 for index, value in enumerate(rel) if value), None)
-    relevant_total = max(
-        len(
-            row.get("relevant_chunk_groups")
-            or row.get("relevant_chunk_ids")
-            or row.get("relevant_doc_ids")
-            or []
-        ),
-        1,
-    )
-    dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
-    ideal_hits = min(relevant_total, top_k)
-    idcg = sum(1.0 / math.log2(index + 2) for index in range(ideal_hits))
-    return {
-        "recall": min(sum(rel) / relevant_total, 1.0),
-        "mrr": 1.0 / first if first else 0.0,
-        "ndcg": dcg / idcg if idcg else 0.0,
-    }
+    metrics = {}
+    for k in k_values:
+        rel = evaluate_hits_relevance(hits[:k], row)
+        first = next((index + 1 for index, value in enumerate(rel) if value), None)
+        relevant_total = max(
+            len(
+                row.get("relevant_chunk_groups")
+                or row.get("relevant_chunk_ids")
+                or row.get("relevant_doc_ids")
+                or []
+            ),
+            1,
+        )
+        dcg = sum(value / math.log2(index + 2) for index, value in enumerate(rel))
+        ideal_hits = min(relevant_total, k)
+        idcg = sum(1.0 / math.log2(index + 2) for index in range(ideal_hits))
+        
+        metrics[f"recall@{k}"] = min(sum(rel) / relevant_total, 1.0)
+        metrics[f"mrr@{k}"] = 1.0 / first if first else 0.0
+        metrics[f"ndcg@{k}"] = dcg / idcg if idcg else 0.0
+    return metrics
 
 
-def summarize(details: list[dict[str, Any]], top_k: int, prefix: str = "") -> dict[str, Any]:
+def summarize(details: list[dict[str, Any]], k_values: list[int], prefix: str = "") -> dict[str, Any]:
     def mean(key: str, subset: list[dict[str, Any]]) -> float:
         metric_key = f"{prefix}{key}"
         return sum(item[metric_key] for item in subset) / len(subset) if subset else 0.0
 
     groups = sorted({item["group"] for item in details})
-    return {
-        "queries": len(details),
-        f"recall@{top_k}": mean("recall", details),
-        f"mrr@{top_k}": mean("mrr", details),
-        f"ndcg@{top_k}": mean("ndcg", details),
-        "by_group": {
-            group: {
-                "queries": len(subset := [item for item in details if item["group"] == group]),
-                f"recall@{top_k}": mean("recall", subset),
-                f"mrr@{top_k}": mean("mrr", subset),
-                f"ndcg@{top_k}": mean("ndcg", subset),
-            }
-            for group in groups
-        },
-    }
+    summary: dict[str, Any] = {"queries": len(details)}
+    
+    for k in k_values:
+        summary[f"recall@{k}"] = mean(f"recall@{k}", details)
+        summary[f"mrr@{k}"] = mean(f"mrr@{k}", details)
+        summary[f"ndcg@{k}"] = mean(f"ndcg@{k}", details)
+        
+    summary["by_group"] = {}
+    for group in groups:
+        subset = [item for item in details if item["group"] == group]
+        group_summary: dict[str, Any] = {"queries": len(subset)}
+        for k in k_values:
+            group_summary[f"recall@{k}"] = mean(f"recall@{k}", subset)
+            group_summary[f"mrr@{k}"] = mean(f"mrr@{k}", subset)
+            group_summary[f"ndcg@{k}"] = mean(f"ndcg@{k}", subset)
+        summary["by_group"][group] = group_summary
+
+    return summary
 
 
 def main() -> None:
@@ -229,8 +238,8 @@ def main() -> None:
                     )
                     rerank_scores = None
 
-            dense_metrics = metrics_for_hits(dense_hits, row, args.top_k)
-            final_metrics = metrics_for_hits(final_hits, row, args.top_k)
+            dense_metrics = metrics_for_hits(dense_hits, row, args.k_values)
+            final_metrics = metrics_for_hits(final_hits, row, args.k_values)
             details.append(
                 {
                     "query": row["query"],
@@ -264,16 +273,16 @@ def main() -> None:
         retriever.close()
 
     report = {
-        **summarize(details, args.top_k),
+        **summarize(details, args.k_values),
         "candidate_k": args.candidate_k,
         "rerank_enabled": args.rerank,
         "reranker_loaded": reranker is not None,
         "reranker_model": args.reranker_model if args.rerank else None,
-        "dense_baseline_metrics": summarize(details, args.top_k, prefix="dense_"),
+        "dense_baseline_metrics": summarize(details, args.k_values, prefix="dense_"),
         "details": details,
     }
     if args.rerank:
-        report["rerank_metrics"] = summarize(details, args.top_k)
+        report["rerank_metrics"] = summarize(details, args.k_values)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)

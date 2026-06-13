@@ -16,7 +16,12 @@ def main():
         return
 
     with open(EVAL_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError:
+            f.seek(0)
+            rows = [json.loads(line) for line in f if line.strip()]
+            data = {"questions": rows}
 
     questions = data.get("questions", [])
     print(f"Loaded {len(questions)} questions from {EVAL_FILE}")
