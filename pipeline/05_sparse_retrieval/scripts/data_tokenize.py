@@ -1,5 +1,3 @@
-"""Kaggle single-cell runner for only the Tokenization step."""
-
 from __future__ import annotations
 
 import os
