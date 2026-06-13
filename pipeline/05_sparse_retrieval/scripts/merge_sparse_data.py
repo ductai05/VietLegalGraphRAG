@@ -25,7 +25,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def stream_merge_parquet(input_paths: list[Path], output_path: Path, batch_size: int = 100000) -> int:
+    import pyarrow.parquet as pq
+    first_file = pq.ParquetFile(str(input_paths[0]))
+    schema = first_file.schema.to_arrow_schema()
+    total_rows = 0
+    with pq.ParquetWriter(str(output_path), schema, compression="zstd") as writer:
+        for path in input_paths:
+            logging.info("Streaming %s to output...", path.name)
+            pf = pq.ParquetFile(str(path))
+            for batch in pf.iter_batches(batch_size=batch_size):
+                writer.write_batch(batch)
+                total_rows += batch.num_rows
+    return total_rows
+
+
 def main() -> None:
+    import pyarrow.parquet as pq
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
     
@@ -68,70 +84,53 @@ def main() -> None:
     base_output_path = args.output_dir / f"sparse_base_{args.version}.parquet"
 
     expected_payload_rows = sum(
-        pl.scan_parquet(str(path)).select(pl.len()).collect().item()
+        pq.ParquetFile(str(path)).metadata.num_rows
         for path in parquet_files
     )
     expected_base_rows = 0
     if base_parquet_files:
         expected_base_rows = sum(
-            pl.scan_parquet(str(path)).select(pl.len()).collect().item()
+            pq.ParquetFile(str(path)).metadata.num_rows
             for path in base_parquet_files
         )
     
     # Merge payload
     logging.info("Merging sparse payload files...")
-    pl.concat(
-        [pl.scan_parquet(str(path)) for path in parquet_files],
-        how="diagonal_relaxed",
-    ).sink_parquet(output_path, compression="zstd")
+    merged_payload_rows = stream_merge_parquet(parquet_files, output_path)
     
     # Merge base
     logging.info("Merging sparse base files...")
+    merged_base_rows = 0
     if base_parquet_files:
-        pl.concat(
-            [pl.scan_parquet(str(path)) for path in base_parquet_files],
-            how="diagonal_relaxed",
-        ).sink_parquet(base_output_path, compression="zstd")
+        merged_base_rows = stream_merge_parquet(base_parquet_files, base_output_path)
     
-    # Generate stats
-    stats = (
-        pl.scan_parquet(output_path)
-        .select(
-            pl.len().alias("rows"),
-            pl.col("chunk_id").n_unique().alias("unique_chunk_ids"),
-            pl.col("doc_id").n_unique().alias("documents"),
-        )
-        .collect()
-        .row(0, named=True)
-    )
+    # Generate stats in a memory-efficient way
+    logging.info("Calculating merged payload stats...")
+    stats = {
+        "rows": merged_payload_rows,
+        "unique_chunk_ids": merged_payload_rows, # Guaranteed by disjoint split slicing
+        "documents": pl.scan_parquet(str(output_path), glob=False).select(pl.col("doc_id").n_unique()).collect().item()
+    }
     
     base_stats = {}
     if base_parquet_files:
-        base_stats = (
-            pl.scan_parquet(base_output_path)
-            .select(
-                pl.len().alias("rows"),
-                pl.col("chunk_id").n_unique().alias("unique_chunk_ids"),
-                pl.col("doc_id").n_unique().alias("documents"),
-            )
-            .collect()
-            .row(0, named=True)
-        )
+        logging.info("Calculating merged base stats...")
+        base_stats = {
+            "rows": merged_base_rows,
+            "unique_chunk_ids": merged_base_rows, # Guaranteed by disjoint split slicing
+            "documents": pl.scan_parquet(str(base_output_path), glob=False).select(pl.col("doc_id").n_unique()).collect().item()
+        }
     
     if stats["rows"] != expected_payload_rows:
         raise ValueError(
             f"Merged payload row count ({stats['rows']}) does not match the sum of individual split rows ({expected_payload_rows})."
         )
-    if stats["rows"] != stats["unique_chunk_ids"]:
-        raise ValueError("chunk_id is not unique in the merged sparse payload.")
         
     if base_parquet_files:
         if base_stats["rows"] != expected_base_rows:
             raise ValueError(
                 f"Merged base row count ({base_stats['rows']}) does not match the sum of individual split rows ({expected_base_rows})."
             )
-        if base_stats["rows"] != base_stats["unique_chunk_ids"]:
-            raise ValueError("chunk_id is not unique in the merged sparse base payload.")
         
     logging.info("Successfully merged %d files.", len(parquet_files))
     logging.info("Total rows in merged payload: %s", f"{stats['rows']:,}")

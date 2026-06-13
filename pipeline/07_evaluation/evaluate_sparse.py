@@ -69,7 +69,7 @@ def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path | None = None) -> P
     sys.path.append(str(Path(__file__).resolve().parent))
     import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
-    convert_eval_to_gold.GOLD_FILE = Path.cwd() / "eval_questions_gold_sparse.jsonl"
+    convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold_sparse.jsonl"
     if chunks_file:
         convert_eval_to_gold.CHUNKS_FILE = chunks_file
     convert_eval_to_gold.main()

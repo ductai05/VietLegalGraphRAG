@@ -63,7 +63,19 @@ def main() -> None:
         if exists:
             logging.info("Index %s already exists", args.index)
             return
-        client.indices.create(index=args.index, **mapping)
+        try:
+            client.indices.create(index=args.index, **mapping)
+        except Exception as exc:
+            if "serverless" in str(exc).lower() and "settings" in mapping:
+                logging.info("Serverless mode detected. Retrying index creation without number_of_shards/number_of_replicas...")
+                mapping["settings"].pop("number_of_shards", None)
+                mapping["settings"].pop("number_of_replicas", None)
+                if "index" in mapping["settings"]:
+                    mapping["settings"]["index"].pop("number_of_shards", None)
+                    mapping["settings"]["index"].pop("number_of_replicas", None)
+                client.indices.create(index=args.index, **mapping)
+            else:
+                raise
         logging.info("Created index %s", args.index)
     finally:
         client.close()
