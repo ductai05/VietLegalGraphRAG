@@ -2,6 +2,7 @@
 /.idea
 .env
 *.zip
+/report*/
 
 # Environment variables
 .env
@@ -33,3 +34,9 @@ venv/
 # Kaggle temp files
 /kaggle/
 /data/preprocessed
+
+# Evaluation checkpoints can contain large prompts and model responses.
+/output/llm_evaluation*/
+!/output/llm_evaluation_complete/
+!/output/llm_evaluation_complete/audit.json
+!/output/llm_evaluation_complete/summary.json

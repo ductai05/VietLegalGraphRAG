@@ -17,6 +17,7 @@ if "polars" not in sys.modules:
 if "pyarrow" not in sys.modules:
     pyarrow_module = types.ModuleType("pyarrow")
     pyarrow_ipc_module = types.ModuleType("pyarrow.ipc")
+    pyarrow_module.Table = object
     pyarrow_module.ipc = pyarrow_ipc_module
     sys.modules["pyarrow"] = pyarrow_module
     sys.modules["pyarrow.ipc"] = pyarrow_ipc_module

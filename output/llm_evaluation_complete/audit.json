@@ -1,0 +1,38 @@
+{
+  "llama-3.1-8b-instant|no_rag": {
+    "count": 200,
+    "missing": [],
+    "extra": [],
+    "bad_answers": []
+  },
+  "llama-3.1-8b-instant|hybrid_rerank": {
+    "count": 200,
+    "missing": [],
+    "extra": [],
+    "bad_answers": []
+  },
+  "llama-3.3-70b-versatile|no_rag": {
+    "count": 200,
+    "missing": [],
+    "extra": [],
+    "bad_answers": []
+  },
+  "llama-3.3-70b-versatile|hybrid_rerank": {
+    "count": 200,
+    "missing": [],
+    "extra": [],
+    "bad_answers": []
+  },
+  "qwen/qwen3-32b|no_rag": {
+    "count": 200,
+    "missing": [],
+    "extra": [],
+    "bad_answers": []
+  },
+  "qwen/qwen3-32b|hybrid_rerank": {
+    "count": 200,
+    "missing": [],
+    "extra": [],
+    "bad_answers": []
+  }
+}

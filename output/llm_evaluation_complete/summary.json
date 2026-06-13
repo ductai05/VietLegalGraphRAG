@@ -1,0 +1,222 @@
+{
+  "retrieval": [
+    {
+      "setup": "Dense",
+      "questions": 200,
+      "recall@10": 0.5025,
+      "mrr@10": 0.3621567460317461,
+      "ndcg@10": 0.389566646016606
+    },
+    {
+      "setup": "Sparse (BM25)",
+      "questions": 200,
+      "recall@10": 0.46,
+      "mrr@10": 0.3350376984126984,
+      "ndcg@10": 0.36406191490937445
+    },
+    {
+      "setup": "Hybrid (RRF)",
+      "questions": 200,
+      "recall@10": 0.6116666666666667,
+      "mrr@10": 0.4037083333333333,
+      "ndcg@10": 0.4465548293331851
+    },
+    {
+      "setup": "Hybrid + Rerank",
+      "questions": 200,
+      "recall@10": 0.7975,
+      "mrr@10": 0.6505396825396825,
+      "ndcg@10": 0.6817845370005934
+    }
+  ],
+  "llm": {
+    "llama-3.1-8b-instant": {
+      "no_rag": {
+        "questions": 200,
+        "accuracy": 0.715,
+        "valid_json_rate": 1.0,
+        "mean_latency_seconds": 40.374485,
+        "by_question_type": {
+          "comparison": {
+            "questions": 24,
+            "accuracy": 0.7916666666666666
+          },
+          "factual": {
+            "questions": 98,
+            "accuracy": 0.6020408163265306
+          },
+          "inference": {
+            "questions": 32,
+            "accuracy": 0.71875
+          },
+          "procedural": {
+            "questions": 46,
+            "accuracy": 0.9130434782608695
+          }
+        }
+      },
+      "hybrid_rerank": {
+        "questions": 200,
+        "accuracy": 0.79,
+        "valid_json_rate": 0.995,
+        "mean_latency_seconds": 49.844692,
+        "citation_validity": 0.955,
+        "gold_citation_rate": 0.545,
+        "retrieval_hit_rate": 0.8,
+        "accuracy_when_retrieval_hit": 0.80625,
+        "accuracy_when_retrieval_miss": 0.725,
+        "by_question_type": {
+          "comparison": {
+            "questions": 24,
+            "accuracy": 0.7916666666666666
+          },
+          "factual": {
+            "questions": 98,
+            "accuracy": 0.7448979591836735
+          },
+          "inference": {
+            "questions": 32,
+            "accuracy": 0.6875
+          },
+          "procedural": {
+            "questions": 46,
+            "accuracy": 0.9565217391304348
+          }
+        }
+      },
+      "paired": {
+        "questions": 200,
+        "rag_only_correct": 26,
+        "no_rag_only_correct": 11,
+        "mcnemar_exact_p": 0.020073851919732988
+      }
+    },
+    "llama-3.3-70b-versatile": {
+      "no_rag": {
+        "questions": 200,
+        "accuracy": 0.845,
+        "valid_json_rate": 1.0,
+        "mean_latency_seconds": 2.5935795,
+        "by_question_type": {
+          "comparison": {
+            "questions": 24,
+            "accuracy": 0.8333333333333334
+          },
+          "factual": {
+            "questions": 98,
+            "accuracy": 0.7551020408163265
+          },
+          "inference": {
+            "questions": 32,
+            "accuracy": 0.9375
+          },
+          "procedural": {
+            "questions": 46,
+            "accuracy": 0.9782608695652174
+          }
+        }
+      },
+      "hybrid_rerank": {
+        "questions": 200,
+        "accuracy": 0.885,
+        "valid_json_rate": 1.0,
+        "mean_latency_seconds": 44.8087325,
+        "citation_validity": 0.97,
+        "gold_citation_rate": 0.6,
+        "retrieval_hit_rate": 0.8,
+        "accuracy_when_retrieval_hit": 0.9125,
+        "accuracy_when_retrieval_miss": 0.775,
+        "by_question_type": {
+          "comparison": {
+            "questions": 24,
+            "accuracy": 0.875
+          },
+          "factual": {
+            "questions": 98,
+            "accuracy": 0.8673469387755102
+          },
+          "inference": {
+            "questions": 32,
+            "accuracy": 0.8125
+          },
+          "procedural": {
+            "questions": 46,
+            "accuracy": 0.9782608695652174
+          }
+        }
+      },
+      "paired": {
+        "questions": 200,
+        "rag_only_correct": 14,
+        "no_rag_only_correct": 6,
+        "mcnemar_exact_p": 0.11531829833984375
+      }
+    },
+    "qwen/qwen3-32b": {
+      "no_rag": {
+        "questions": 200,
+        "accuracy": 0.745,
+        "valid_json_rate": 1.0,
+        "mean_latency_seconds": 42.7290085,
+        "by_question_type": {
+          "comparison": {
+            "questions": 24,
+            "accuracy": 0.875
+          },
+          "factual": {
+            "questions": 98,
+            "accuracy": 0.6224489795918368
+          },
+          "inference": {
+            "questions": 32,
+            "accuracy": 0.8125
+          },
+          "procedural": {
+            "questions": 46,
+            "accuracy": 0.8913043478260869
+          }
+        }
+      },
+      "hybrid_rerank": {
+        "questions": 200,
+        "accuracy": 0.89,
+        "valid_json_rate": 1.0,
+        "mean_latency_seconds": 52.137054,
+        "citation_validity": 0.96,
+        "gold_citation_rate": 0.575,
+        "retrieval_hit_rate": 0.8,
+        "accuracy_when_retrieval_hit": 0.93125,
+        "accuracy_when_retrieval_miss": 0.725,
+        "by_question_type": {
+          "comparison": {
+            "questions": 24,
+            "accuracy": 0.8333333333333334
+          },
+          "factual": {
+            "questions": 98,
+            "accuracy": 0.8979591836734694
+          },
+          "inference": {
+            "questions": 32,
+            "accuracy": 0.8125
+          },
+          "procedural": {
+            "questions": 46,
+            "accuracy": 0.9565217391304348
+          }
+        }
+      },
+      "paired": {
+        "questions": 200,
+        "rag_only_correct": 35,
+        "no_rag_only_correct": 6,
+        "mcnemar_exact_p": 4.873598300036974e-06
+      }
+    }
+  },
+  "notes": {
+    "questions": 200,
+    "rag_context": "top-10 hybrid + rerank, 4,000-character weighted budget",
+    "llm_results_complete": true
+  }
+}
