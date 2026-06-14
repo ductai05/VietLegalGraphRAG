@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # === Configuration ===
@@ -53,7 +54,7 @@ def ensure_canonical_payload() -> tuple[Path, bool]:
     output = Path(WORK) / "data"
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "prepare_embedding_data.py",
             "--chunks",
             CHUNKS,
@@ -73,12 +74,19 @@ def ensure_canonical_payload() -> tuple[Path, bool]:
 
 def main() -> None:
     os.chdir(PIPELINE)
-    subprocess.run(["pip", "install", "-q", "-r", "requirements.txt"], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"],
+        check=True,
+    )
+    subprocess.run(
+        [sys.executable, "-c", "import faiss; print('FAISS', faiss.__version__)"],
+        check=True,
+    )
 
     roots = search_root_args()
     canonical_payload, generated_payload = ensure_canonical_payload()
     repair_cmd = [
-        "python",
+        sys.executable,
         "repair_missing_shards.py",
         *roots,
         "--canonical-payload",
@@ -90,14 +98,14 @@ def main() -> None:
     ]
     if ALLOW_CPU_REPAIR:
         repair_cmd.append("--allow-cpu")
-    print("=== Step 1: verify member datasets + encode only missing chunks ===")
+    print("=== Step 1: verify members, accept duplicates, encode only missing chunks ===")
     subprocess.run(repair_cmd, check=True)
 
-    print("\n=== Step 2: build compact per-member FAISS indexes ===")
+    print("\n=== Step 2: build compact deduplicated per-member FAISS indexes ===")
     subprocess.run(
         [
-            "python",
-            "build_faiss_members.py",
+            sys.executable,
+            "build_faiss.py",
             *roots,
             "--repair-dir",
             REPAIR_SHARDS,

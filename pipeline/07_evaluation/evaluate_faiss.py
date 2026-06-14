@@ -5,10 +5,10 @@ import argparse
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DEFAULT_EVAL_FILE = BASE_DIR / "pipeline" / "07_evaluation" / "eval_questions.json"
-DEFAULT_FAISS_DIR = BASE_DIR / "data" / "legal_embedding" / "faiss_huy"
-DEFAULT_CHUNKS_PATH = BASE_DIR / "data" / "legal_chunking_dataset" / "chunks.parquet"
-DEFAULT_OUTPUT_FILE = BASE_DIR / "data" / "legal_embedding" / "dense_faiss_eval_results_huy.json"
+DEFAULT_EVAL_FILE = BASE_DIR / "output" / "eval_questions.json"
+DEFAULT_FAISS_DIR = BASE_DIR / "data" / "embedding" / "faiss"
+DEFAULT_CHUNKS_PATH = BASE_DIR / "data" / "preprocessed" / "chunking" / "chunks.parquet"
+DEFAULT_OUTPUT_FILE = BASE_DIR / "output" / "dense_faiss_eval_results_huy.json"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate FAISS index offline using eval_questions.json")
@@ -26,13 +26,14 @@ def parse_args():
                         help="Device to run query encoder on (e.g. cuda:0, cpu)")
     return parser.parse_args()
 
-def convert_to_gold_jsonl(eval_file: Path) -> Path:
+def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path) -> Path:
     # Delegate to convert_eval_to_gold to ensure text-equivalent chunk IDs are resolved
     import sys
     sys.path.append(str(Path(__file__).resolve().parent))
     import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
     convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold.jsonl"
+    convert_eval_to_gold.CHUNKS_FILE = chunks_file
     convert_eval_to_gold.main()
     return convert_eval_to_gold.GOLD_FILE
 
@@ -53,12 +54,13 @@ def main():
         sys.exit(1)
 
     # 2. Convert eval_questions.json to gold jsonl format
-    gold_file = convert_to_gold_jsonl(args.eval_questions)
+    gold_file = convert_to_gold_jsonl(args.eval_questions, args.chunks)
 
     # 3. Run evaluation script
-    eval_script = BASE_DIR / "pipeline" / "04_embedding" / "evaluate_dense.py"
+    eval_script = Path(__file__).resolve().parent / "evaluate_dense.py"
     cmd = [
         sys.executable,
+        "-u",
         str(eval_script),
         "--gold", str(gold_file),
         "--faiss-dir", str(args.faiss_dir),

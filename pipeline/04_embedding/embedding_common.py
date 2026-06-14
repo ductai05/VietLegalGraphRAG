@@ -88,6 +88,21 @@ def read_json(path: Path, default: dict[str, Any] | None = None) -> dict[str, An
         return json.load(handle)
 
 
+def load_faiss_module() -> Any:
+    """Import the faiss-cpu module with an actionable dependency error."""
+    try:
+        import faiss
+    except ModuleNotFoundError as exc:
+        if exc.name != "faiss":
+            raise
+        raise ModuleNotFoundError(
+            "FAISS retrieval/build requires faiss-cpu in this Python environment. "
+            "Install it with `python -m pip install faiss-cpu`, then verify with "
+            "`python -c \"import faiss; print(faiss.__version__)\"`."
+        ) from exc
+    return faiss
+
+
 def file_fingerprint(path: Path) -> str:
     stat = path.stat()
     raw = f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"

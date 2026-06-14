@@ -1,4 +1,4 @@
-"""Query Qdrant or compact sharded FAISS indexes and optionally expand chunks."""
+"""Query Elasticsearch, Qdrant, or sharded FAISS and optionally expand chunks."""
 
 from __future__ import annotations
 
@@ -8,17 +8,47 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import polars as pl
-import pyarrow as pa
-import pyarrow.ipc as ipc
-from qdrant_client import QdrantClient, models
+try:
+    import polars as pl
+except ModuleNotFoundError as exc:
+    if exc.name != "polars":
+        raise
+    pl = None
+try:
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pyarrow", "pyarrow.ipc"}:
+        raise
+    pa = None
+    ipc = None
+try:
+    from elasticsearch import Elasticsearch
+except ModuleNotFoundError as exc:
+    if exc.name != "elasticsearch":
+        raise
+    Elasticsearch = None
+try:
+    from qdrant_client import QdrantClient, models
+except ModuleNotFoundError as exc:
+    if exc.name != "qdrant_client":
+        raise
+    QdrantClient = None
+    models = None
 
 from embedding_common import (
     COLLECTION_NAME,
     MODEL_NAME,
     encode_texts,
     load_encoder,
+    load_faiss_module,
     read_json,
+)
+from elasticsearch_common import (
+    build_elasticsearch_filter,
+    normalize_search_hits,
+    resolve_credentials,
+    resolve_num_candidates,
 )
 
 EXPAND_SCORE_THRESHOLD = 0.75
@@ -28,6 +58,11 @@ EXPAND_MIN_CHARS = 300
 def build_filter(filters: dict[str, Any] | None) -> models.Filter | None:
     if not filters:
         return None
+    if models is None:
+        raise ModuleNotFoundError(
+            "Qdrant retrieval requires qdrant-client. Install it with "
+            "`python -m pip install qdrant-client`."
+        )
     must: list[models.FieldCondition] = []
     ranges = filters.get("ranges", {})
     for key, value in filters.items():
@@ -95,22 +130,59 @@ class DenseRetriever:
         query_max_length: int = 512,
         faiss_nprobe: int = 32,
         faiss_oversample: int = 20,
+        elastic_cloud_id: str | None = None,
+        elastic_api_key: str | None = None,
+        elastic_index: str = COLLECTION_NAME,
+        elastic_num_candidates: int | None = None,
     ) -> None:
-        if sum(value is not None for value in (storage_dir, url, faiss_dir)) != 1:
-            raise ValueError("Provide exactly one of storage_dir, url, or faiss_dir")
+        targets = (storage_dir, url, faiss_dir, elastic_cloud_id)
+        if sum(value is not None for value in targets) != 1:
+            raise ValueError(
+                "Provide exactly one of storage_dir, url, faiss_dir, or "
+                "elastic_cloud_id"
+            )
         if storage_dir is not None and not storage_dir.exists():
             raise FileNotFoundError(
                 f"Qdrant storage directory does not exist: {storage_dir}. "
                 "Run build_qdrant.py successfully before retrieval."
             )
         self.client: QdrantClient | None = None
+        self.elasticsearch_client: Any | None = None
         self.faiss_indexes: list[tuple[str, Any, pa.Table]] = []
         self.faiss_handles: list[pa.MemoryMappedFile] = []
         self.faiss_oversample = faiss_oversample
         self.collection = collection
+        self.elastic_index = elastic_index
+        self.elastic_num_candidates = elastic_num_candidates
         if faiss_dir is not None:
             self._load_faiss(faiss_dir, faiss_nprobe)
+        elif elastic_cloud_id is not None:
+            if Elasticsearch is None:
+                raise ModuleNotFoundError(
+                    "Elasticsearch retrieval requires the elasticsearch client. "
+                    "Install it with `python -m pip install elasticsearch`."
+                )
+            resolved_cloud_id, resolved_api_key = resolve_credentials(
+                elastic_cloud_id,
+                elastic_api_key,
+            )
+            self.elasticsearch_client = Elasticsearch(
+                cloud_id=resolved_cloud_id,
+                api_key=resolved_api_key,
+                request_timeout=60,
+            )
+            if not self.elasticsearch_client.indices.exists(index=elastic_index):
+                self.elasticsearch_client.close()
+                raise RuntimeError(
+                    f"Elasticsearch index {elastic_index!r} does not exist. "
+                    "Run build_elasticsearch.py successfully before retrieval."
+                )
         else:
+            if QdrantClient is None:
+                raise ModuleNotFoundError(
+                    "Qdrant retrieval requires qdrant-client. Install it with "
+                    "`python -m pip install qdrant-client`."
+                )
             self.client = (
                 QdrantClient(path=str(storage_dir))
                 if storage_dir is not None
@@ -129,7 +201,12 @@ class DenseRetriever:
         self.query_max_length = query_max_length
 
     def _load_faiss(self, faiss_dir: Path, nprobe: int) -> None:
-        import faiss
+        if pa is None or ipc is None:
+            raise ModuleNotFoundError(
+                "FAISS payload retrieval requires pyarrow. Install project "
+                "requirements with `python -m pip install -r requirements.txt`."
+            )
+        faiss = load_faiss_module()
 
         manifest = read_json(faiss_dir / "manifest.json")
         if not manifest.get("indexes"):
@@ -145,20 +222,30 @@ class DenseRetriever:
             if index.ntotal != payload.num_rows:
                 handle.close()
                 raise ValueError(f"FAISS/payload row mismatch for {name}")
+            if index.ntotal == 0:
+                handle.close()
+                continue
             self.faiss_handles.append(handle)
             self.faiss_indexes.append((name, index, payload))
 
     def close(self) -> None:
         if self.client is not None:
             self.client.close()
+        if self.elasticsearch_client is not None:
+            self.elasticsearch_client.close()
         for handle in self.faiss_handles:
             handle.close()
 
     def _lookup_chunks(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not self.chunks_path or not chunk_ids:
             return {}
+        if pl is None:
+            raise ModuleNotFoundError(
+                "Chunk expansion requires polars. Install project requirements "
+                "with `python -m pip install -r requirements.txt`."
+            )
         rows = (
-            pl.scan_parquet(self.chunks_path)
+            pl.scan_parquet(self.chunks_path, glob=False)
             .filter(pl.col("chunk_id").is_in(chunk_ids))
             .select("chunk_id", "chunk_text", "chunk_type", "parent_id", "raw_table_id")
             .collect()
@@ -183,7 +270,12 @@ class DenseRetriever:
             is_query=True,
             show_progress=False,
         )[0]
-        points = self._search_faiss(vector, filters, top_k) if self.faiss_indexes else self._search_qdrant(vector, filters, top_k)
+        if self.faiss_indexes:
+            points = self._search_faiss(vector, filters, top_k)
+        elif self.elasticsearch_client is not None:
+            points = self._search_elasticsearch(vector, filters, top_k)
+        else:
+            points = self._search_qdrant(vector, filters, top_k)
         hits = []
         expansion_ids: list[str] = []
         for score, payload in points:
@@ -250,6 +342,33 @@ class DenseRetriever:
         )
         return [(point.score, point.payload or {}) for point in result.points]
 
+    def _search_elasticsearch(
+        self, vector: np.ndarray, filters: dict[str, Any] | None, top_k: int
+    ) -> list[tuple[float, dict[str, Any]]]:
+        assert self.elasticsearch_client is not None
+        knn: dict[str, Any] = {
+            "field": "vector",
+            "query_vector": np.asarray(vector, dtype=np.float32).tolist(),
+            "k": top_k,
+            "num_candidates": resolve_num_candidates(
+                top_k,
+                self.elastic_num_candidates,
+            ),
+        }
+        filter_clauses = build_elasticsearch_filter(filters)
+        if filter_clauses:
+            knn["filter"] = filter_clauses
+        response = self.elasticsearch_client.search(
+            index=self.elastic_index,
+            size=top_k,
+            knn=knn,
+            source_excludes=["vector"],
+        )
+        return normalize_search_hits(
+            response["hits"]["hits"],
+            cosine_score=True,
+        )
+
     def _search_faiss(
         self, vector: np.ndarray, filters: dict[str, Any] | None, top_k: int
     ) -> list[tuple[float, dict[str, Any]]]:
@@ -287,7 +406,11 @@ def parse_args() -> argparse.Namespace:
     target.add_argument("--storage-dir", type=Path)
     target.add_argument("--url")
     target.add_argument("--faiss-dir", type=Path)
+    target.add_argument("--elastic-cloud-id")
     parser.add_argument("--api-key", default=None)
+    parser.add_argument("--elastic-api-key", default=None)
+    parser.add_argument("--elastic-index", default=COLLECTION_NAME)
+    parser.add_argument("--elastic-num-candidates", type=int, default=None)
     parser.add_argument("--query", required=True)
     parser.add_argument("--chunks", type=Path, default=None)
     parser.add_argument("--collection", default=COLLECTION_NAME)
@@ -316,6 +439,10 @@ def main() -> None:
         cache_dir=args.cache_dir,
         faiss_nprobe=args.faiss_nprobe,
         faiss_oversample=args.faiss_oversample,
+        elastic_cloud_id=args.elastic_cloud_id,
+        elastic_api_key=args.elastic_api_key,
+        elastic_index=args.elastic_index,
+        elastic_num_candidates=args.elastic_num_candidates,
     )
     try:
         hits = retriever.search(
