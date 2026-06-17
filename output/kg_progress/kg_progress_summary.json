@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-18 00:03:43",
-  "runtime_seconds": 42.5,
+  "generated_at": "2026-06-18 00:12:46",
+  "runtime_seconds": 82.78,
   "import_dir": "data\\processed\\neo4j_imports",
   "node_counts": {
     "Document": 353665,
@@ -69,6 +69,7 @@
       ]
     ]
   },
+  "error_cases_path": "output/report_artifacts/retrieval_error_cases.json",
   "doc_doc_relation_counts": {
     "CITES": 117839,
     "AMENDS": 4291,

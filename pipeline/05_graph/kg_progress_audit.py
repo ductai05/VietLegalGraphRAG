@@ -18,7 +18,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 IMPORT_DIR = ROOT / "data" / "processed" / "neo4j_imports"
-ERROR_CASES = ROOT / "evaluation_artifacts" / "output" / "report_artifacts" / "retrieval_error_cases.json"
+ERROR_CASE_CANDIDATES = [
+    ROOT / "output" / "report_artifacts" / "retrieval_error_cases.json",
+    ROOT / "evaluation_artifacts" / "output" / "report_artifacts" / "retrieval_error_cases.json",
+]
 OUT_DIR = ROOT / "output" / "kg_progress"
 
 
@@ -54,6 +57,13 @@ def load_error_cases(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def find_error_cases_path() -> Path | None:
+    for path in ERROR_CASE_CANDIDATES:
+        if path.exists():
+            return path
+    return None
 
 
 def parse_import_report(path: Path) -> dict[str, Any]:
@@ -245,7 +255,7 @@ def write_report(summary: dict[str, Any]) -> None:
         "",
         "- Existing Neo4j bulk-import CSVs under `data/processed/neo4j_imports`.",
         "- Import report warnings from `import.report`.",
-        "- Current retrieval error cases under `evaluation_artifacts/output/report_artifacts/retrieval_error_cases.json`.",
+        f"- Current retrieval error cases under `{summary['error_cases_path'] or 'not found'}`.",
         "",
         "## Graph Size From CSV Export",
         "",
@@ -294,6 +304,12 @@ def write_report(summary: dict[str, Any]) -> None:
     (OUT_DIR / "kg_progress_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def display_path(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    return path.as_posix()
+
+
 def main() -> None:
     started = time.perf_counter()
     missing = [
@@ -313,7 +329,8 @@ def main() -> None:
         for label, filename in EDGE_FILES.items()
     }
 
-    error_cases = load_error_cases(ERROR_CASES)
+    error_cases_path = find_error_cases_path()
+    error_cases = load_error_cases(error_cases_path) if error_cases_path else []
     needed_chunk_ids = collect_needed_chunk_ids(error_cases)
     articles = find_articles_by_chunk_uuid(IMPORT_DIR / "articles.csv", needed_chunk_ids)
     doc_ids = {row["doc_id"] for row in articles.values() if row.get("doc_id")}
@@ -334,6 +351,9 @@ def main() -> None:
         "total_nodes": sum(node_counts.values()),
         "total_edges": sum(edge_counts.values()),
         "import_report": parse_import_report(IMPORT_DIR / "import.report"),
+        "error_cases_path": (
+            display_path(error_cases_path.relative_to(ROOT)) if error_cases_path else None
+        ),
         "doc_doc_relation_counts": edge_info["relation_counts"],
         "doc_doc_incident_counts_for_eval_docs": edge_info["incident_counts_for_eval_docs"],
         "needed_chunk_ids": len(needed_chunk_ids),

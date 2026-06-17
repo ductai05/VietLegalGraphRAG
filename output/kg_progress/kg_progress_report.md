@@ -1,12 +1,12 @@
 # KG Progress Audit
 
-Generated at: `2026-06-18 00:03:43`
+Generated at: `2026-06-18 00:12:46`
 
 ## What Was Checked
 
 - Existing Neo4j bulk-import CSVs under `data/processed/neo4j_imports`.
 - Import report warnings from `import.report`.
-- Current retrieval error cases under `evaluation_artifacts/output/report_artifacts/retrieval_error_cases.json`.
+- Current retrieval error cases under `output/report_artifacts/retrieval_error_cases.json`.
 
 ## Graph Size From CSV Export
 
