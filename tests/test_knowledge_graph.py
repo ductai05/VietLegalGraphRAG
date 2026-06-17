@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "pipeline" / "04_graph_construction"))
+sys.path.insert(0, str(ROOT / "pipeline" / "05_graph"))
 
 
 def test_normalizes_relationship_labels():

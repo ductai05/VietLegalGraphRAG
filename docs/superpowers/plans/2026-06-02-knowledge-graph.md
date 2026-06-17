@@ -4,7 +4,7 @@
 
 **Goal:** Build a reproducible Knowledge Graph construction pipeline for cleaned Vietnamese legal documents and optional chunk outputs.
 
-**Architecture:** The implementation adds a focused graph construction package under `pipeline/04_graph_construction/`. It builds canonical node and edge tables from Parquet inputs, exports local artifacts, and generates Neo4j import Cypher without requiring a running Neo4j instance.
+**Architecture:** The implementation adds a focused graph construction package under `pipeline/05_graph/`. It builds canonical node and edge tables from Parquet inputs, exports local artifacts, and generates Neo4j import Cypher without requiring a running Neo4j instance.
 
 **Tech Stack:** Python, pandas or pyarrow-backed Parquet readers, stdlib CSV and JSON, pytest, existing chunking module.
 
@@ -14,17 +14,17 @@
 
 - Modify: `pipeline/03_preprocessing/chunk.py`
   - Make chunk IDs deterministic per document and chunk ordinal.
-- Create: `pipeline/04_graph_construction/__init__.py`
+- Create: `pipeline/05_graph/__init__.py`
   - Package exports.
-- Create: `pipeline/04_graph_construction/schema.py`
+- Create: `pipeline/05_graph/schema.py`
   - Dataclasses and constants for node labels, edge types, priority tiers, and relationship normalization.
-- Create: `pipeline/04_graph_construction/build_graph.py`
+- Create: `pipeline/05_graph/build_graph.py`
   - Core graph builder and artifact exporter.
-- Create: `pipeline/04_graph_construction/run_graph_construction.py`
+- Create: `pipeline/05_graph/run_graph_construction.py`
   - CLI entrypoint.
-- Modify: `pipeline/04_graph_construction/README.md`
+- Modify: `pipeline/05_graph/README.md`
   - Usage, artifacts, and Neo4j import notes.
-- Create: `pipeline/04_graph_construction/requirements.txt`
+- Create: `pipeline/05_graph/requirements.txt`
   - Runtime dependencies for graph construction.
 - Create: `tests/test_chunking_stable_ids.py`
   - Verifies deterministic chunk IDs from the chunking pipeline.
@@ -72,7 +72,7 @@
 
 ### Task 6: Documentation and Sample Build
 
-- [ ] Update `pipeline/04_graph_construction/README.md` with KG model, commands, outputs, and Neo4j import sequence.
+- [ ] Update `pipeline/05_graph/README.md` with KG model, commands, outputs, and Neo4j import sequence.
 - [ ] Run unit tests.
 - [ ] Run a sample graph build using current `data/preprocessed/metadata.parquet` and `relationships.parquet` with a small row limit.
 - [ ] Inspect `graph_summary.json` and confirm counts and orphan edge reporting are plausible.

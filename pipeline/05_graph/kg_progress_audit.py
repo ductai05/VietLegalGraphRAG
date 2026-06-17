@@ -328,7 +328,7 @@ def main() -> None:
     summary = {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "runtime_seconds": round(time.perf_counter() - started, 2),
-        "import_dir": str(IMPORT_DIR),
+        "import_dir": str(IMPORT_DIR.relative_to(ROOT)),
         "node_counts": node_counts,
         "edge_counts": edge_counts,
         "total_nodes": sum(node_counts.values()),

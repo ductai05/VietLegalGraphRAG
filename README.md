@@ -47,7 +47,7 @@ VietLegalGraphRAG/
 │   │   └── README.md
 │   ├── 02_eda/                        #   Exploratory Data Analysis
 │   ├── 03_preprocessing/              #   Tiền xử lý dữ liệu
-│   ├── 04_graph_construction/         #   Xây dựng Knowledge Graph
+│   ├── 05_graph/                      #   Xây dựng Knowledge Graph
 │   ├── 05_embedding/                  #   Tạo vector embeddings
 │   ├── 06_training/                   #   Huấn luyện mô hình
 │   └── 07_evaluation/                 #   Đánh giá mô hình

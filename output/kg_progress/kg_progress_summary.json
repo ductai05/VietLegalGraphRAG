@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-17 23:49:47",
-  "runtime_seconds": 49.73,
-  "import_dir": "D:\\monhoc_D\\ML\\VietLegalGraphRAG\\data\\processed\\neo4j_imports",
+  "generated_at": "2026-06-18 00:03:43",
+  "runtime_seconds": 42.5,
+  "import_dir": "data\\processed\\neo4j_imports",
   "node_counts": {
     "Document": 353665,
     "Article": 7476806,

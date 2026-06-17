@@ -1,4 +1,4 @@
-# Bước 4: Xây dựng Knowledge Graph
+# Bước 5: Xây dựng Knowledge Graph
 
 Module này xây dựng Knowledge Graph từ dữ liệu đã làm sạch trong `data/preprocessed/`.
 
@@ -79,6 +79,24 @@ Các file tùy chọn khi có chunks:
 
 - `chunks.csv`
 - `chunk_edges.csv`
+
+## Audit tiến độ KG với evaluation hiện tại
+
+Nếu đã có bộ CSV Neo4j bulk-import trong `data/processed/neo4j_imports`, có thể
+chạy audit không cần khởi động Neo4j:
+
+```powershell
+python pipeline/05_graph/kg_progress_audit.py
+```
+
+Script này tạo:
+
+- `output/kg_progress/kg_progress_report.md`: báo cáo ngắn để nhóm kiểm tra.
+- `output/kg_progress/kg_progress_summary.json`: số liệu máy đọc được.
+
+Audit hiện kiểm tra số lượng node/edge trong CSV export, warning từ
+`import.report`, và map các `chunk_id` trong retrieval error cases hiện tại về
+Document/Article trong KG.
 
 ## Node và edge chính
 

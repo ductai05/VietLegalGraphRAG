@@ -26,7 +26,7 @@ Use an artifact-first KG pipeline:
 
 - Generate canonical node and edge tables locally.
 - Export CSV and JSONL artifacts under `data/graph/`.
-- Generate Neo4j import Cypher under `pipeline/04_graph_construction/neo4j_import.cypher`.
+- Generate Neo4j import Cypher under `pipeline/05_graph/neo4j_import.cypher`.
 - Keep direct Neo4j loading optional, because no Neo4j connection settings are present in the repo.
 
 This is preferred over a direct Neo4j-only build because it is testable on the current machine and does not hide graph quality problems behind a database import step. It is also preferred over a chunk-only graph because legal relationships are already present at document level and should remain a first-class KG layer.
