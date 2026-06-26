@@ -128,7 +128,7 @@ class BGEReranker(BaseReranker):
             model_name,
             cache_dir=cache_dir,
             trust_remote_code=True,
-            torch_dtype=dtype,
+            dtype=dtype,
         )
         self.model.to(self.device)
         self.model.eval()

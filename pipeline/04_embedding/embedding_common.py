@@ -211,7 +211,7 @@ def load_encoder(
         tokenizer.pad_token = tokenizer.eos_token
     model_kwargs = {
         "cache_dir": cache_dir,
-        "torch_dtype": dtype,
+        "dtype": dtype,
     }
     if attn_implementation:
         model_kwargs["attn_implementation"] = attn_implementation
