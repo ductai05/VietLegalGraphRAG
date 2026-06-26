@@ -72,6 +72,8 @@ class ElasticsearchRetrievalTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("--elastic-cloud-id", result.stdout)
+                self.assertNotIn("--storage-dir", result.stdout)
+                self.assertNotIn("--url", result.stdout)
 
     def test_search_builds_knn_prefilter_and_normalizes_cosine_score(self):
         client = FakeElasticsearchClient()
@@ -128,12 +130,10 @@ class ElasticsearchRetrievalTests(unittest.TestCase):
         retriever.close()
         client.close.assert_called_once_with()
 
-    def test_constructor_rejects_multiple_targets(self):
-        with self.assertRaisesRegex(ValueError, "exactly one"):
+    def test_constructor_rejects_qdrant_targets(self):
+        with self.assertRaisesRegex(ValueError, "Qdrant"):
             DenseRetriever(
                 url="http://localhost:6333",
-                elastic_cloud_id="cloud-id",
-                elastic_api_key="api-key",
             )
 
 

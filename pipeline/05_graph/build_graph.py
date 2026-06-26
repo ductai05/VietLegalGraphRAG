@@ -47,6 +47,7 @@ class GraphBuilder:
         self.duplicate_node_ids = 0
         self.duplicate_edge_ids = 0
         self.orphan_document_relationship_edges = 0
+        self.self_loop_document_relationship_edges = 0
         self.orphan_chunk_rows = 0
         self.raw_relationship_counts: Dict[str, int] = {}
         self.edge_type_counts: Dict[str, int] = {}
@@ -137,6 +138,11 @@ class GraphBuilder:
         if source_id not in self.document_ids or target_id not in self.document_ids:
             self.orphan_document_relationship_edges += 1
             return
+        if source_id == target_id:
+            self.self_loop_document_relationship_edges += 1
+            return
+        if normalized.reverse_direction:
+            source_id, target_id = target_id, source_id
 
         edge = self._add_edge(
             source_id=source_id,
@@ -270,6 +276,7 @@ class GraphBuilder:
             "edge_types": dict(sorted(self.edge_type_counts.items())),
             "raw_relationship_labels": dict(sorted(self.raw_relationship_counts.items())),
             "orphan_document_relationship_edges": self.orphan_document_relationship_edges,
+            "self_loop_document_relationship_edges": self.self_loop_document_relationship_edges,
             "orphan_chunk_rows": self.orphan_chunk_rows,
             "duplicate_node_ids": self.duplicate_node_ids,
             "duplicate_edge_ids": self.duplicate_edge_ids,
@@ -336,7 +343,10 @@ def document_node_id(doc_id: Any) -> str:
 
 
 def chunk_node_id(chunk_id: Any) -> str:
-    return f"chunk:{clean_text(chunk_id)}"
+    value = clean_text(chunk_id)
+    if value.startswith("chunk:"):
+        return value
+    return f"chunk:{value}"
 
 
 def edge_identifier(source_id: str, target_id: str, edge_type: str, raw_type: str = "") -> str:

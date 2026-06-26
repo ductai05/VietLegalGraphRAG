@@ -1,12 +1,17 @@
 # Dense Embedding Pipeline
 
+> MVP update 2026-06-26: Qdrant ingestion scripts were removed from the active
+> code path. Dense retrieval for the demo uses Elasticsearch as the serving
+> backend. Older Qdrant notes below are historical and should not be used for
+> MVP setup.
+
 Pipeline này hiện thực kế hoạch trong `PLAN_EMBEDDING.md` cho model
 `darklethelong/vnlegal-lal`:
 
 1. Lọc `embed=True`, loại `raw_table` và `hard_char_split`.
 2. Join metadata, rebuild `contextual_text`, chuẩn hóa ngày.
 3. Encode theo shard float16, có manifest để resume.
-4. Upsert shard vào Qdrant local hoặc Qdrant server.
+4. Upsert shard vào Elasticsearch dense index.
 5. Dense retrieval, expansion và đánh giá Recall/MRR/nDCG.
 
 ## Các file
@@ -15,7 +20,6 @@ Pipeline này hiện thực kế hoạch trong `PLAN_EMBEDDING.md` cho model
 |---|---|
 | `prepare_embedding_data.py` | Freeze `embed_payload_v0.1.parquet`, kiểm tra invariant và xuất danh sách bảng cần repair |
 | `embed_shards.py` | Encode document theo shard, checkpoint bằng `manifest.json` |
-| `build_qdrant.py` | Tạo collection/index và resume upsert shard |
 | `dense_retrieval.py` | Query prefix, filter, citation và expansion từ `chunks.parquet` |
 | `manage_shards.py` | CLI quản lý shard (verify, merge shards/faiss, repair) |
 | `embedding_common.py` | Hằng số và utility dùng chung |
@@ -62,7 +66,7 @@ mặc định nếu `torch.cuda.get_arch_list()` có `sm_75`.
 ```bash
 %cd /kaggle/input/datasets/brdh7940/04-embedding/04_embedding
 !python -m pip install -q -r requirements.txt
-!python -c "import faiss, polars, pyarrow, qdrant_client, transformers; print('embedding dependencies OK')"
+!python -c "import faiss, polars, pyarrow, elasticsearch, transformers; print('embedding dependencies OK')"
 ```
 
 Luôn dùng `python -m pip` để cài vào đúng interpreter chạy script. Package
@@ -244,9 +248,9 @@ Mỗi process chỉ nhìn thấy một T4 và dùng device `cuda` của GPU đó
 !tail -n 5 "$WORK/gpu1.log"
 ```
 
-Không upsert riêng từng thư mục `shards_0`/`shards_1` vào cùng Qdrant collection:
-`build_qdrant.py` kiểm tra point count theo một manifest hoàn chỉnh. Hai thư mục từ ví
-dụ thủ công này không trực tiếp Qdrant-ready khi đứng riêng. Với production phân tán,
+Không upload riêng từng thư mục `shards_0`/`shards_1` vào cùng Elasticsearch index:
+uploader cần một manifest hoàn chỉnh để checkpoint an toàn. Hai thư mục từ ví
+dụ thủ công này không trực tiếp Elasticsearch-ready khi đứng riêng. Với production phân tán,
 dùng layout `KAGGLE_MEMBER.py` rồi tạo canonical shards bằng `repair_member_shards.py`;
 `merge_member_shards.py` chỉ dùng cho member outputs strict, đầy đủ và không duplicate.
 Nếu corpus không đúng tròn 5 triệu rows, tính số shard bằng
@@ -260,9 +264,9 @@ Chạy lại đúng command để resume. Shard chỉ được đánh dấu `don
 !test -f "$WORK/data/shards/manifest.json" && echo "full embedding has manifest"
 ```
 
-`build_qdrant.py` chỉ được chạy sau khi manifest full embedding tồn tại. Lỗi
+Elasticsearch upload chỉ được chạy sau khi manifest full embedding tồn tại. Lỗi
 `Missing .../data/shards/manifest.json` nghĩa là bước encode full chưa chạy thành
-công; không phải lỗi Qdrant.
+công; không phải lỗi Elasticsearch.
 
 Output mỗi shard:
 
@@ -312,37 +316,6 @@ payload overhead. One shared codebook is trained and reused across all member
 indexes so scores remain comparable when their local top-K results are merged.
 FAISS metadata filters are post-filters; increase `--faiss-oversample` for
 selective filters and measure recall with `evaluate_dense.py`.
-
-## 6. Build Qdrant
-
-### Qdrant embedded local
-
-Chỉ chạy trên Kaggle nếu còn đủ disk:
-
-```bash
-!python build_qdrant.py \
-  --shards-dir "$WORK/data/shards" \
-  --storage-dir "$WORK/qdrant/qdrant_storage" \
-  --recreate \
-  --archive "$WORK/qdrant/qdrant_legal_chunks_dense_v1.zip"
-```
-
-Sau lần đầu, bỏ `--recreate` để resume. Không dùng `--include-text` mặc định
-vì `chunk_text` làm payload và Qdrant storage tăng mạnh; retrieval có thể lấy
-text/expansion từ `chunks.parquet`.
-
-Qdrant embedded local phù hợp smoke test, nhưng payload index không có hiệu lực
-như Qdrant server. Với full corpus, nên ingest shard trên máy có đủ disk vào
-Qdrant server:
-
-```bash
-python build_qdrant.py \
-  --shards-dir /data/legal_embedding/shards \
-  --url http://localhost:6333 \
-  --recreate
-```
-
-Nếu server yêu cầu key, thêm `--api-key "$QDRANT_API_KEY"`.
 
 ## Elasticsearch on Elastic Cloud
 
@@ -454,21 +427,9 @@ larger values increase query CPU and latency.
 
 ## 7. Smoke test retrieval
 
-Local:
-
-```bash
-!python dense_retrieval.py \
-  --storage-dir "$WORK/qdrant/qdrant_storage" \
-  --chunks "$CHUNKS" \
-  --query "Điều kiện cấp giấy phép xây dựng là gì?" \
-  --top-k 5
-```
-
-Qdrant server:
-
 ```bash
 python dense_retrieval.py \
-  --url http://localhost:6333 \
+  --elastic-cloud-id "$ELASTIC_CLOUD_ID" \
   --chunks /data/chunks.parquet \
   --query "Điều kiện cấp giấy phép xây dựng là gì?" \
   --filters '{"effect_status":"Còn hiệu lực","ranges":{"issuance_date_ts":{"gte":20200101}}}'
@@ -503,7 +464,7 @@ Chạy:
 ```bash
 !python pipeline/07_evaluation/evaluate_dense.py \
   --gold /kaggle/input/<eval-dataset>/dense_gold.jsonl \
-  --storage-dir "$WORK/qdrant/qdrant_storage" \
+  --elastic-cloud-id "$ELASTIC_CLOUD_ID" \
   --chunks "$CHUNKS" \
   --top-k 10 \
   --output "$WORK/logs/dense_eval.json"
@@ -539,8 +500,8 @@ and final ordered results.
 - Document được encode **không có query prefix**. Prefix chỉ dùng trong
   `dense_retrieval.py` khi encode query.
 - Vector shard lưu float16; lúc upsert được chuyển thành float32.
-- Không xóa shard sau khi build Qdrant. Đây là artifact portable để rebuild.
+- Không xóa shard sau khi upload Elasticsearch. Đây là artifact portable để rebuild.
 - Nếu đổi model, revision, max length hoặc chunk version, dùng output directory
   và collection version mới.
-- Qdrant local và file shard cùng tồn tại có thể vượt giới hạn disk Kaggle.
-  Khi đó chỉ encode/export shard trên Kaggle và build Qdrant ở môi trường khác.
+- Full shard files và Elasticsearch store có thể vượt giới hạn disk Kaggle.
+  Khi đó chỉ encode/export shard trên Kaggle và upload Elasticsearch ở môi trường khác.

@@ -1,4 +1,4 @@
-"""Query Elasticsearch, Qdrant, or sharded FAISS and optionally expand chunks."""
+"""Query Elasticsearch or sharded FAISS and optionally expand chunks."""
 
 from __future__ import annotations
 
@@ -28,14 +28,6 @@ except ModuleNotFoundError as exc:
     if exc.name != "elasticsearch":
         raise
     Elasticsearch = None
-try:
-    from qdrant_client import QdrantClient, models
-except ModuleNotFoundError as exc:
-    if exc.name != "qdrant_client":
-        raise
-    QdrantClient = None
-    models = None
-
 from embedding_common import (
     COLLECTION_NAME,
     MODEL_NAME,
@@ -53,26 +45,6 @@ from elasticsearch_common import (
 
 EXPAND_SCORE_THRESHOLD = 0.75
 EXPAND_MIN_CHARS = 300
-
-
-def build_filter(filters: dict[str, Any] | None) -> models.Filter | None:
-    if not filters:
-        return None
-    if models is None:
-        raise ModuleNotFoundError(
-            "Qdrant retrieval requires qdrant-client. Install it with "
-            "`python -m pip install qdrant-client`."
-        )
-    must: list[models.FieldCondition] = []
-    ranges = filters.get("ranges", {})
-    for key, value in filters.items():
-        if key == "ranges":
-            continue
-        match = models.MatchAny(any=value) if isinstance(value, list) else models.MatchValue(value=value)
-        must.append(models.FieldCondition(key=key, match=match))
-    for key, bounds in ranges.items():
-        must.append(models.FieldCondition(key=key, range=models.Range(**bounds)))
-    return models.Filter(must=must)
 
 
 def format_citation(payload: dict[str, Any]) -> str:
@@ -135,18 +107,22 @@ class DenseRetriever:
         elastic_index: str = COLLECTION_NAME,
         elastic_num_candidates: int | None = None,
     ) -> None:
-        targets = (storage_dir, url, faiss_dir, elastic_cloud_id)
+        if storage_dir is not None or url is not None:
+            raise ValueError(
+                "Qdrant targets are no longer supported in the MVP dense "
+                "retriever. Use --elastic-cloud-id for Elasticsearch."
+            )
+        if api_key is not None:
+            raise ValueError(
+                "Qdrant api_key is no longer supported. Use elastic_api_key "
+                "with Elasticsearch."
+            )
+        targets = (faiss_dir, elastic_cloud_id)
         if sum(value is not None for value in targets) != 1:
             raise ValueError(
-                "Provide exactly one of storage_dir, url, faiss_dir, or "
-                "elastic_cloud_id"
+                "Provide exactly one of faiss_dir or elastic_cloud_id"
             )
-        if storage_dir is not None and not storage_dir.exists():
-            raise FileNotFoundError(
-                f"Qdrant storage directory does not exist: {storage_dir}. "
-                "Run build_qdrant.py successfully before retrieval."
-            )
-        self.client: QdrantClient | None = None
+        self.client = None
         self.elasticsearch_client: Any | None = None
         self.faiss_indexes: list[tuple[str, Any, pa.Table]] = []
         self.faiss_handles: list[pa.MemoryMappedFile] = []
@@ -176,23 +152,6 @@ class DenseRetriever:
                 raise RuntimeError(
                     f"Elasticsearch index {elastic_index!r} does not exist. "
                     "Run build_elasticsearch.py successfully before retrieval."
-                )
-        else:
-            if QdrantClient is None:
-                raise ModuleNotFoundError(
-                    "Qdrant retrieval requires qdrant-client. Install it with "
-                    "`python -m pip install qdrant-client`."
-                )
-            self.client = (
-                QdrantClient(path=str(storage_dir))
-                if storage_dir is not None
-                else QdrantClient(url=url, api_key=api_key)
-            )
-            if not self.client.collection_exists(collection):
-                self.client.close()
-                raise RuntimeError(
-                    f"Qdrant collection {collection!r} does not exist. "
-                    "Run build_qdrant.py successfully before retrieval."
                 )
         self.tokenizer, self.model, self.device, _ = load_encoder(
             model_name, device, cache_dir
@@ -275,7 +234,7 @@ class DenseRetriever:
         elif self.elasticsearch_client is not None:
             points = self._search_elasticsearch(vector, filters, top_k)
         else:
-            points = self._search_qdrant(vector, filters, top_k)
+            raise RuntimeError("DenseRetriever has no active search backend.")
         hits = []
         expansion_ids: list[str] = []
         for score, payload in points:
@@ -328,19 +287,6 @@ class DenseRetriever:
             if target_id in lookup:
                 hit["optional_expanded_context"] = lookup[target_id]["chunk_text"]
         return hits
-
-    def _search_qdrant(
-        self, vector: np.ndarray, filters: dict[str, Any] | None, top_k: int
-    ) -> list[tuple[float, dict[str, Any]]]:
-        assert self.client is not None
-        result = self.client.query_points(
-            collection_name=self.collection,
-            query=vector.tolist(),
-            query_filter=build_filter(filters),
-            limit=top_k,
-            with_payload=True,
-        )
-        return [(point.score, point.payload or {}) for point in result.points]
 
     def _search_elasticsearch(
         self, vector: np.ndarray, filters: dict[str, Any] | None, top_k: int
@@ -403,17 +349,13 @@ class DenseRetriever:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--storage-dir", type=Path)
-    target.add_argument("--url")
     target.add_argument("--faiss-dir", type=Path)
     target.add_argument("--elastic-cloud-id")
-    parser.add_argument("--api-key", default=None)
     parser.add_argument("--elastic-api-key", default=None)
     parser.add_argument("--elastic-index", default=COLLECTION_NAME)
     parser.add_argument("--elastic-num-candidates", type=int, default=None)
     parser.add_argument("--query", required=True)
     parser.add_argument("--chunks", type=Path, default=None)
-    parser.add_argument("--collection", default=COLLECTION_NAME)
     parser.add_argument("--model", default=MODEL_NAME)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--device", default=None)
@@ -428,11 +370,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     retriever = DenseRetriever(
-        args.storage_dir,
-        url=args.url,
         faiss_dir=args.faiss_dir,
-        api_key=args.api_key,
-        collection=args.collection,
         model_name=args.model,
         chunks_path=args.chunks,
         device=args.device,

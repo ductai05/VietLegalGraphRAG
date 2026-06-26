@@ -1,7 +1,7 @@
 """Evaluate dense retrieval, optionally reranking a larger candidate pool.
 
 Example:
-python pipeline/07_evaluation/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --url http://129.212.184.109:8333/ --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output output/dense_rerank_eval_results.json
+python pipeline/07_evaluation/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --elastic-cloud-id "$ELASTIC_CLOUD_ID" --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output output/dense_rerank_eval_results.json
 """
 
 from __future__ import annotations
@@ -28,16 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gold", type=Path, required=True)
     target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--storage-dir", type=Path)
-    target.add_argument("--url")
     target.add_argument("--faiss-dir", type=Path)
     target.add_argument("--elastic-cloud-id")
-    parser.add_argument("--api-key", default=None)
     parser.add_argument("--elastic-api-key", default=None)
     parser.add_argument("--elastic-index", default=COLLECTION_NAME)
     parser.add_argument("--elastic-num-candidates", type=int, default=None)
     parser.add_argument("--chunks", type=Path, default=None)
-    parser.add_argument("--collection", default=COLLECTION_NAME)
     parser.add_argument("--model", default=MODEL_NAME)
     parser.add_argument("--candidate-k", type=int, default=100)
     parser.add_argument("--top-k", type=int, default=10)
@@ -164,11 +160,7 @@ def main() -> None:
         raise ValueError("--rerank-batch-size must be positive")
     rows = load_jsonl(args.gold)
     retriever = DenseRetriever(
-        args.storage_dir,
-        url=args.url,
         faiss_dir=args.faiss_dir,
-        api_key=args.api_key,
-        collection=args.collection,
         model_name=args.model,
         chunks_path=args.chunks,
         device=args.device,
@@ -186,7 +178,7 @@ def main() -> None:
         if args.chunks is None:
             logging.warning(
                 "--chunks was not provided; reranking passages will rely only on "
-                "Elasticsearch/Qdrant/FAISS payload fields and may have empty chunk text"
+                "Elasticsearch/FAISS payload fields and may have empty chunk text"
             )
         try:
             passage_loader = PassageLoader(args.chunks)
