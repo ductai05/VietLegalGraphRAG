@@ -147,7 +147,106 @@ Các khoảng trống còn phải xử lý:
   - FE public trên Vercel hoặc Netlify nếu backend có public URL.
   - Khuyến nghị MVP: ưu tiên Docker Compose local hoặc VPS. Không phụ thuộc hoàn toàn free managed services cho ES + Neo4j.
 
-## 6. Phase Dependency Map
+## 6. Service Interface Contracts
+
+Các module backend phải phát triển độc lập qua contract rõ ràng. Implementation có thể dùng dataclass ở service layer và Pydantic ở API layer, nhưng tên field nên đồng nhất.
+
+### RetrievalRequest
+
+Inputs:
+
+- `query: str`
+- `retrieval_mode: "dense" | "sparse" | "hybrid"`
+- `rerank.enabled: bool`
+- `rerank.model: str`
+- `rerank.candidate_k: int`
+- `rerank.batch_size: int`
+- `rerank.device: "auto" | "cpu" | "cuda"`
+- `rerank.timeout_ms: int`
+- `top_k: int`
+- `filters: dict`
+- `graph.enabled: bool`
+- `graph.use_lightrag: bool`
+- `graph.max_hops: int`
+- `llm.temperature: float`
+- `llm.max_context_chunks: int`
+- `include_trace: bool`
+
+Derived field:
+
+- `execution_mode: "dense" | "dense_rerank" | "sparse" | "sparse_rerank" | "hybrid" | "hybrid_rerank"`
+
+### RetrievalHit
+
+Required output fields:
+
+- `rank: int`
+- `chunk_id: str`
+- `doc_id: str`
+- `title: str`
+- `document_number: str`
+- `legal_type: str`
+- `effect_status: str`
+- `section_path: str`
+- `text: str`
+- `scores: dict`
+- `citation: str`
+
+Scores should use stable keys where available:
+
+- `dense`
+- `sparse`
+- `rrf`
+- `rerank`
+
+### GraphContext
+
+GraphRetriever returns:
+
+- `center: dict | None`
+- `nodes: list[dict]`
+- `edges: list[dict]`
+- `related_chunks: list[dict]`
+- `query_intent: str`
+
+Each graph edge should include:
+
+- `source`
+- `target`
+- `type`
+- `raw_label`
+- `direction`
+
+### AnswerContext
+
+LightRAG and AnswerService consume merged contexts:
+
+- `source: "retrieval" | "graph"`
+- `chunk_id: str | None`
+- `doc_id: str`
+- `title: str`
+- `text: str`
+- `citation: str`
+- `relation: str | None`
+- `raw_label: str | None`
+
+### API Response Envelope
+
+All user-facing endpoints should return:
+
+- `latency_ms`
+- data payload specific to endpoint.
+- `trace` or `retrieval_trace` when requested.
+- `warnings: list[str]` for degraded but usable responses.
+
+Error responses should use:
+
+- `error.code`
+- `error.message`
+- `error.retryable`
+- `trace_id`
+
+## 7. Phase Dependency Map
 
 ```text
 Phase 0: Scope Freeze
@@ -157,8 +256,11 @@ Phase 0: Scope Freeze
 
 Phase 0: Scope Freeze
   -> Phase 3: Retrieval Services Consolidation
+  -> Phase 6a: FastAPI Search and Health
+
+Phase 3 + Phase 4
   -> Phase 5: LightRAG Runtime Orchestration
-  -> Phase 6: FastAPI Backend
+  -> Phase 6b: FastAPI Answer and Graph Endpoints
 
 Phase 6: FastAPI Backend
   -> Phase 7: Frontend Contract Handoff
@@ -175,7 +277,8 @@ Phase 6
 ### Can Run in Parallel
 
 - Phase 1 and Phase 3 can run in parallel after Phase 0.
-- Phase 7 can start from mocked API response before Phase 6 is fully complete.
+- Phase 6a can start after Phase 3 without waiting for LightRAG.
+- Phase 7 can start from mocked API response before Phase 6b is fully complete.
 - Phase 8 can start with existing output files, then rerun after Phase 1 to Phase 6 stabilize.
 - Phase 10 can start with skeleton Docker Compose while API endpoints are still being implemented.
 
@@ -184,10 +287,18 @@ Phase 6
 - Phase 2 depends on Phase 1 artifacts.
 - Phase 4 depends on Phase 2 or at least a smoke Neo4j graph.
 - Phase 5 depends on Phase 3 and Phase 4 interfaces.
-- Phase 6 depends on Phase 3, Phase 4 and Phase 5 enough to expose stable endpoints.
+- Phase 6a depends on Phase 3.
+- Phase 6b `/answer` depends on Phase 5.
+- Phase 6b graph endpoints depend on Phase 4.
 - Phase 9 depends on Phase 6 and at least one working deployment mode.
 
-## 7. Phase Backlog
+### Criteria Semantics
+
+- Acceptance Criteria kiểm tra hành vi hoặc output của phase đó.
+- Exit Criteria là điều kiện để phase phụ thuộc phía sau có thể bắt đầu an toàn.
+- Nếu một phase có cùng một điều kiện ở cả hai nhóm, Acceptance Criteria kiểm chứng điều kiện đó, còn Exit Criteria dùng điều kiện đó như gate chuyển tiếp.
+
+## 8. Phase Backlog
 
 ### Phase 0: Scope Freeze and Repo Baseline
 
@@ -424,22 +535,45 @@ Inputs and Dependencies:
 
 Tasks:
 
-- Thiết kế service interface:
+- 3.1. Thiết kế service interface:
   - `search(request: RetrievalRequest) -> list[RetrievalHit]`
   - `RetrievalHit` có `chunk_id`, `doc_id`, `title`, `text`, metadata, scores, citation.
-- Implement hoặc wrap:
-  - `DenseElasticsearchRetriever`
-  - `SparseElasticsearchRetriever`
-  - `FusionRetriever` dùng RRF.
-  - `RerankService`.
-  - `RetrievalService`.
-- Chạy dense và sparse song song cho `hybrid`.
-- Áp metadata filter vào cả dense và sparse:
+- 3.2. Implement Dense ES adapter:
+  - dùng index dense Elasticsearch.
+  - nhận metadata filters.
+  - trả `RetrievalHit` với `scores.dense`.
+- 3.3. Implement Sparse ES adapter:
+  - dùng BM25 Elasticsearch.
+  - nhận metadata filters cùng schema với Dense adapter.
+  - trả `RetrievalHit` với `scores.sparse`.
+- 3.4. Implement FusionRetriever:
+  - chạy dense và sparse song song.
+  - merge theo `chunk_id`.
+  - tính `scores.rrf`.
+  - preserve score gốc để trace.
+- 3.5. Implement RerankService:
+  - nhận candidates từ dense, sparse hoặc hybrid.
+  - batch theo `rerank.batch_size`.
+  - timeout theo `rerank.timeout_ms`.
+  - trả `scores.rerank`.
+- 3.6. Implement RetrievalService:
+  - resolve `execution_mode`.
+  - gọi adapter tương ứng.
+  - apply top_k sau rerank hoặc fusion.
+  - chuẩn hóa citation.
+- 3.7. Chuẩn hóa filter propagation:
   - `effect_status`
   - `legal_type`
   - `linh_vuc` hoặc `legal_sectors`
   - `issuing_authority`
   - optional date range.
+- 3.8. Viết tests và smoke command.
+- Implement hoặc wrap nếu muốn tái sử dụng code hiện có:
+  - `DenseElasticsearchRetriever`
+  - `SparseElasticsearchRetriever`
+  - `FusionRetriever` dùng RRF.
+  - `RerankService`.
+  - `RetrievalService`.
 - Chuẩn hóa score trace:
   - `dense`
   - `sparse`
@@ -647,8 +781,8 @@ Inputs and Dependencies:
 
 Tasks:
 
-- Tạo FastAPI app trong `src/backend/app`.
-- Tạo Pydantic schemas cho:
+- 6.1. Tạo FastAPI app trong `src/backend/app`.
+- 6.2. Tạo Pydantic schemas cho:
   - `SearchRequest`
   - `AnswerRequest`
   - `RerankConfig`
@@ -658,27 +792,28 @@ Tasks:
   - `GraphContext`
   - `Citation`
   - `RetrievalTrace`
-- Implement endpoints:
+- 6.3. Implement Phase 6a endpoints:
   - `GET /health`
   - `POST /search`
+- 6.4. Implement Phase 6b endpoints:
   - `POST /answer`
   - `GET /documents/{doc_id}/graph`
   - `GET /documents/{doc_id}/version-chain`
-- Add CORS config cho FE.
-- Add structured error response:
+- 6.5. Add CORS config cho FE.
+- 6.6. Add structured error response:
   - invalid request
   - ES unavailable
   - Neo4j unavailable
   - LLM unavailable
   - rerank timeout.
-- Add latency logging:
+- 6.7. Add latency logging:
   - dense latency
   - sparse latency
   - fusion latency
   - rerank latency
   - graph latency
   - LLM latency.
-- Add lightweight cache:
+- 6.8. Add lightweight cache:
   - graph neighbor cache.
   - optional search cache by normalized query and config.
 
@@ -704,15 +839,17 @@ Acceptance Criteria:
 
 - `/health` reports ES, Neo4j and LLM config status.
 - `/search` returns results without LLM.
+- Phase 6a is accepted when `/health`, `/search`, request validation and CORS work with mocked services.
 - `/answer` returns answer, citations, retrieval trace and optional graph context.
 - `/documents/{doc_id}/graph` returns graph nodes and edges.
 - `/documents/{doc_id}/version-chain` returns chain.
+- Phase 6b is accepted when `/answer` and graph endpoints work with real or mocked RetrievalService, GraphRetriever and AnswerService.
 - Backend never exposes raw stack trace to FE.
 
 Exit Criteria:
 
-- FE can integrate without reading backend internals.
-- Demo can run from API alone using curl or Swagger.
+- After Phase 6a, FE can start integrating search without reading backend internals.
+- After Phase 6b, demo can run from API alone using curl or Swagger.
 
 Owner Suggestion:
 
@@ -1032,7 +1169,7 @@ Risks:
 
 - ES + Neo4j cùng máy có thể thiếu RAM. Với MVP, cần chuẩn bị subset hoặc chạy service ngoài nếu máy yếu.
 
-## 8. Task Prioritization
+## 9. Task Prioritization
 
 | Priority | Task | Phase | Keep, Modify, Drop | Notes |
 | --- | --- | --- | --- | --- |
@@ -1045,8 +1182,8 @@ Risks:
 | P0 | Hybrid RRF | 3 | Keep | Reuse evaluation code nếu được |
 | P0 | Rerank toggle | 3 | Keep | 6 execution modes |
 | P0 | Metadata filtering | 3 | Keep | Áp cho dense và sparse |
-| P0 | FastAPI `/search` | 6 | Add | FE cần sớm |
-| P0 | FastAPI `/answer` | 6 | Add | Demo chính |
+| P0 | FastAPI `/search` | 6a | Add | FE cần sớm, không phụ thuộc LightRAG |
+| P0 | FastAPI `/answer` | 6b | Add | Demo chính, phụ thuộc LightRAG và AnswerService |
 | P1 | GraphRetriever | 4 | Keep | Needed for KG demo |
 | P1 | LightRAG orchestration | 5 | Keep, narrowed | Runtime orchestration, không thay ingestion |
 | P1 | Version chain queries | 4 | Keep | Demo legal update |
@@ -1063,7 +1200,7 @@ Risks:
 | P3 | Production deployment | Future | Defer | Không cần cho demo lớp |
 | P3 | Stress test 100 request/s | Future | Drop from MVP | Không phù hợp scope |
 
-## 9. Definition of Demo Done
+## 10. Definition of Demo Done
 
 MVP được xem là đủ demo khi người dùng có thể thực hiện các khả năng sau:
 
@@ -1081,7 +1218,7 @@ MVP được xem là đủ demo khi người dùng có thể thực hiện các 
 - Xem KG quality report gồm structural checks và sampled semantic checks.
 - Chạy demo bằng Docker Compose, Swagger hoặc FE với fallback rõ ràng nếu một service lỗi.
 
-## 10. KG Evaluation Criteria
+## 11. KG Evaluation Criteria
 
 ### Structural Checks
 
@@ -1113,7 +1250,7 @@ Với mỗi edge, kiểm tra:
 - hướng cạnh đúng.
 - `raw_label` phản ánh nhãn gốc.
 
-Mục tiêu MVP:
+Target chất lượng MVP, không phải hard blocker tuyệt đối cho demo nếu report giải thích rõ nguyên nhân và giới hạn:
 
 - Edge type precision `AMENDS`, `CITES`, `GUIDELINES` >= 90%.
 - Edge type precision `REPEALS` >= 80%.
@@ -1165,7 +1302,7 @@ Kỳ vọng thực tế:
 - KG không bắt buộc cải thiện mọi query.
 - KG phải cải thiện hoặc giải thích tốt hơn nhóm query có số hiệu văn bản, sửa đổi, bãi bỏ, dẫn chiếu, hướng dẫn.
 
-## 11. Immediate Next Steps
+## 12. Immediate Next Steps
 
 Thứ tự thực thi đề xuất:
 
@@ -1188,4 +1325,3 @@ Nếu thời gian hạn chế, ưu tiên demo path tối thiểu:
 3. GraphRetriever cho document number và 1-hop relations.
 4. `/answer` có citation và trace.
 5. FE hoặc Swagger hiển thị được output.
-
