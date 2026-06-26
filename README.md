@@ -65,6 +65,12 @@ VietLegalGraphRAG/
 └── README.md
 ```
 
+## 🎯 MVP Runtime Scope
+
+The MVP runtime uses **Elasticsearch** for both dense and sparse retrieval, **Neo4j** for the legal knowledge graph, and **FastAPI** for the backend contract consumed by the frontend.
+
+Qdrant references in older embedding notes are historical and are not required for the MVP runtime. Frontend code should call the backend API only and should not call Elasticsearch, Neo4j, reranker models or LLM providers directly.
+
 ## 🛠 Hướng dẫn Cài đặt
 
 Mỗi bước trong `pipeline/` có **requirements.txt riêng**, bạn chỉ cần cài đặt dependencies cho bước cần chạy.
