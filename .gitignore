@@ -1,5 +1,6 @@
 # IDE
 /.idea
+.worktrees/
 .env
 *.zip
 /report*/
