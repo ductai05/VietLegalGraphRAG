@@ -14,54 +14,62 @@ class NormalizedRelationship:
 
 
 RELATIONSHIP_LABELS: Dict[str, Tuple[str, bool]] = {
-    "V\u0103n b\u1ea3n c\u0103n c\u1ee9": ("CITES", False),
-    "V\u0103n b\u1ea3n d\u1eabn chi\u1ebfu": ("CITES", False),
-    "V\u0103n b\u1ea3n HD, Q\u0110 chi ti\u1ebft": ("GUIDELINES", False),
-    "V\u0103n b\u1ea3n \u0111\u01b0\u1ee3c HD, Q\u0110 chi ti\u1ebft": ("GUIDELINES", True),
-    "V\u0103n b\u1ea3n s\u1eeda \u0111\u1ed5i": ("AMENDS", False),
-    "V\u0103n b\u1ea3n \u0111\u01b0\u1ee3c s\u1eeda \u0111\u1ed5i": ("AMENDS", True),
-    "V\u0103n b\u1ea3n b\u1ed5 sung": ("AMENDS", False),
-    "V\u0103n b\u1ea3n \u0111\u01b0\u1ee3c b\u1ed5 sung": ("AMENDS", True),
-    "V\u0103n b\u1ea3n quy \u0111\u1ecbnh h\u1ebft hi\u1ec7u l\u1ef1c": ("REPEALS", False),
-    "V\u0103n b\u1ea3n quy \u0111\u1ecbnh h\u1ebft hi\u1ec7u l\u1ef1c 1 ph\u1ea7n": ("REPEALS", False),
-    "V\u0103n b\u1ea3n h\u1ebft hi\u1ec7u l\u1ef1c": ("REPEALS", True),
-    "V\u0103n b\u1ea3n b\u1ecb h\u1ebft hi\u1ec7u l\u1ef1c 1 ph\u1ea7n": ("REPEALS", True),
-    "V\u0103n b\u1ea3n \u0111\u00ecnh ch\u1ec9 1 ph\u1ea7n": ("REPEALS", False),
-    "V\u0103n b\u1ea3n b\u1ecb \u0111\u00ecnh ch\u1ec9 1 ph\u1ea7n": ("REPEALS", True),
-    "V\u0103n b\u1ea3n li\u00ean quan kh\u00e1c": ("CITES", False),
+    "Văn bản căn cứ": ("CITES", False),
+    "Văn bản dẫn chiếu": ("CITES", False),
+    "Văn bản HD, QĐ chi tiết": ("GUIDELINES", False),
+    "Văn bản được HD, QĐ chi tiết": ("GUIDELINES", True),
+    "Văn bản sửa đổi": ("AMENDS", False),
+    "Văn bản được sửa đổi": ("AMENDS", True),
+    "Văn bản bổ sung": ("AMENDS", False),
+    "Văn bản được bổ sung": ("AMENDS", True),
+    "Văn bản quy định hết hiệu lực": ("REPEALS", False),
+    "Văn bản quy định hết hiệu lực 1 phần": ("REPEALS", False),
+    "Văn bản hết hiệu lực": ("REPEALS", True),
+    "Văn bản bị hết hiệu lực 1 phần": ("REPEALS", True),
+    "Văn bản đình chỉ 1 phần": ("REPEALS", False),
+    "Văn bản bị đình chỉ 1 phần": ("REPEALS", True),
+    "Văn bản liên quan khác": ("CITES", False),
 }
 
 
 TIER_1_TYPES = frozenset({
-    "Hi\u1ebfn ph\u00e1p",
-    "B\u1ed9 lu\u1eadt",
-    "Lu\u1eadt",
-    "Ph\u00e1p l\u1ec7nh",
-    "V\u0103n b\u1ea3n h\u1ee3p nh\u1ea5t",
+    "Hiến pháp",
+    "Bộ luật",
+    "Luật",
+    "Pháp lệnh",
+    "Văn bản hợp nhất",
 })
 
 TIER_2_TYPES = frozenset({
-    "Ngh\u1ecb \u0111\u1ecbnh",
-    "Th\u00f4ng t\u01b0",
-    "Th\u00f4ng t\u01b0 li\u00ean t\u1ecbch",
-    "Quy\u1ebft \u0111\u1ecbnh",
-    "Ngh\u1ecb quy\u1ebft",
-    "Ch\u1ec9 th\u1ecb",
-    "H\u01b0\u1edbng d\u1eabn",
+    "Nghị định",
+    "Thông tư",
+    "Thông tư liên tịch",
+    "Quyết định",
+    "Nghị quyết",
+    "Chỉ thị",
+    "Hướng dẫn",
 })
 
 TIER_3_TYPES = frozenset({
-    "\u0110i\u1ec1u \u01b0\u1edbc qu\u1ed1c t\u1ebf",
-    "Hi\u1ec7p \u0111\u1ecbnh",
-    "Quy ch\u1ebf",
-    "Quy \u0111\u1ecbnh",
-    "V\u0103n b\u1ea3n WTO",
-    "V\u0103n b\u1ea3n kh\u00e1c",
+    "Điều ước quốc tế",
+    "Hiệp định",
+    "Quy chế",
+    "Quy định",
+    "Văn bản WTO",
+    "Văn bản khác",
 })
 
 
 NODE_FIELDS = ["id", "label", "name", "source_id", "properties_json"]
-EDGE_FIELDS = ["id", "type", "source_id", "target_id", "raw_type", "properties_json"]
+EDGE_FIELDS = [
+    "id",
+    "type",
+    "source_id",
+    "target_id",
+    "raw_type",
+    "raw_label",
+    "properties_json",
+]
 
 DOCUMENT_FIELDS = [
     "id",
@@ -121,7 +129,7 @@ def is_present(value: Any) -> bool:
 
 def slugify(value: Any) -> str:
     text = clean_text(value)
-    text = text.replace("\u0110", "D").replace("\u0111", "d")
+    text = text.replace("Đ", "D").replace("đ", "d")
     text = unicodedata.normalize("NFD", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     text = text.lower()

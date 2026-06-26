@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "pipeline/03_preprocessing/chunk",
+    "pipeline/04_embedding",
+    "pipeline/05_graph",
+    "pipeline/07_evaluation",
+    "src/backend/services"
+]
+

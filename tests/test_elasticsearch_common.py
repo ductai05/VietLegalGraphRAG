@@ -6,10 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-EMBEDDING_DIR = Path(__file__).resolve().parents[1] / "pipeline" / "04_embedding"
-sys.path.insert(0, str(EMBEDDING_DIR))
-
-from elasticsearch_common import (  # noqa: E402
+from elasticsearch_common import (
     build_elasticsearch_filter,
     build_index_definition,
     make_index_action,
@@ -17,6 +14,7 @@ from elasticsearch_common import (  # noqa: E402
     resolve_credentials,
     resolve_num_candidates,
 )
+
 
 
 class ElasticsearchCommonTests(unittest.TestCase):

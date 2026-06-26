@@ -1,15 +1,11 @@
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-EVALUATION_DIR = ROOT / "pipeline" / "07_evaluation"
-sys.path.insert(0, str(EVALUATION_DIR))
-
 from ftfy import fix_text
 
-from evaluate_llm import GroqKeyPool, build_context, parse_response, summarize  # noqa: E402
+from evaluate_llm import GroqKeyPool, build_context, parse_response, summarize
+
 
 
 class LlmEvaluationTests(unittest.TestCase):

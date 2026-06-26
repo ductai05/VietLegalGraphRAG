@@ -149,7 +149,10 @@ class GraphBuilder:
             target_id=target_id,
             edge_type=normalized.edge_type,
             raw_type=raw_label,
-            properties={"raw_relationship": raw_label},
+            properties={
+                "raw_label": raw_label,
+                "raw_relationship": raw_label,
+            },
         )
         if edge is not None:
             self.document_relationship_edges.append(edge)
@@ -255,6 +258,7 @@ class GraphBuilder:
             "source_id": source_id,
             "target_id": target_id,
             "raw_type": clean_text(raw_type),
+            "raw_label": clean_text(raw_type),
             "properties_json": json.dumps(properties or {}, ensure_ascii=False, sort_keys=True),
         }
         self.edges_by_id[edge_id] = edge
@@ -408,6 +412,7 @@ MATCH (target {id: row.target_id})
 CALL apoc.create.relationship(source, row.type, {
   id: row.id,
   raw_type: row.raw_type,
+  raw_label: row.raw_label,
   properties_json: row.properties_json
 }, target) YIELD rel
 RETURN count(rel);

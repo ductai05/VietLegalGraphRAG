@@ -1,12 +1,7 @@
 import csv
 import json
-import sys
+import tempfile
 from pathlib import Path
-
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "pipeline" / "05_graph"))
-
 
 def test_normalizes_relationship_labels_to_four_canonical_types():
     from schema import normalize_relationship_label
@@ -58,6 +53,39 @@ def test_skips_self_loops_and_reverses_passive_relationships():
     assert ("doc:1", "doc:1", "CITES", citation) not in doc_edges
     assert ("doc:2", "doc:1", "AMENDS", passive_amend) in doc_edges
     assert graph.summary["self_loop_document_relationship_edges"] == 1
+
+
+def test_document_relationship_edges_preserve_raw_label_for_export_and_neo4j():
+    from build_graph import build_graph_tables, export_graph_artifacts
+
+    raw_label = "V\u0103n b\u1ea3n \u0111\u01b0\u1ee3c s\u1eeda \u0111\u1ed5i"
+    graph = build_graph_tables(
+        metadata_rows=[
+            {"id": 1, "title": "Document A"},
+            {"id": 2, "title": "Document B"},
+        ],
+        relationship_rows=[
+            {"doc_id": 1, "other_doc_id": 2, "relationship": raw_label},
+        ],
+    )
+    edge = graph.document_relationship_edges[0]
+    properties = json.loads(edge["properties_json"])
+
+    assert edge["raw_label"] == raw_label
+    assert properties["raw_label"] == raw_label
+    assert properties["raw_relationship"] == raw_label
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        export_graph_artifacts(graph, Path(tmp_dir))
+        with (Path(tmp_dir) / "document_relationship_edges.csv").open(
+            encoding="utf-8",
+            newline="",
+        ) as handle:
+            row = next(csv.DictReader(handle))
+        cypher = (Path(tmp_dir) / "neo4j_import.cypher").read_text(encoding="utf-8")
+
+    assert row["raw_label"] == raw_label
+    assert "raw_label: row.raw_label" in cypher
 
 
 def test_builds_document_graph_tables():

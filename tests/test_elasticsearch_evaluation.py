@@ -5,24 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-ROOT = Path(__file__).resolve().parents[1]
-EMBEDDING_DIR = ROOT / "pipeline" / "04_embedding"
-EVALUATION_DIR = ROOT / "pipeline" / "07_evaluation"
-sys.path.insert(0, str(EMBEDDING_DIR))
-sys.path.insert(0, str(EVALUATION_DIR))
+from evaluate_dense import main
 
-if "polars" not in sys.modules:
-    sys.modules["polars"] = types.ModuleType("polars")
-
-if "pyarrow" not in sys.modules:
-    pyarrow_module = types.ModuleType("pyarrow")
-    pyarrow_ipc_module = types.ModuleType("pyarrow.ipc")
-    pyarrow_module.Table = object
-    pyarrow_module.ipc = pyarrow_ipc_module
-    sys.modules["pyarrow"] = pyarrow_module
-    sys.modules["pyarrow.ipc"] = pyarrow_ipc_module
-
-from evaluate_dense import main  # noqa: E402
 
 
 class ElasticsearchEvaluationTests(unittest.TestCase):

@@ -7,29 +7,8 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-EMBEDDING_DIR = Path(__file__).resolve().parents[1] / "pipeline" / "04_embedding"
-sys.path.insert(0, str(EMBEDDING_DIR))
+from dense_retrieval import DenseRetriever
 
-if "polars" not in sys.modules:
-    polars_module = types.ModuleType("polars")
-    sys.modules["polars"] = polars_module
-
-if "pyarrow" not in sys.modules:
-    pyarrow_module = types.ModuleType("pyarrow")
-    pyarrow_ipc_module = types.ModuleType("pyarrow.ipc")
-    pyarrow_module.ipc = pyarrow_ipc_module
-    sys.modules["pyarrow"] = pyarrow_module
-    sys.modules["pyarrow.ipc"] = pyarrow_ipc_module
-
-if "elasticsearch" not in sys.modules:
-    elasticsearch_module = types.ModuleType("elasticsearch")
-    elasticsearch_helpers_module = types.ModuleType("elasticsearch.helpers")
-    elasticsearch_module.Elasticsearch = object
-    elasticsearch_module.helpers = elasticsearch_helpers_module
-    sys.modules["elasticsearch"] = elasticsearch_module
-    sys.modules["elasticsearch.helpers"] = elasticsearch_helpers_module
-
-from dense_retrieval import DenseRetriever  # noqa: E402
 
 
 class FakeElasticsearchClient:

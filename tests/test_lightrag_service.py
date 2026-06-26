@@ -1,9 +1,5 @@
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-EVALUATION_DIR = ROOT / "pipeline" / "07_evaluation"
-sys.path.insert(0, str(EVALUATION_DIR))
+from lightrag_service import LightRAGService
+from retrieval_modes import RetrievalRequest
 
 
 class FakeRetrievalService:
@@ -40,9 +36,6 @@ class FakeAnswerService:
 
 
 def test_lightrag_service_merges_retrieval_graph_and_answer_contexts():
-    from lightrag_service import LightRAGService
-    from retrieval_modes import RetrievalRequest
-
     retrieval = FakeRetrievalService()
     graph = FakeGraphRetriever()
     answer = FakeAnswerService()
@@ -66,9 +59,6 @@ def test_lightrag_service_merges_retrieval_graph_and_answer_contexts():
 
 
 def test_lightrag_service_falls_back_when_graph_retrieval_fails():
-    from lightrag_service import LightRAGService
-    from retrieval_modes import RetrievalRequest
-
     service = LightRAGService(
         FakeRetrievalService(),
         FakeGraphRetriever(fail=True),
@@ -81,3 +71,4 @@ def test_lightrag_service_falls_back_when_graph_retrieval_fails():
     assert result["graph_context"] == []
     assert result["retrieval_trace"]["lightrag_enabled"] is False
     assert "neo4j unavailable" in result["retrieval_trace"]["lightrag_error"]
+
