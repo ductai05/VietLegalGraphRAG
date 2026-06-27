@@ -86,7 +86,13 @@ def write_report(summary: dict[str, Any], output_dir: Path) -> None:
         f"- Self-loop edges: {summary['self_loop_edges']}",
         f"- Edges missing raw_label: {summary['edges_missing_raw_label']}",
         f"- Unknown canonical relations: {summary['unknown_canonical_relation_count']}",
+        f"- Duplicate document IDs: {summary['duplicate_document_ids']}",
+        f"- Duplicate article or chunk IDs: {summary['duplicate_article_or_chunk_ids']}",
+        "",
+        "### Edge Type Distribution",
     ]
+    for edge_type, count in sorted(summary.get("edge_type_counts", {}).items()):
+        lines.append(f"- {edge_type}: {count}")
     (output_dir / "kg_quality_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
