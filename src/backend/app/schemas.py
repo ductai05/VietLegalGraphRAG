@@ -33,7 +33,14 @@ class SearchRequestModel(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     graph: GraphConfigModel = Field(default_factory=GraphConfigModel)
     llm: LLMConfigModel = Field(default_factory=LLMConfigModel)
-    include_trace: bool = True
+    include_trace: bool = Field(
+        default=True,
+        description=(
+            "Reserved for forward compatibility. "
+            "MVP always includes retrieval_trace in the /answer response. "
+            "Frontend MUST expect retrieval_trace to be present."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_candidate_k_envelope(self) -> Self:

@@ -25,6 +25,13 @@ def search(request: SearchRequestModel) -> dict:
 
 @router.post("/answer")
 def answer(request: SearchRequestModel) -> dict:
+    """Return answer, citations, retrieval context, graph context, and trace.
+
+    The ``include_trace`` request field is reserved for forward compatibility
+    only.  During the MVP, ``retrieval_trace`` is **always** included in the
+    response regardless of the field value.  The frontend MUST expect
+    ``retrieval_trace`` to be present.
+    """
     retrieval_request = RetrievalRequest(**request.model_dump())
     hits = DemoRetrievalService().search(retrieval_request)
     return {

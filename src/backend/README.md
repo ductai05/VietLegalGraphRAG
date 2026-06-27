@@ -11,3 +11,11 @@ Do not move existing pipeline modules here without updating imports and tests.
 - `services/lightrag_service.py`: orchestrates retrieval, graph expansion and answer generation.
 - `app/`: FastAPI application, request schemas and routes.
 
+## MVP Decisions
+
+- **`include_trace`:** The ``/answer`` endpoint **always** returns
+  ``retrieval_trace`` during the MVP, regardless of the
+  ``include_trace`` request field.  The field is accepted for forward
+  compatibility but intentionally ignored.  Frontends MUST expect
+  ``retrieval_trace`` to be present in every valid response.
+
