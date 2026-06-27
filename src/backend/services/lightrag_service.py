@@ -18,7 +18,7 @@ class GraphRetriever(Protocol):
         query: str,
         retrieval_hits: list[dict[str, Any]],
         max_hops: int,
-    ) -> GraphContext | dict[str, Any]:
+    ) -> GraphContext:
         ...
 
 
@@ -49,16 +49,12 @@ class LightRAGService:
 
         if lightrag_enabled:
             try:
-                raw_graph_context = self.graph_retriever.retrieve(
+                graph_context = self.graph_retriever.retrieve(
                     request.query,
                     [hit.to_dict() for hit in retrieval_hits],
                     request.graph.max_hops,
                 )
-                if isinstance(raw_graph_context, GraphContext):
-                    graph_context = raw_graph_context
-                    graph_payload = graph_context.to_dict()
-                else:
-                    graph_payload = raw_graph_context
+                graph_payload = graph_context.to_dict()
             except Exception as exc:
                 lightrag_enabled = False
                 lightrag_error = str(exc)
