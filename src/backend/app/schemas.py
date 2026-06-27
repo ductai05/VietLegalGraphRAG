@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RerankConfigModel(BaseModel):
@@ -34,3 +34,9 @@ class SearchRequestModel(BaseModel):
     graph: GraphConfigModel = Field(default_factory=GraphConfigModel)
     llm: LLMConfigModel = Field(default_factory=LLMConfigModel)
     include_trace: bool = True
+
+    @model_validator(mode="after")
+    def validate_candidate_k_envelope(self) -> Self:
+        if self.rerank.enabled and self.rerank.candidate_k < self.top_k:
+            raise ValueError("rerank.candidate_k must be greater than or equal to top_k")
+        return self

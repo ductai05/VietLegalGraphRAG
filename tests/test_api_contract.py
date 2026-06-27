@@ -82,6 +82,21 @@ def test_search_endpoint_rejects_invalid_retrieval_mode() -> None:
     assert response.status_code == 422
 
 
+def test_search_endpoint_rejects_candidate_k_less_than_top_k() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/search",
+        json={
+            "query": "test query",
+            "rerank": {"enabled": True, "candidate_k": 3},
+            "top_k": 5,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_search_endpoint_rejects_invalid_temperature() -> None:
     client = TestClient(create_app())
 
@@ -136,6 +151,21 @@ def test_answer_endpoint_returns_contract_shape() -> None:
     # All required top-level keys must be present
     for key in ("answer", "citations", "retrieval_context", "graph_context", "retrieval_trace"):
         assert key in payload, f"Missing key: {key}"
+
+
+def test_answer_endpoint_rejects_candidate_k_less_than_top_k() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/answer",
+        json={
+            "query": "test query",
+            "rerank": {"enabled": True, "candidate_k": 3},
+            "top_k": 5,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_answer_endpoint_rejects_empty_query() -> None:
@@ -206,7 +236,7 @@ def test_openapi_schema_is_generated() -> None:
 # CORS
 # ---------------------------------------------------------------------------
 
-def test_cors_headers_are_present() -> None:
+def test_cors_allows_configured_frontend_origin() -> None:
     client = TestClient(create_app())
 
     response = client.options(
@@ -218,7 +248,22 @@ def test_cors_headers_are_present() -> None:
     )
 
     assert response.status_code == 200
-    assert "access-control-allow-origin" in response.headers
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_cors_rejects_unconfigured_origin() -> None:
+    client = TestClient(create_app())
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "http://evil.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    # Wildcard must not be present; non-configured origin gets no CORS header
+    assert response.headers.get("access-control-allow-origin") != "*"
 
 
 # ---------------------------------------------------------------------------
