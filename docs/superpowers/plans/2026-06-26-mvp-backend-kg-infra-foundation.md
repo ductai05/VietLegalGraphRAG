@@ -67,6 +67,8 @@ Create or modify these files:
 - Modify: `src/backend/README.md`
 - Modify: `src/infra/README.md`
 
+> **Note:** `src/README.md` and `src/frontend/README.md` are intentionally excluded. Both already contain content aligned with MVP scope — `src/README.md` states "Frontend should consume backend JSON contracts instead of calling Elasticsearch or Neo4j directly" and `src/frontend/README.md` carries the same rule. No modification is required.
+
 - [ ] **Step 1: Add env template**
 
 Create `.env.example` with:
