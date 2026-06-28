@@ -63,16 +63,35 @@ LLM answer.
 | `rerank.model`    | string  | no       | `"BAAI/bge-reranker-v2-m3"` | Rerank model name.                                             |
 | `rerank.candidate_k` | int  | no       | `50`       | Number of candidates to fetch before rerank.  Must be ≥ `top_k`.            |
 | `rerank.batch_size`  | int  | no       | `8`        | Rerank inference batch size.                                                |
-| `rerank.device`   | string  | no       | `"auto"`   | `"auto"`, `"cpu"`, `"cuda"`.                                                |
+| `rerank.device`   | string  | no       | `"auto"`   | Inference device.  Recommended values: `"auto"`, `"cpu"`, `"cuda"`.  Backend currently accepts any string. |
 | `rerank.timeout_ms`  | int  | no       | `30000`    | Rerank timeout in milliseconds.                                             |
 | `top_k`           | int     | no       | `5`        | Number of results to return.  Must be positive.                              |
-| `filters`         | object  | no       | `{}`       | Key-value metadata filters (e.g. `{"effect_status": "Con hieu luc"}`).       |
+| `filters`         | object  | no       | `{}`       | Key-value metadata filters.  See [Filter Keys](#filter-keys) below.          |
 | `graph.enabled`   | bool    | no       | `true`     | Whether graph expansion is enabled.                                          |
 | `graph.use_lightrag` | bool | no       | `true`     | Whether to use LightRAG orchestration.                                       |
 | `graph.max_hops`  | int     | no       | `1`        | Graph traversal depth.  Must be ≥ 0.                                         |
 | `llm.temperature` | float   | no       | `0.2`      | LLM temperature.  Range `0.0` – `1.0`.                                       |
 | `llm.max_context_chunks` | int | no    | `8`        | Maximum context chunks passed to LLM.  Must be positive.                     |
 | `include_trace`   | bool    | no       | `true`     | Reserved for forward compatibility.  **Ignored during MVP** — trace is always returned. |
+
+### Filter Keys
+
+The `filters` object supports the following keys during the MVP.  Filters are
+applied as metadata constraints on Elasticsearch document fields.
+
+| Key                  | Type   | Description                                           |
+|----------------------|--------|-------------------------------------------------------|
+| `effect_status`      | string | Legal effect status (e.g. `"Con hieu luc"`).          |
+| `legal_type`         | string | Document type (e.g. `"Luat"`, `"Nghi dinh"`).         |
+| `legal_sector`       | string | Legal sector or domain.                                |
+| `issuing_authority`  | string | Issuing body (e.g. `"Quoc hoi"`, `"Chinh phu"`).      |
+| `document_number`    | string | Exact document number match (e.g. `"01/2026/QH"`).    |
+
+**Pass-through behavior:**
+- Unknown filter keys are passed through to the backend as-is.
+- Unsupported filters may be silently ignored during the MVP.
+- The frontend should limit itself to the documented keys for predictable
+  results.
 
 **Validation errors → 422**
 
@@ -115,6 +134,84 @@ LLM answer.
 | `text`            | string  | Chunk text content.                            |
 | `scores`          | object  | Score map (e.g. `{"rrf": 0.03}`).              |
 | `citation`        | string  | Human-readable citation.                       |
+
+### Reusable Types
+
+These types appear in graph endpoints and `/answer`'s `graph_context`.
+
+#### `GraphNode`
+
+| Field        | Type            | Description                                 |
+|--------------|-----------------|---------------------------------------------|
+| `id`         | string          | Unique node identifier (e.g. `"doc:42"`).    |
+| `label`      | string          | Node label (e.g. `"Document"`).              |
+| `properties` | object          | Arbitrary key-value metadata for the node.   |
+
+Example:
+
+```json
+{
+  "id": "doc:42",
+  "label": "Document",
+  "properties": {
+    "doc_id": "42",
+    "title": "Luat Xay dung",
+    "document_number": "01/2026/QH"
+  }
+}
+```
+
+#### `GraphEdge`
+
+| Field       | Type   | Description                                                   |
+|-------------|--------|---------------------------------------------------------------|
+| `source`    | string | Source node `id`.                                              |
+| `target`    | string | Target node `id`.                                              |
+| `type`      | string | Canonical relationship type: `"AMENDS"`, `"CITES"`, `"REPEALS"`, or `"GUIDELINES"`. |
+| `raw_label` | string | Original Vietnamese relationship label (e.g. `"Van ban can cu"`). |
+| `direction` | string | `"out"` (center → neighbor) or `"in"` (neighbor → center).     |
+| `properties`| object | Arbitrary key-value metadata for the edge.                     |
+
+Example:
+
+```json
+{
+  "source": "doc:42",
+  "target": "doc:99",
+  "type": "CITES",
+  "raw_label": "Van ban can cu",
+  "direction": "out",
+  "properties": {}
+}
+```
+
+#### `AnswerContext`
+
+| Field      | Type            | Description                                                   |
+|------------|-----------------|---------------------------------------------------------------|
+| `source`   | string          | Origin: `"retrieval"` or `"graph"`.                           |
+| `chunk_id` | string \| null  | Chunk identifier (nullable when chunk is unknown).             |
+| `doc_id`   | string          | Parent document identifier.                                   |
+| `title`    | string          | Document title.                                               |
+| `text`     | string          | Chunk text content.                                           |
+| `citation` | string          | Human-readable citation.                                      |
+| `relation` | string \| null  | Relationship to query document (graph contexts only).          |
+| `raw_label`| string \| null  | Original Vietnamese relationship label (graph contexts only). |
+
+Example:
+
+```json
+{
+  "source": "graph",
+  "chunk_id": "chunk:99:000001",
+  "doc_id": "99",
+  "title": "Nghi dinh 15/2021/ND-CP",
+  "text": "Dieu 5 quy dinh chi tiet ve...",
+  "citation": "Nghi dinh 15/2021/ND-CP, Dieu 5",
+  "relation": "CITES",
+  "raw_label": "Van ban can cu"
+}
+```
 
 **Example request**
 
@@ -223,6 +320,59 @@ Example:
   "edges": [],
   "related_chunks": [],
   "query_intent": "general"
+}
+```
+
+**Illustrative response shape** *(once Neo4j wiring is complete)*
+
+The example below shows the expected response shape when the graph backend is
+fully wired.  **Current MVP runtime may still return stub data.**
+
+```json
+{
+  "center": {
+    "id": "doc:42",
+    "label": "Document",
+    "properties": {
+      "doc_id": "42",
+      "title": "Luat Xay dung 2014",
+      "document_number": "50/2014/QH13"
+    }
+  },
+  "nodes": [
+    {
+      "id": "doc:99",
+      "label": "Document",
+      "properties": {
+        "doc_id": "99",
+        "title": "Nghi dinh 15/2021/ND-CP",
+        "document_number": "15/2021/ND-CP"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "doc:42",
+      "target": "doc:99",
+      "type": "GUIDELINES",
+      "raw_label": "Van ban huong dan",
+      "direction": "out",
+      "properties": {}
+    }
+  ],
+  "related_chunks": [
+    {
+      "source": "graph",
+      "chunk_id": "chunk:99:000001",
+      "doc_id": "99",
+      "title": "Nghi dinh 15/2021/ND-CP",
+      "text": "Dieu 5 quy dinh chi tiet ve ho so cap giay phep xay dung...",
+      "citation": "Nghi dinh 15/2021/ND-CP, Dieu 5",
+      "relation": "GUIDELINES",
+      "raw_label": "Van ban huong dan"
+    }
+  ],
+  "query_intent": "guideline"
 }
 ```
 
