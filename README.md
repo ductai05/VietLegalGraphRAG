@@ -65,6 +65,29 @@ VietLegalGraphRAG/
 └── README.md
 ```
 
+## 🎯 MVP Runtime Scope
+
+The MVP runtime uses **Elasticsearch** for both dense and sparse retrieval, **Neo4j** for the legal knowledge graph, and **FastAPI** for the backend contract consumed by the frontend.
+
+Qdrant references in older embedding notes are historical and are not required for the MVP runtime. Frontend code should call the backend API only and should not call Elasticsearch, Neo4j, reranker models or LLM providers directly.
+
+## 📋 MVP Decision Log
+
+Decisions recorded during Phase 0 scope freeze, per the MVP phase backlog specification.
+
+### `Chunk` vs `Article` Neo4j Label
+
+- **Decision:** Keep `Chunk` as the internal Neo4j label. The API layer maps `Chunk` to `Article` in response fields when the semantic context requires it (document article traversal, section references).
+- **Rationale:** Renaming the label requires a full graph migration with no functional benefit at this stage. A clean rename can follow after the demo.
+- **Risk:** Internal code must consistently refer to "chunk" in graph queries and "article" in API responses, creating a mapping burden. Mitigated by keeping the mapping logic in one place (GraphRetriever and schemas).
+
+### Graph Size Strategy
+
+- **Decision:** Prepare both a subset smoke graph path and a full-corpus graph path. The demo uses the subset graph.
+- **Subset scope:** Filtered by top legal types (Luật, Nghị định, Thông tư) or a document count limit manageable on local hardware (~10K documents).
+- **Full graph:** Available if the demo machine has sufficient RAM and SSD for the complete corpus (>518K documents). Not the default demo path.
+- **Rationale:** Full Neo4j import may exceed small local machines. A subset ensures reproducible demo behavior regardless of presenter hardware.
+
 ## 🛠 Hướng dẫn Cài đặt
 
 Mỗi bước trong `pipeline/` có **requirements.txt riêng**, bạn chỉ cần cài đặt dependencies cho bước cần chạy.

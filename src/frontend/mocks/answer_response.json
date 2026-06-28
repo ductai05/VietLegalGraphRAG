@@ -1,0 +1,37 @@
+{
+  "answer": "Noi dung demo cho cau hoi.",
+  "citations": [
+    {
+      "chunk_id": "chunk:demo:000001",
+      "doc_id": "demo",
+      "title": "Van ban demo"
+    }
+  ],
+  "retrieval_context": [
+    {
+      "rank": 1,
+      "chunk_id": "chunk:demo:000001",
+      "doc_id": "demo",
+      "title": "Van ban demo",
+      "document_number": "01/2026/QH",
+      "legal_type": "Luat",
+      "effect_status": "Con hieu luc",
+      "section_path": "Dieu 1",
+      "text": "Noi dung demo cho cau hoi.",
+      "scores": {
+        "rrf": 0.03
+      },
+      "citation": "Van ban demo, Dieu 1"
+    }
+  ],
+  "graph_context": {},
+  "retrieval_trace": {
+    "retrieval_mode": "hybrid",
+    "execution_mode": "hybrid_rerank",
+    "reranked": true,
+    "temperature": 0.2,
+    "graph_enabled": true,
+    "lightrag_enabled": false
+  },
+  "latency_ms": 0
+}
