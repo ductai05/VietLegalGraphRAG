@@ -132,8 +132,24 @@ applied as metadata constraints on Elasticsearch document fields.
 | `effect_status`   | string  | Legal effect status.                           |
 | `section_path`    | string  | Path within the document (e.g. `"Dieu 1"`).    |
 | `text`            | string  | Chunk text content.                            |
-| `scores`          | object  | Score map (e.g. `{"rrf": 0.03}`).              |
+| `scores`          | object  | Score map.  See [Score Keys Guide](#score-keys-guide) below. |
 | `citation`        | string  | Human-readable citation.                       |
+
+### Score Keys Guide
+
+The `scores` object in `RetrievalHit` contains one or more of the following
+keys depending on the executed retrieval mode.  Each key maps to a `float`
+score.  Keys are optional — a given execution mode includes only the relevant
+subset.
+
+| Execution mode    | Score keys present          |
+|-------------------|----------------------------|
+| `dense`           | `dense`                    |
+| `dense_rerank`    | `dense`, `rerank`          |
+| `sparse`          | `sparse`                   |
+| `sparse_rerank`   | `sparse`, `rerank`         |
+| `hybrid`          | `dense`, `sparse`, `rrf`   |
+| `hybrid_rerank`   | `dense`, `sparse`, `rrf`, `rerank` |
 
 ### Reusable Types
 
@@ -210,6 +226,35 @@ Example:
   "citation": "Nghi dinh 15/2021/ND-CP, Dieu 5",
   "relation": "CITES",
   "raw_label": "Van ban can cu"
+}
+```
+
+#### `VersionChainItem`
+
+| Field            | Type   | Description                                                   |
+|------------------|--------|---------------------------------------------------------------|
+| `doc_id`         | string | Document identifier.                                          |
+| `title`          | string | Document title.                                               |
+| `document_number`| string | Legal document number (e.g. `"01/2026/QH"`).                  |
+| `relation`       | string | Canonical relationship type: `"AMENDS"`.                      |
+| `raw_label`      | string | Original Vietnamese relationship label (e.g. `"Sua doi"`).    |
+| `effective_date` | string | Effective date in ISO 8601 format (e.g. `"2026-01-01"`).      |
+| `order`          | integer| Position in the amendment chain (0-indexed, oldest first).     |
+
+> **Current runtime returns stub data.**  This schema defines the stable API
+> contract after Neo4j integration.
+
+Example:
+
+```json
+{
+  "doc_id": "77",
+  "title": "Luat Xay dung 2020",
+  "document_number": "62/2020/QH14",
+  "relation": "AMENDS",
+  "raw_label": "Sua doi",
+  "effective_date": "2021-01-01",
+  "order": 1
 }
 ```
 
