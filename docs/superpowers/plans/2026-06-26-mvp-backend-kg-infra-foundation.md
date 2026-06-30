@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the P0/P1 MVP foundation for VietLegalGraphRAG: KG audit/import readiness, Elasticsearch-only retrieval service, GraphRetriever, LightRAG orchestration, FastAPI API, frontend API contract, Docker Compose skeleton and evaluation hooks.
+**Goal:** Build the P0/P1 MVP foundation for VietLegalGraphRAG: KG audit/import readiness, Elasticsearch Cloud retrieval service, GraphRetriever, LightRAG orchestration, FastAPI API, frontend API contract, Docker demo infrastructure and evaluation hooks.
 
-**Architecture:** The implementation keeps pipeline code as data preparation utilities and places runtime services under `src/backend`. FastAPI depends on service interfaces, not pipeline internals. Neo4j provides graph context, Elasticsearch provides dense and sparse retrieval, and LightRAGService merges retrieval, graph and answer contexts.
+**Architecture:** The implementation keeps pipeline code as data preparation utilities and places runtime services under `src/backend`. FastAPI depends on service interfaces, not pipeline internals. Elasticsearch Cloud provides dense and sparse retrieval, Neo4j on a dedicated VPS provides graph context, Google Cloud Vision provides OCR as an external managed service, and LightRAGService orchestrates retrieval, graph expansion, answer generation, citations and trace.
 
-**Tech Stack:** Python 3.11+, FastAPI, Pydantic, Elasticsearch, Neo4j Python driver, pytest, Docker Compose, PowerShell helper scripts.
+**Tech Stack:** Python 3.11+, FastAPI, Pydantic, Elasticsearch Cloud, Neo4j Python driver, Google Cloud Vision OCR, pytest, Docker Compose for the API demo container, PowerShell helper scripts.
 
 ---
 
@@ -25,7 +25,80 @@ This plan covers the first implementation pass for:
 - Phase 8: graph evaluation hooks.
 - Phase 10: Docker Compose skeleton.
 
-This plan does not implement production CI/CD, monitoring, full cloud deployment, incremental updates or stress testing.
+This plan does not implement production CI/CD, monitoring, full cloud deployment automation, incremental updates or stress testing.
+
+## Final MVP Architecture Decisions
+
+These decisions apply from Task 10 onward. They do not rewrite or reopen Tasks 1 through 9, which remain historical implementation records.
+
+### Runtime Topology
+
+- Elasticsearch Cloud is the only MVP retrieval backend.
+- Dense and sparse retrieval both run against Elasticsearch Cloud indexes.
+- Hybrid retrieval uses Reciprocal Rank Fusion (RRF).
+- Reranking remains optional.
+- Neo4j runs on a dedicated VPS, not in the default local Docker demo stack.
+- Current Neo4j VPS sizing:
+  - 2 vCPU.
+  - Approximately 2 to 2.4 GB RAM available.
+  - 8 GB swap.
+  - zRAM enabled.
+  - Approximately 24 GB free disk.
+- OCR uses Google Cloud Vision as an external managed service.
+- OCR authentication uses a Google Service Account JSON credential.
+- Local PaddleOCR is not part of the MVP runtime.
+- Frontend calls the FastAPI backend only.
+
+### LightRAG Runtime Pipeline
+
+LightRAG is only the orchestration layer. It does not replace retrieval.
+
+```text
+User Query
+  -> Intent Detection
+  -> Hybrid Elasticsearch Retrieval (Dense + Sparse)
+  -> RRF
+  -> Optional Rerank
+  -> Document Resolution
+  -> Optional Neo4j Graph Expansion
+  -> Context Assembly
+  -> LLM Answer
+  -> Citation + Trace
+```
+
+Current implementation keeps `ExtractiveAnswerService` as the answer service. A future LLM-backed `AnswerService` can replace it behind the same service contract. Default answer temperature remains `0.2`.
+
+`Document Resolution` in this pipeline is a logical orchestration step. A dedicated `DocumentResolver` module remains a future enhancement and must not be scheduled before current MVP completion.
+
+### Graph Expansion Policy
+
+MVP graph traversal remains one-hop. `raw_label` must always be preserved end-to-end.
+
+| Intent | Neo4j relation expansion |
+| --- | --- |
+| General question | one-hop neighbors |
+| Amendment | `AMENDS` |
+| Repeal | `REPEALS` |
+| Citation | `CITES` |
+| Guideline | `GUIDELINES` |
+
+### Reranker Provider Decision
+
+Do not select a final reranker provider before MVP completion. Keep the architecture provider-neutral and evaluate:
+
+- Jina AI.
+- Voyage AI.
+
+### Future Enhancements
+
+Document these as future enhancements only. Do not schedule them before current MVP completion:
+
+- `QueryPlanner`
+- `DocumentResolver`
+- `ContextBudgetManager`
+- `CitationVerifier`
+- `RetrievalTraceLogger`
+- Cache
 
 ## File Structure
 
@@ -1951,13 +2024,16 @@ git add src/frontend/API_CONTRACT.md src/frontend/mocks/search_response.json src
 git commit -m "docs: add frontend API contract"
 ```
 
-## Task 10: Docker Compose Demo Skeleton
+## Task 10: Docker Demo Infrastructure
 
 **Files:**
 - Create: `src/backend/Dockerfile`
+- Create: `src/backend/requirements.txt`
 - Create: `src/infra/.env.example`
 - Create: `src/infra/docker-compose.yml`
 - Modify: `src/infra/README.md`
+
+Task 10 packages the FastAPI backend for demo use. It does not run Elasticsearch or Neo4j locally by default. Elasticsearch Cloud and the dedicated Neo4j VPS are external runtime dependencies configured through environment variables.
 
 - [ ] **Step 1: Create backend Dockerfile**
 
@@ -1968,7 +2044,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt /tmp/requirements.txt
+COPY src/backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY src/backend /app/src/backend
@@ -1979,80 +2055,100 @@ EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app/src/backend/app"]
 ```
 
-- [ ] **Step 2: Create infra env**
+- [ ] **Step 2: Create backend runtime requirements**
+
+Create `src/backend/requirements.txt` with only API runtime dependencies:
+
+```text
+fastapi
+uvicorn[standard]
+pydantic
+```
+
+Do not install the root `requirements.txt` in the API image. The root dependency file is for data and ML pipeline work and is not the backend container runtime contract.
+
+- [ ] **Step 3: Create infra env**
 
 Create `src/infra/.env.example`:
 
 ```dotenv
-ELASTIC_PASSWORD=changeme
-NEO4J_AUTH=neo4j/password
 BACKEND_PORT=8000
+FRONTEND_ORIGIN=http://localhost:5173
+
+ELASTICSEARCH_URL=
+ELASTICSEARCH_API_KEY=
+ELASTICSEARCH_DENSE_INDEX=vietlegal_dense
+ELASTICSEARCH_SPARSE_INDEX=vietlegal_sparse
+
+NEO4J_URI=
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=
+NEO4J_DATABASE=neo4j
+
+GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/google-service-account.json
+
+LLM_PROVIDER=mock
+LLM_API_KEY=
+DEFAULT_TEMPERATURE=0.2
+
+RERANK_PROVIDER=
+RERANK_MODEL=
+RERANK_DEVICE=auto
+RERANK_TIMEOUT_MS=30000
 ```
 
-- [ ] **Step 3: Create compose file**
+- [ ] **Step 4: Create compose file**
 
 Create `src/infra/docker-compose.yml`:
 
 ```yaml
 services:
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
-    ports:
-      - "9200:9200"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
-      interval: 20s
-      timeout: 5s
-      retries: 10
-
-  neo4j:
-    image: neo4j:5-community
-    environment:
-      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/password}
-      NEO4J_PLUGINS: '["apoc"]'
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
-      interval: 20s
-      timeout: 5s
-      retries: 10
-
   api:
     build:
       context: ../..
       dockerfile: src/backend/Dockerfile
     environment:
-      ELASTICSEARCH_URL: http://elasticsearch:9200
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: password
-      LLM_PROVIDER: mock
+      ELASTICSEARCH_URL: ${ELASTICSEARCH_URL}
+      ELASTICSEARCH_API_KEY: ${ELASTICSEARCH_API_KEY}
+      ELASTICSEARCH_DENSE_INDEX: ${ELASTICSEARCH_DENSE_INDEX}
+      ELASTICSEARCH_SPARSE_INDEX: ${ELASTICSEARCH_SPARSE_INDEX}
+      NEO4J_URI: ${NEO4J_URI}
+      NEO4J_USER: ${NEO4J_USER}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      NEO4J_DATABASE: ${NEO4J_DATABASE}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_API_KEY: ${LLM_API_KEY}
+      DEFAULT_TEMPERATURE: ${DEFAULT_TEMPERATURE:-0.2}
+      RERANK_PROVIDER: ${RERANK_PROVIDER}
+      RERANK_MODEL: ${RERANK_MODEL}
+      RERANK_DEVICE: ${RERANK_DEVICE:-auto}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-30000}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
+    volumes:
+      - ../backend/credentials:/app/credentials:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 ```
 
-- [ ] **Step 4: Update infra README**
+- [ ] **Step 5: Update infra README**
 
 Add:
 
 ````markdown
-## Local Demo
+## Docker Demo
 
 ```powershell
 Copy-Item src/infra/.env.example src/infra/.env
 docker compose --env-file src/infra/.env -f src/infra/docker-compose.yml up --build
 ```
+
+Elasticsearch Cloud, the Neo4j VPS and Google Cloud Vision are external managed services. Fill `src/infra/.env` with their real connection values before running a connected demo.
 
 API health check:
 
@@ -2061,7 +2157,7 @@ Invoke-RestMethod http://localhost:8000/health
 ```
 ````
 
-- [ ] **Step 5: Validate compose config and commit**
+- [ ] **Step 6: Validate compose config and commit**
 
 Run:
 
@@ -2074,7 +2170,7 @@ Expected: compose config renders successfully.
 Commit:
 
 ```powershell
-git add src/backend/Dockerfile src/infra/.env.example src/infra/docker-compose.yml src/infra/README.md
+git add src/backend/Dockerfile src/backend/requirements.txt src/infra/.env.example src/infra/docker-compose.yml src/infra/README.md
 git commit -m "chore: add demo docker compose stack"
 ```
 
