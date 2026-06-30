@@ -41,3 +41,4 @@ venv/
 !/output/llm_evaluation_complete/
 !/output/llm_evaluation_complete/audit.json
 !/output/llm_evaluation_complete/summary.json
+src/backend/credentials/seismic-catbird-232714-d2ba0058a0ab.json
