@@ -54,14 +54,26 @@ services:
       - BACKEND_PORT
       - ELASTICSEARCH_URL
       - ELASTICSEARCH_API_KEY
-      - ELASTICSEARCH_INDEX
+      - ELASTICSEARCH_DENSE_INDEX
+      - ELASTICSEARCH_SPARSE_INDEX
       - NEO4J_URI
-      - NEO4J_USERNAME
+      - NEO4J_USER
       - NEO4J_PASSWORD
+      - NEO4J_DATABASE
       - GOOGLE_APPLICATION_CREDENTIALS
+      - RERANK_PROVIDER
+      - RERANK_MODEL
       - JINA_API_KEY
       - VOYAGE_API_KEY
       - LLM_PROVIDER
       - FRONTEND_ORIGIN
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./credentials:/app/credentials:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
