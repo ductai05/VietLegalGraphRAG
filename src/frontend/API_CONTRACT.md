@@ -93,6 +93,10 @@ applied as metadata constraints on Elasticsearch document fields.
 - The frontend should limit itself to the documented keys for predictable
   results.
 
+**Reranker provider status:**
+
+The MVP architecture remains provider-neutral. Jina AI and Voyage AI should be evaluated before selecting a managed reranker provider. Existing `rerank.model` defaults are implementation placeholders and should not be treated as a final provider decision.
+
 **Validation errors → 422**
 
 | Condition                                         |

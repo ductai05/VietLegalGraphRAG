@@ -27,6 +27,60 @@ Không thuộc MVP:
 
 ## 2. Current State Assessment
 
+### Final MVP Runtime Decisions
+
+The final MVP runtime decisions supersede older deployment assumptions in this document:
+
+- Elasticsearch Cloud is the only runtime retrieval backend.
+- Dense and sparse retrieval both run through Elasticsearch Cloud, then hybrid mode uses RRF.
+- Optional reranking remains provider-neutral. Evaluate Jina AI and Voyage AI, but do not select one before MVP completion.
+- Neo4j runs on a dedicated VPS for Knowledge Graph traversal.
+- Current Neo4j VPS profile: 2 vCPU, approximately 2 to 2.4 GB RAM available, 8 GB swap, zRAM enabled and approximately 24 GB free disk.
+- MVP graph traversal remains one-hop.
+- `raw_label` must always be preserved end-to-end.
+- OCR uses Google Cloud Vision as an external managed service.
+- OCR authentication uses a Google Service Account JSON credential.
+- Local PaddleOCR is no longer part of the MVP runtime.
+- LightRAG is only the orchestration layer. It does not replace Elasticsearch retrieval.
+- Current answer implementation remains `ExtractiveAnswerService`; a future LLM-backed `AnswerService` can replace it behind the same service contract.
+- Default answer temperature is `0.2`.
+
+Final LightRAG flow:
+
+```text
+User Query
+  -> Intent Detection
+  -> Hybrid Elasticsearch Retrieval (Dense + Sparse)
+  -> RRF
+  -> Optional Rerank
+  -> Document Resolution
+  -> Optional Neo4j Graph Expansion
+  -> Context Assembly
+  -> LLM Answer
+  -> Citation + Trace
+```
+
+`Document Resolution` is a logical orchestration step in the MVP flow. A dedicated `DocumentResolver` module is a future enhancement and must not be scheduled before current MVP completion.
+
+Graph expansion policy:
+
+| Query intent | Graph expansion |
+| --- | --- |
+| General question | one-hop neighbors |
+| Amendment | `AMENDS` |
+| Repeal | `REPEALS` |
+| Citation | `CITES` |
+| Guideline | `GUIDELINES` |
+
+Future enhancements only, not scheduled before current MVP completion:
+
+- `QueryPlanner`
+- `DocumentResolver`
+- `ContextBudgetManager`
+- `CitationVerifier`
+- `RetrievalTraceLogger`
+- Cache
+
 Repo đã có nhiều nền tảng sử dụng được:
 
 - `pipeline/04_embedding` đã hỗ trợ dense retrieval trên Elasticsearch.
@@ -606,7 +660,7 @@ Tasks:
 - Thêm request/response schema bằng Pydantic.
 - Thêm timeout và error response rõ ràng.
 - Log latency từng phần: dense, sparse, graph, rerank, LLM.
-- Cache nhẹ bằng in-memory LRU cho query phổ biến và graph neighbors.
+- Defer cache until after current MVP completion; keep latency logging only if already available.
 
 Exit criteria:
 
@@ -700,8 +754,8 @@ Exit criteria:
 | P1 | Evaluation Dataset | Keep: use existing dataset plus graph-specific cases | Evaluation |
 | P1 | Error Analysis | Keep: short report for presentation | Evaluation |
 | P1 | Frontend API Spec | Add: FE reads API contract, does not own retrieval logic | Backend/FE |
-| P2 | Query Latency and Caching | Modify: simple LRU and parallel dense/sparse, target demo latency | Backend |
-| P2 | Containerization | Keep: docker-compose MVP only | Infra |
+| P3 | Query Latency and Caching | Defer: cache is future-only; keep only existing latency visibility for MVP | Backend |
+| P2 | Containerization | Keep: API Docker demo connecting to ES Cloud, Neo4j VPS and Google Vision | Infra |
 | P1 | LightRAG Integration | Keep: runtime orchestration over ES retrieval and Neo4j graph, with fallback | Backend |
 | P3 | Scalability for Document Updates | Defer: describe future work | Infra |
 | P3 | CI/CD and Monitoring | Defer: only basic GitHub Actions test if time | Infra |
@@ -733,5 +787,5 @@ MVP được xem là đạt nếu demo được các tình huống sau:
 - [ ] Viết `GraphRetriever`.
 - [ ] Viết `LightRAGService` và fallback path.
 - [ ] Viết FastAPI schemas và endpoints.
-- [ ] Viết Docker Compose cho ES, Neo4j, API.
+- [ ] Viet Docker demo infrastructure cho API container, configured to connect to Elasticsearch Cloud, Neo4j VPS and Google Vision OCR.
 - [ ] Viết evaluation report cho Dense, Dense + Rerank, Sparse, Sparse + Rerank, Hybrid, Hybrid + Rerank, Graph-specific.

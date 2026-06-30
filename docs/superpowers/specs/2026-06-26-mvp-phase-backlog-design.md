@@ -27,6 +27,7 @@ Các mục sau không thuộc MVP demo:
 - Neo4j AuraDB Free cho full KG.
 - Vector storage trong Neo4j.
 - Qdrant trong runtime MVP.
+- Local PaddleOCR trong runtime MVP.
 - Frontend tự xử lý retrieval, rerank, graph query hoặc citation parsing.
 - Tối ưu cost cloud ở mức production.
 - Cam kết latency dưới 500ms cho `/answer` có gọi LLM. MVP chỉ cần tách rõ retrieval latency và generation latency.
@@ -102,7 +103,9 @@ Các khoảng trống còn phải xử lý:
 ## 4. Guiding Principles
 
 - ES-only retrieval: Dense và Sparse đều chạy qua Elasticsearch trong runtime MVP.
-- Neo4j là graph store cho legal relationships và document-article traversal.
+- Elasticsearch Cloud là retrieval backend duy nhất cho runtime MVP.
+- Neo4j chạy trên VPS riêng và là graph store cho legal relationships và document-article traversal.
+- OCR dùng Google Cloud Vision như external managed service.
 - LightRAG trong MVP là runtime orchestration, không thay ingestion pipeline.
 - KG không thay thế Dense hoặc Sparse retrieval. KG bổ sung provenance, graph expansion, version chain và legal relation queries.
 - FE chỉ consume backend API. FE không biết chi tiết Elasticsearch, Neo4j, reranker hoặc LLM provider.
@@ -115,6 +118,7 @@ Các khoảng trống còn phải xử lý:
 ### Decided
 
 - Runtime retrieval chỉ dùng Elasticsearch cho Dense và Sparse.
+- Elasticsearch runtime target là Elasticsearch Cloud.
 - Retrieval modes trong FE là `dense`, `sparse`, `hybrid`.
 - Rerank là toggle riêng. Backend suy ra 6 execution modes:
   - `dense`
@@ -127,7 +131,66 @@ Các khoảng trống còn phải xử lý:
 - KG dùng canonical relationship types: `AMENDS`, `CITES`, `REPEALS`, `GUIDELINES`.
 - KG phải preserve `raw_label` trên edge.
 - Qdrant không thuộc runtime MVP.
-- Neo4j AuraDB Free chỉ phù hợp subset demo, không phù hợp full KG nếu graph có hàng triệu Article và relationship.
+- Neo4j chạy trên dedicated VPS cho MVP graph.
+- MVP graph traversal giữ ở one-hop.
+- OCR dùng Google Cloud Vision API với Google Service Account JSON credential.
+- Local PaddleOCR không thuộc runtime MVP.
+- LightRAG chỉ là orchestration layer, không thay thế retrieval.
+- `ExtractiveAnswerService` vẫn là implementation hiện tại; LLM-backed `AnswerService` là thay thế tương lai qua cùng contract.
+- Temperature default là `0.2`.
+
+### Final Runtime Pipeline
+
+```text
+User Query
+  -> Intent Detection
+  -> Hybrid Elasticsearch Retrieval (Dense + Sparse)
+  -> RRF
+  -> Optional Rerank
+  -> Document Resolution
+  -> Optional Neo4j Graph Expansion
+  -> Context Assembly
+  -> LLM Answer
+  -> Citation + Trace
+```
+
+`Document Resolution` trong pipeline nÃ y lÃ  logical orchestration step. Module riÃªng `DocumentResolver` váº«n lÃ  future enhancement vÃ  khÃ´ng Ä‘Æ°á»£c schedule trÆ°á»›c khi hoÃ n táº¥t MVP hiá»‡n táº¡i.
+
+### Graph Expansion Policy
+
+| Query intent | Graph expansion |
+| --- | --- |
+| General question | one-hop neighbors |
+| Amendment | `AMENDS` |
+| Repeal | `REPEALS` |
+| Citation | `CITES` |
+| Guideline | `GUIDELINES` |
+
+### Deployment Decisions
+
+- Elasticsearch: cloud deployment.
+- Neo4j: dedicated VPS.
+- OCR: Google Vision API.
+- Reranker provider: evaluate Jina AI and Voyage AI; do not select one before MVP completion.
+
+Current Neo4j VPS profile:
+
+- 2 vCPU.
+- Approximately 2 to 2.4 GB RAM available.
+- 8 GB swap.
+- zRAM enabled.
+- Approximately 24 GB free disk.
+
+### Future Enhancements Only
+
+Các thành phần sau chỉ là future enhancements và không được schedule trước khi hoàn tất MVP hiện tại:
+
+- `QueryPlanner`
+- `DocumentResolver`
+- `ContextBudgetManager`
+- `CitationVerifier`
+- `RetrievalTraceLogger`
+- Cache
 
 ### Pending Decisions
 
@@ -142,10 +205,9 @@ Các khoảng trống còn phải xử lý:
   - Khuyến nghị MVP: chuẩn bị cả subset smoke graph và full graph path. Demo dùng subset nếu full import không ổn định.
 
 - Deployment target:
-  - Local Docker Compose trên laptop hoặc máy nhóm.
-  - VPS nhỏ có Docker Compose.
+  - Đã chốt: Elasticsearch Cloud, Neo4j dedicated VPS, OCR qua Google Vision API.
+  - Docker Compose Task 10 chỉ đóng gói API demo container và cấu hình kết nối ra external services.
   - FE public trên Vercel hoặc Netlify nếu backend có public URL.
-  - Khuyến nghị MVP: ưu tiên Docker Compose local hoặc VPS. Không phụ thuộc hoàn toàn free managed services cho ES + Neo4j.
 
 ## 6. Service Interface Contracts
 
@@ -1099,46 +1161,52 @@ Risks:
 
 Goal:
 
-Đóng gói stack đủ chạy demo ổn định, ưu tiên reproducible local hoặc VPS hơn production-grade automation.
+Package the FastAPI API as a Docker demo runtime that connects to external managed services: Elasticsearch Cloud, a dedicated Neo4j VPS and Google Cloud Vision OCR. Prioritize a reproducible demo over production automation.
 
 Inputs and Dependencies:
 
 - Phase 6 FastAPI app.
 - Phase 2 Neo4j import path.
-- ES index đã build.
-- FE app hoặc placeholder.
+- Elasticsearch Cloud dense and sparse indexes.
+- Neo4j VPS with the MVP graph imported.
+- Google Service Account JSON credential for Vision OCR.
+- FE app or placeholder.
 
 Tasks:
 
-- Tạo Dockerfile cho API.
-- Tạo Docker Compose gồm:
+- Create a Dockerfile for the API.
+- Create a dedicated backend runtime requirements file. Do not install the root pipeline `requirements.txt` in the API image.
+- Create Docker Compose demo config with:
   - `api`
-  - `elasticsearch`
-  - `neo4j`
   - optional `frontend`.
-- Mount hoặc seed data:
-  - ES index snapshot hoặc ingest script.
-  - Neo4j CSV import hoặc database volume.
+- Configure external services through env:
+  - Elasticsearch Cloud URL, API key and index names.
+  - Neo4j VPS Bolt URI, user, password and database.
+  - Google Vision credential path.
+  - LLM provider/API key.
+  - Reranker provider/model while remaining provider-neutral for Jina AI or Voyage AI.
+- Mount Google Service Account credential read-only into the API container for local demo runs.
 - Add healthchecks:
-  - API `/health`
-  - ES cluster health.
-  - Neo4j HTTP hoặc Bolt check.
+  - API `/health`.
+  - External ES/Neo4j/OCR checks only through backend health/degraded status if implemented.
 - Add startup docs:
-  - local mode.
-  - VPS mode.
+  - API container local mode.
+  - Elasticsearch Cloud connection mode.
+  - Neo4j VPS connection mode.
+  - Google Vision OCR credential setup.
   - subset graph mode.
-  - full graph mode nếu có.
-- Nếu FE public:
-  - deploy FE lên Vercel hoặc Netlify.
-  - cấu hình backend base URL.
-  - cấu hình CORS.
-- Nếu backend public:
-  - dùng VPS Docker Compose.
-  - cấu hình reverse proxy và HTTPS nếu đủ thời gian.
+- If FE is public:
+  - deploy FE to Vercel or Netlify.
+  - configure backend base URL.
+  - configure CORS.
+- If backend is public:
+  - run the API container on a prepared server or VPS.
+  - configure reverse proxy and HTTPS if there is enough time.
 
 Files to Create or Modify:
 
 - `src/backend/Dockerfile`
+- `src/backend/requirements.txt`
 - `src/infra/docker-compose.yml`
 - `src/infra/.env.example`
 - `src/infra/README.md`
@@ -1146,28 +1214,30 @@ Files to Create or Modify:
 
 Deliverables and Outputs:
 
-- Một lệnh chạy local stack hoặc script rõ ràng.
-- Healthcheck hoạt động.
-- Deployment notes cho demo.
+- One clear command to run the API demo container.
+- API container healthcheck.
+- Deployment notes for demo with external Elasticsearch Cloud, Neo4j VPS and Google Vision.
 
 Acceptance Criteria:
 
-- API khởi động được bằng Docker.
-- `/health` trả OK hoặc degraded rõ ràng.
-- ES và Neo4j connection được cấu hình qua env.
-- Có hướng dẫn reset và import dữ liệu demo.
+- API starts with Docker.
+- `/health` returns OK or degraded clearly.
+- Elasticsearch Cloud, Neo4j VPS and Google Vision credential are configured through env.
+- Docker Compose does not start local Elasticsearch or local Neo4j in the default MVP demo path.
+- There are clear instructions to run the API demo container and configure external services.
 
 Exit Criteria:
 
-- Presenter có thể chạy demo trên máy hoặc server đã chuẩn bị.
+- Presenter can run the API demo on a prepared machine or server and connect to Elasticsearch Cloud and the Neo4j VPS.
 
 Owner Suggestion:
 
-- Infra lead và Backend engineer.
+- Infra lead and Backend engineer.
 
 Risks:
 
-- ES + Neo4j cùng máy có thể thiếu RAM. Với MVP, cần chuẩn bị subset hoặc chạy service ngoài nếu máy yếu.
+- The Neo4j VPS has limited RAM, so MVP graph traversal remains one-hop and should use a subset graph if needed.
+- Google Service Account JSON is a sensitive credential and must not be committed to git.
 
 ## 9. Task Prioritization
 
@@ -1193,7 +1263,7 @@ Risks:
 | P1 | KG metrics | 8 | Add | Link precision, recall, direction |
 | P1 | Error analysis | 8 | Keep | Cần cho báo cáo |
 | P1 | Docker Compose demo | 10 | Keep, simplified | Không production CI/CD |
-| P2 | Cache and latency optimization | 6, 10 | Modify | LRU và parallel query là đủ |
+| P3 | Cache and latency optimization | Future | Defer | Cache la future enhancement, khong schedule truoc khi hoan tat MVP hien tai |
 | P2 | Public FE deploy | 10 | Optional | Chỉ nếu backend public ổn |
 | P3 | CI/CD and monitoring | 10 | Defer | Basic test workflow nếu còn thời gian |
 | P3 | Incremental updates | Future | Defer | Ghi future work |
