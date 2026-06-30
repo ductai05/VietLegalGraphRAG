@@ -13,6 +13,7 @@ from verify_neo4j import (
     EXPECTED_LEGAL_RELATIONS,
     REQUIRED_LABELS,
     VerificationReport,
+    main,
     verify_neo4j,
 )
 
@@ -67,57 +68,101 @@ class FakeDriver:
         self.closed = True
 
 
+def _query_key(query: str) -> str:
+    """Normalize a query for dict lookup (strip leading/trailing whitespace)."""
+    return query.strip()
+
+
 # ---------------------------------------------------------------------------
-# Pre-built healthy database mock
+# Helpers to build healthy mock records
 # ---------------------------------------------------------------------------
 
-_HEALTHY_RECORDS = {
-    # Version
-    "CALL dbms.components() YIELD versions RETURN versions[0] AS version": [
-        FakeRecord({"version": "5.26.0"})
-    ],
-    # Node count
-    "MATCH (n) RETURN count(n) AS cnt": [
-        FakeRecord({"cnt": 42})
-    ],
-    # Edge count
-    "MATCH ()-[r]->() RETURN count(r) AS cnt": [
-        FakeRecord({"cnt": 57})
-    ],
-    # Document count
-    "MATCH (d:Document) RETURN count(d) AS cnt": [
-        FakeRecord({"cnt": 10})
-    ],
-    # Chunk count
-    "MATCH (c:Chunk) RETURN count(c) AS cnt": [
-        FakeRecord({"cnt": 20})
-    ],
-    # Labels
-    "CALL db.labels() YIELD label RETURN collect(label) AS labels": [
-        FakeRecord({"labels": ["Document", "Chunk", "LegalType", "Authority", "Sector"]})
-    ],
-    # Relationship types
-    "CALL db.relationshipTypes() YIELD relationshipType RETURN collect(relationshipType) AS types": [
-        FakeRecord({"types": ["AMENDS", "CITES", "GUIDELINES", "HAS_CHUNK", "REPEALS"]})
-    ],
-    # raw_label check — all edges have raw_label (only the "with_label" branch returns)
-    (
+_LEGAL_TYPES_LIST = list(EXPECTED_LEGAL_RELATIONS)
+
+
+def _make_raw_label_with_count(
+    total_legal: int, missing_count: int = 0
+) -> dict[str, list[FakeRecord]]:
+    """Build the raw_label query responses.
+
+    The script runs two queries:
+      1. COUNT of legal-type edges.
+      2. UNION ALL: with_label and without_label counts.
+    """
+    present = total_legal - missing_count
+    query1 = (
+        "MATCH ()-[r]->() WHERE type(r) IN $legal_types "
+        "RETURN count(r) AS cnt"
+    )
+    query2 = (
         "MATCH ()-[r]->() "
-        "WHERE r.raw_label IS NOT NULL "
+        "WHERE type(r) IN $legal_types "
+        "AND r.raw_label IS NOT NULL AND trim(r.raw_label) <> '' "
         "RETURN count(r) AS with_label "
         "UNION ALL "
         "MATCH ()-[r]->() "
-        "WHERE r.raw_label IS NULL "
+        "WHERE type(r) IN $legal_types "
+        "AND (r.raw_label IS NULL OR trim(r.raw_label) = '') "
         "RETURN count(r) AS without_label"
-    ): [
-        FakeRecord({"with_label": 57}),
-        FakeRecord({"without_label": 0}),
-    ],
-}
+    )
+    return {
+        query1: [FakeRecord({"cnt": total_legal})],
+        query2: [
+            FakeRecord({"with_label": present}),
+            FakeRecord({"without_label": missing_count}),
+        ],
+    }
+
+
+def _common_records() -> dict[str, list[FakeRecord]]:
+    return {
+        "CALL dbms.components() YIELD versions RETURN versions[0] AS version": [
+            FakeRecord({"version": "5.26.0"})
+        ],
+        "MATCH (n) RETURN count(n) AS cnt": [FakeRecord({"cnt": 100})],
+        "MATCH ()-[r]->() RETURN count(r) AS cnt": [FakeRecord({"cnt": 57})],
+        "MATCH (d:Document) RETURN count(d) AS cnt": [
+            FakeRecord({"cnt": 10})
+        ],
+        "MATCH (c:Chunk) RETURN count(c) AS cnt": [FakeRecord({"cnt": 20})],
+        "CALL db.labels() YIELD label RETURN collect(label) AS labels": [
+            FakeRecord(
+                {
+                    "labels": [
+                        "Document",
+                        "Chunk",
+                        "LegalType",
+                        "Authority",
+                        "Sector",
+                    ]
+                }
+            )
+        ],
+        "CALL db.relationshipTypes() YIELD relationshipType "
+        "RETURN collect(relationshipType) AS types": [
+            FakeRecord(
+                {
+                    "types": [
+                        "AMENDS",
+                        "CITES",
+                        "GUIDELINES",
+                        "HAS_CHUNK",
+                        "REPEALS",
+                    ]
+                }
+            )
+        ],
+    }
+
+
+def _make_healthy_records() -> dict[str, list[FakeRecord]]:
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=40, missing_count=0))
+    return records
 
 
 def _make_healthy_driver() -> FakeDriver:
-    return FakeDriver(FakeSession(dict(_HEALTHY_RECORDS)))
+    return FakeDriver(FakeSession(_make_healthy_records()))
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +171,6 @@ def _make_healthy_driver() -> FakeDriver:
 
 
 def test_verify_healthy_database_reports_connected() -> None:
-    report = verify_neo4j(
-        uri="bolt://fake:7687",
-        user="neo4j",
-        password="pass",
-        database="neo4j",
-    )
-    # Patch GraphDatabase.driver to return our fake
     with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
@@ -170,7 +208,7 @@ def test_verify_healthy_database_reports_node_and_edge_counts() -> None:
             database="neo4j",
         )
 
-    assert report.node_count == 42
+    assert report.node_count == 100
     assert report.edge_count == 57
     assert report.document_count == 10
     assert report.chunk_count == 20
@@ -216,7 +254,7 @@ def test_raw_label_all_present_reports_zero_missing() -> None:
             database="neo4j",
         )
 
-    assert report.raw_label_checked == 57
+    assert report.raw_label_checked == 40
     assert report.raw_label_missing == 0
 
 
@@ -233,7 +271,7 @@ def test_render_healthy_report_contains_key_terms() -> None:
     rendered = report.render()
     assert "Connection: OK" in rendered
     assert "Database: neo4j" in rendered
-    assert "Nodes:    42" in rendered
+    assert "Nodes:    100" in rendered
     assert "Edges:    57" in rendered
     assert "Documents: 10" in rendered
     assert "Chunks:    20" in rendered
@@ -243,7 +281,7 @@ def test_render_healthy_report_contains_key_terms() -> None:
     assert "✓ CITES" in rendered
     assert "✓ REPEALS" in rendered
     assert "✓ GUIDELINES" in rendered
-    assert "all inspected edges preserved raw_label" in rendered
+    assert "all inspected legal edges preserved raw_label" in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +324,35 @@ def test_connection_failure_report_render_shows_failed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests: missing labels
+# Tests: missing required labels are FATAL
 # ---------------------------------------------------------------------------
 
 
-def test_missing_required_label_reported_as_missing() -> None:
-    records = dict(_HEALTHY_RECORDS)
+def test_missing_document_label_causes_unhealthy() -> None:
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=0))
+    # Only Chunk, not Document
+    records[
+        "CALL db.labels() YIELD label RETURN collect(label) AS labels"
+    ] = [FakeRecord({"labels": ["Chunk"]})]
+
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(FakeSession(records))
+        report = verify_neo4j(
+            uri="bolt://fake:7687",
+            user="neo4j",
+            password="pass",
+            database="neo4j",
+        )
+
+    assert "Document" in report.labels_missing
+    assert report.healthy is False
+    assert any("Document" in e for e in report.errors)
+
+
+def test_missing_chunk_label_causes_unhealthy() -> None:
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=0))
     # Only Document, not Chunk
     records[
         "CALL db.labels() YIELD label RETURN collect(label) AS labels"
@@ -306,12 +367,36 @@ def test_missing_required_label_reported_as_missing() -> None:
             database="neo4j",
         )
 
-    assert "Document" in report.labels_found
-    assert "Chunk" not in report.labels_found
     assert "Chunk" in report.labels_missing
-    # Missing required label should NOT set report.errors (only warnings)
-    assert report.errors == []
-    assert report.connected is True
+    assert report.healthy is False
+    assert any("Chunk" in e for e in report.errors)
+
+
+def test_missing_both_required_labels_causes_unhealthy() -> None:
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=0))
+    # Neither Document nor Chunk
+    records[
+        "CALL db.labels() YIELD label RETURN collect(label) AS labels"
+    ] = [FakeRecord({"labels": ["LegalType", "Sector"]})]
+
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(FakeSession(records))
+        report = verify_neo4j(
+            uri="bolt://fake:7687",
+            user="neo4j",
+            password="pass",
+            database="neo4j",
+        )
+
+    assert "Document" in report.labels_missing
+    assert "Chunk" in report.labels_missing
+    assert report.healthy is False
+    # Should have two error entries — one per missing required label
+    error_labels = [
+        e for e in report.errors if "Required label" in e
+    ]
+    assert len(error_labels) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -320,10 +405,12 @@ def test_missing_required_label_reported_as_missing() -> None:
 
 
 def test_missing_relationship_type_is_warning_not_error() -> None:
-    records = dict(_HEALTHY_RECORDS)
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=20))
     # Only CITES and AMENDS — REPEALS and GUIDELINES are absent
     records[
-        "CALL db.relationshipTypes() YIELD relationshipType RETURN collect(relationshipType) AS types"
+        "CALL db.relationshipTypes() YIELD relationshipType "
+        "RETURN collect(relationshipType) AS types"
     ] = [FakeRecord({"types": ["CITES", "AMENDS", "HAS_CHUNK"]})]
 
     with patch("verify_neo4j.GraphDatabase") as mock_db:
@@ -345,9 +432,11 @@ def test_missing_relationship_type_is_warning_not_error() -> None:
 
 
 def test_render_shows_missing_relationship_with_warning_symbol() -> None:
-    records = dict(_HEALTHY_RECORDS)
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=20))
     records[
-        "CALL db.relationshipTypes() YIELD relationshipType RETURN collect(relationshipType) AS types"
+        "CALL db.relationshipTypes() YIELD relationshipType "
+        "RETURN collect(relationshipType) AS types"
     ] = [FakeRecord({"types": ["CITES"]})]
 
     with patch("verify_neo4j.GraphDatabase") as mock_db:
@@ -368,29 +457,13 @@ def test_render_shows_missing_relationship_with_warning_symbol() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests: raw_label warnings
+# Tests: raw_label verification (legal edges only)
 # ---------------------------------------------------------------------------
 
 
 def test_missing_raw_label_produces_warning() -> None:
-    records = dict(_HEALTHY_RECORDS)
-    # Override edge count to 100
-    records["MATCH ()-[r]->() RETURN count(r) AS cnt"] = [
-        FakeRecord({"cnt": 100})
-    ]
-    # Override raw_label check: 10 edges missing raw_label
-    records[
-        "MATCH ()-[r]->() "
-        "WHERE r.raw_label IS NOT NULL "
-        "RETURN count(r) AS with_label "
-        "UNION ALL "
-        "MATCH ()-[r]->() "
-        "WHERE r.raw_label IS NULL "
-        "RETURN count(r) AS without_label"
-    ] = [
-        FakeRecord({"with_label": 90}),
-        FakeRecord({"without_label": 10}),
-    ]
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=100, missing_count=10))
 
     with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
@@ -409,22 +482,8 @@ def test_missing_raw_label_produces_warning() -> None:
 
 
 def test_render_shows_raw_label_warning() -> None:
-    records = dict(_HEALTHY_RECORDS)
-    records["MATCH ()-[r]->() RETURN count(r) AS cnt"] = [
-        FakeRecord({"cnt": 100})
-    ]
-    records[
-        "MATCH ()-[r]->() "
-        "WHERE r.raw_label IS NOT NULL "
-        "RETURN count(r) AS with_label "
-        "UNION ALL "
-        "MATCH ()-[r]->() "
-        "WHERE r.raw_label IS NULL "
-        "RETURN count(r) AS without_label"
-    ] = [
-        FakeRecord({"with_label": 90}),
-        FakeRecord({"without_label": 10}),
-    ]
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=100, missing_count=10))
 
     with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
@@ -436,19 +495,85 @@ def test_render_shows_raw_label_warning() -> None:
         )
 
     rendered = report.render()
-    assert "10/100 edges (10%) missing raw_label" in rendered
+    assert "10/100 legal edges (10%) missing raw_label" in rendered
 
 
-# ---------------------------------------------------------------------------
-# Tests: zero edges — raw_label check gracefully skipped
-# ---------------------------------------------------------------------------
-
-
-def test_zero_edges_skips_raw_label_check() -> None:
-    records = dict(_HEALTHY_RECORDS)
+def test_raw_label_ignores_non_legal_edge_has_chunk() -> None:
+    """HAS_CHUNK edges must NOT be counted in raw_label verification."""
+    records = _common_records()
+    # Total edges = 50 legal + 200 HAS_CHUNK = 250
     records["MATCH ()-[r]->() RETURN count(r) AS cnt"] = [
-        FakeRecord({"cnt": 0})
+        FakeRecord({"cnt": 250})
     ]
+    # All 50 legal edges have raw_label; HAS_CHUNK has no raw_label but
+    # must not be counted
+    records.update(_make_raw_label_with_count(total_legal=50, missing_count=0))
+
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(FakeSession(records))
+        report = verify_neo4j(
+            uri="bolt://fake:7687",
+            user="neo4j",
+            password="pass",
+            database="neo4j",
+        )
+
+    assert report.edge_count == 250
+    assert report.raw_label_checked == 50
+    assert report.raw_label_missing == 0
+
+
+def test_raw_label_ignores_other_non_legal_edges() -> None:
+    """Non-legal edges like HAS_METADATA must NOT be counted."""
+    records = _common_records()
+    records["MATCH ()-[r]->() RETURN count(r) AS cnt"] = [
+        FakeRecord({"cnt": 300})
+    ]
+    records.update(_make_raw_label_with_count(total_legal=30, missing_count=0))
+
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(FakeSession(records))
+        report = verify_neo4j(
+            uri="bolt://fake:7687",
+            user="neo4j",
+            password="pass",
+            database="neo4j",
+        )
+
+    assert report.edge_count == 300
+    assert report.raw_label_checked == 30
+
+
+def test_whitespace_only_raw_label_treated_as_missing() -> None:
+    """raw_label with only whitespace counts the same as NULL."""
+    records = _common_records()
+    records.update(
+        _make_raw_label_with_count(total_legal=50, missing_count=5)
+    )
+
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(FakeSession(records))
+        report = verify_neo4j(
+            uri="bolt://fake:7687",
+            user="neo4j",
+            password="pass",
+            database="neo4j",
+        )
+
+    # The script already uses trim(r.raw_label) <> '' to treat
+    # whitespace-only as missing — verify the aggregate test passes
+    assert report.raw_label_checked == 50
+    assert report.raw_label_missing == 5
+
+
+# ---------------------------------------------------------------------------
+# Tests: zero legal edges — raw_label check gracefully skipped
+# ---------------------------------------------------------------------------
+
+
+def test_zero_legal_edges_skips_raw_label_check() -> None:
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=0, missing_count=0))
 
     with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
@@ -460,7 +585,7 @@ def test_zero_edges_skips_raw_label_check() -> None:
         )
 
     assert report.raw_label_checked == 0
-    assert "(no edges to inspect)" in report.render()
+    assert "(no legal edges to inspect)" in report.render()
 
 
 # ---------------------------------------------------------------------------
@@ -515,3 +640,35 @@ def test_missing_optional_relationship_does_not_block_healthy() -> None:
     report.relationship_types_missing = ["REPEALS"]
     report.warnings.append("Missing optional relationship types: REPEALS")
     assert report.healthy is True
+
+
+def test_main_returns_zero_on_healthy_verification() -> None:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = _make_healthy_driver()
+        exit_code = main()
+
+    assert exit_code == 0
+
+
+def test_main_returns_nonzero_on_connection_failure() -> None:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(
+            FakeSession(), connectivity=False
+        )
+        exit_code = main()
+
+    assert exit_code != 0
+
+
+def test_main_returns_nonzero_on_missing_required_label() -> None:
+    records = _common_records()
+    records.update(_make_raw_label_with_count(total_legal=0))
+    records[
+        "CALL db.labels() YIELD label RETURN collect(label) AS labels"
+    ] = [FakeRecord({"labels": []})]
+
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
+        mock_db.driver.return_value = FakeDriver(FakeSession(records))
+        exit_code = main()
+
+    assert exit_code != 0

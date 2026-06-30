@@ -36,12 +36,11 @@ REQUIRED_LABELS = {"Document", "Chunk"}
 
 EXPECTED_LEGAL_RELATIONS = {"CITES", "AMENDS", "REPEALS", "GUIDELINES"}
 
-RAW_LABEL_SAMPLE_SIZE = 20
-
 
 # ---------------------------------------------------------------------------
 # Report data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class VerificationReport:
@@ -115,17 +114,20 @@ class VerificationReport:
             lines.append(f"    {rel}")
         lines.append("")
 
-        # raw_label
-        lines.append("raw_label:")
+        # raw_label (legal edges only)
+        lines.append("raw_label (legal edges):")
         if self.raw_label_checked == 0:
-            lines.append("  (no edges to inspect)")
+            lines.append("  (no legal edges to inspect)")
         elif self.raw_label_missing == 0:
-            lines.append(f"  ✓ all inspected edges preserved raw_label ({self.raw_label_checked} checked)")
+            lines.append(
+                f"  ✓ all inspected legal edges preserved raw_label "
+                f"({self.raw_label_checked} checked)"
+            )
         else:
             missing_pct = int(self.raw_label_missing / self.raw_label_checked * 100)
             lines.append(
-                f"  ⚠ {self.raw_label_missing}/{self.raw_label_checked} edges "
-                f"({missing_pct}%) missing raw_label"
+                f"  ⚠ {self.raw_label_missing}/{self.raw_label_checked} "
+                f"legal edges ({missing_pct}%) missing raw_label"
             )
         lines.append("")
 
@@ -136,7 +138,9 @@ class VerificationReport:
                 f"Missing optional relationship types: {', '.join(self.relationship_types_missing)}"
             )
         if self.raw_label_missing > 0:
-            all_warnings.append(f"{self.raw_label_missing} edges missing raw_label")
+            all_warnings.append(
+                f"{self.raw_label_missing} legal edges missing raw_label"
+            )
 
         if all_warnings:
             lines.append("Warnings:")
@@ -157,11 +161,14 @@ class VerificationReport:
 # Core verification logic
 # ---------------------------------------------------------------------------
 
+
 def _get_env(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
 
-def _run_query(driver: Any, query: str, database: str, **params: Any) -> list[Any]:
+def _run_query(
+    driver: Any, query: str, database: str, **params: Any
+) -> list[Any]:
     """Execute a Cypher query and return all records."""
     with driver.session(database=database) as session:
         return list(session.run(query, **params))
@@ -216,7 +223,7 @@ def verify_neo4j(
             report.warnings.append("Could not determine Neo4j version")
 
         # --------------------------------------------------------------
-        # 3. Count graphs objects
+        # 3. Count graph objects
         # --------------------------------------------------------------
         try:
             records = _run_query(
@@ -263,7 +270,7 @@ def verify_neo4j(
             report.errors.append(f"Chunk count query failed: {exc}")
 
         # --------------------------------------------------------------
-        # 4. Verify required labels
+        # 4. Verify required labels  (fatal if missing)
         # --------------------------------------------------------------
         try:
             records = _run_query(
@@ -276,10 +283,17 @@ def verify_neo4j(
         except Exception as exc:
             report.errors.append(f"Label check query failed: {exc}")
 
-        report.labels_missing = sorted(set(REQUIRED_LABELS) - set(report.labels_found))
+        report.labels_missing = sorted(
+            set(REQUIRED_LABELS) - set(report.labels_found)
+        )
+        if report.labels_missing:
+            for label in report.labels_missing:
+                report.errors.append(
+                    f"Required label '{label}' is missing from the database"
+                )
 
         # --------------------------------------------------------------
-        # 5. Verify relationship types
+        # 5. Verify relationship types  (optional — warnings only)
         # --------------------------------------------------------------
         try:
             records = _run_query(
@@ -289,38 +303,54 @@ def verify_neo4j(
                 resolved_database,
             )
             if records:
-                report.relationship_types_found = sorted(records[0].get("types", []))
+                report.relationship_types_found = sorted(
+                    records[0].get("types", [])
+                )
         except Exception as exc:
             report.errors.append(f"Relationship type query failed: {exc}")
 
         report.relationship_types_missing = sorted(
-            set(EXPECTED_LEGAL_RELATIONS) - set(report.relationship_types_found)
+            set(EXPECTED_LEGAL_RELATIONS)
+            - set(report.relationship_types_found)
         )
 
         # --------------------------------------------------------------
-        # 6. Verify raw_label preservation
+        # 6. Verify raw_label preservation (legal edges only)
         # --------------------------------------------------------------
-        if report.edge_count > 0:
-            try:
-                records = _run_query(
+        legal_types_list = list(EXPECTED_LEGAL_RELATIONS)
+        try:
+            # Count legal edges first
+            legal_records = _run_query(
+                driver,
+                "MATCH ()-[r]->() WHERE type(r) IN $legal_types "
+                "RETURN count(r) AS cnt",
+                resolved_database,
+                legal_types=legal_types_list,
+            )
+            legal_edge_count = legal_records[0].get("cnt", 0) if legal_records else 0
+
+            if legal_edge_count > 0:
+                report.raw_label_checked = legal_edge_count
+                raw_label_records = _run_query(
                     driver,
                     "MATCH ()-[r]->() "
-                    "WHERE r.raw_label IS NOT NULL "
+                    "WHERE type(r) IN $legal_types "
+                    "AND r.raw_label IS NOT NULL AND trim(r.raw_label) <> '' "
                     "RETURN count(r) AS with_label "
                     "UNION ALL "
                     "MATCH ()-[r]->() "
-                    "WHERE r.raw_label IS NULL "
+                    "WHERE type(r) IN $legal_types "
+                    "AND (r.raw_label IS NULL OR trim(r.raw_label) = '') "
                     "RETURN count(r) AS without_label",
                     resolved_database,
+                    legal_types=legal_types_list,
                 )
-                report.raw_label_checked = report.edge_count
-                # The UNION ALL produces two rows: with_label, then without_label
-                for rec in records:
+                # UNION ALL produces two rows: with_label, then without_label
+                for rec in raw_label_records:
                     if rec.get("without_label", 0) > 0:
                         report.raw_label_missing = rec["without_label"]
-            except Exception as exc:
-                report.errors.append(f"raw_label check query failed: {exc}")
-        # else: no edges — raw_label_checked stays 0
+        except Exception as exc:
+            report.errors.append(f"raw_label check query failed: {exc}")
 
     finally:
         driver.close()
@@ -332,7 +362,8 @@ def verify_neo4j(
 # CLI entry point
 # ---------------------------------------------------------------------------
 
-def main(argv: list[str] | None = None) -> int:
+
+def main() -> int:
     """Run verification and print the report to stdout."""
     report = verify_neo4j()
     print(report.render())
