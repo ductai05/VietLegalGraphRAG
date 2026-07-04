@@ -245,6 +245,53 @@ docker run -d \
     "${NEO4J_IMAGE}"
 
 echo "✅ Neo4j started with TLS"
+
+# --- Install Self-Terminating Idle Watchdog on the VM ---
+echo "=== Installing VM-side Idle Watchdog ==="
+IDLE_SCRIPT="/usr/local/bin/neo4j_idle_shutdown.sh"
+sudo tee "${IDLE_SCRIPT}" > /dev/null << 'WATCHDOG'
+#!/usr/bin/env bash
+
+IDLE_THRESHOLD=600
+PORT=7687
+COUNTER_FILE="/var/run/neo4j_idle_counter"
+
+# Check if Neo4j container is running
+if ! docker ps --filter name=neo4j-legal --format '{{.Names}}' | grep -q 'neo4j-legal'; then
+    ACTIVE_CONNS=0
+else
+    # Count ESTABLISHED connections to Bolt port 7687
+    ACTIVE_CONNS=$(ss -t -a 2>/dev/null | grep -E "ESTAB.*:${PORT}" | wc -l)
+fi
+
+if [ "${ACTIVE_CONNS}" -gt 0 ]; then
+    # Active connection detected, reset idle counter
+    echo 0 > "${COUNTER_FILE}"
+else
+    if [ ! -f "${COUNTER_FILE}" ]; then
+        echo 0 > "${COUNTER_FILE}"
+    fi
+    CURRENT_IDLE=$(cat "${COUNTER_FILE}")
+    NEW_IDLE=$((CURRENT_IDLE + 60))
+    echo "${NEW_IDLE}" > "${COUNTER_FILE}"
+
+    if [ "${NEW_IDLE}" -ge "${IDLE_THRESHOLD}" ]; then
+        echo "$(date): Idle threshold reached (${NEW_IDLE}s >= ${IDLE_THRESHOLD}s). Shutting down GCE VM..." >> /var/log/neo4j_idle_shutdown.log
+        rm -f "${COUNTER_FILE}"
+        sudo shutdown -h now
+    fi
+fi
+WATCHDOG
+
+sudo chmod +x "${IDLE_SCRIPT}"
+
+# Create root cron job running every minute
+sudo tee /etc/cron.d/neo4j-idle-shutdown > /dev/null << CRON
+* * * * * root /usr/local/bin/neo4j_idle_shutdown.sh
+CRON
+
+echo "✅ VM-side Idle Watchdog active (10 minutes timeout)"
+
 echo ""
 echo "=== Connection Info ==="
 echo "  Bolt (TLS):   neo4j+s://$(hostname -I | awk '{print $1}'):7687"
