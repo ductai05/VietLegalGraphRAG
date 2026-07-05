@@ -1,0 +1,79 @@
+# =============================================================================
+# VietLegalGraphRAG — Demo Docker Compose (API-only)
+# =============================================================================
+#
+# This compose file starts ONLY the FastAPI backend for local development.
+# Elasticsearch Cloud, Neo4j VPS, and Google Cloud Vision run externally and
+# are reached via environment variables.
+#
+# Start:
+#   docker compose --env-file src/infra/.env -f src/infra/docker-compose.yml up --build
+#
+# Health check:
+#   curl http://localhost:8000/health
+#
+# =============================================================================
+# Adding local Elasticsearch / Neo4j for offline work
+# =============================================================================
+#
+# If you need a fully-offline stack, create an override file:
+#
+#   # src/infra/docker-compose.offline.yml
+#   services:
+#     elasticsearch:
+#       image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+#       environment:
+#         discovery.type: single-node
+#         xpack.security.enabled: "false"
+#         ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+#       ports:
+#         - "9200:9200"
+#
+#     neo4j:
+#       image: neo4j:5-community
+#       environment:
+#         NEO4J_AUTH: neo4j/password
+#       ports:
+#         - "7474:7474"
+#         - "7687:7687"
+#
+# Then run:
+#   docker compose \
+#     --env-file src/infra/.env \
+#     -f src/infra/docker-compose.yml \
+#     -f src/infra/docker-compose.offline.yml \
+#     up --build
+# =============================================================================
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: src/backend/Dockerfile
+    environment:
+      - BACKEND_PORT
+      - ELASTICSEARCH_URL
+      - ELASTICSEARCH_API_KEY
+      - ELASTICSEARCH_DENSE_INDEX
+      - ELASTICSEARCH_SPARSE_INDEX
+      - NEO4J_URI
+      - NEO4J_USER
+      - NEO4J_PASSWORD
+      - NEO4J_DATABASE
+      - GOOGLE_APPLICATION_CREDENTIALS
+      - RERANK_PROVIDER
+      - RERANK_MODEL
+      - JINA_API_KEY
+      - VOYAGE_API_KEY
+      - LLM_PROVIDER
+      - FRONTEND_ORIGIN
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./credentials:/app/credentials:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
