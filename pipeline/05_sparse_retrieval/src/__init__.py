@@ -1,1 +1,0 @@
-"""Sparse retrieval source package."""
