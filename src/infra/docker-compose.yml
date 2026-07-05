@@ -67,11 +67,6 @@ services:
       - VOYAGE_API_KEY
       - LLM_PROVIDER
       - FRONTEND_ORIGIN
-      - VM_PROVIDER
-      - VM_INSTANCE_ID
-      - VM_ZONE
-      - VM_PROJECT
-      - VM_IDLE_TIMEOUT
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
