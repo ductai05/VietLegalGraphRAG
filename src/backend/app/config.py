@@ -11,6 +11,13 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "mock")
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 
+    # VM auto-start/stop management
+    vm_provider: str = os.getenv("VM_PROVIDER", "none")
+    vm_instance_id: str = os.getenv("VM_INSTANCE_ID", "")
+    vm_zone: str = os.getenv("VM_ZONE", "")
+    vm_project: str = os.getenv("VM_PROJECT", "")
+    vm_idle_timeout: int = int(os.getenv("VM_IDLE_TIMEOUT", "600"))
+
 
 def get_settings() -> Settings:
     return Settings()
