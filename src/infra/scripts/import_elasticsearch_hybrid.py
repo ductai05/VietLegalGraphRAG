@@ -688,6 +688,23 @@ def build_elasticsearch_client(
     return Elasticsearch(url, **kwargs)
 
 
+def _is_serverless_unavailable_settings_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "serverless" in message
+        and "number_of_shards" in message
+        and "number_of_replicas" in message
+    )
+
+
+def _serverless_create_body(body: dict[str, Any]) -> dict[str, Any]:
+    serverless_body = json.loads(json.dumps(body))
+    index_settings = serverless_body.get("settings", {}).get("index", {})
+    index_settings.pop("number_of_shards", None)
+    index_settings.pop("number_of_replicas", None)
+    return serverless_body
+
+
 def ensure_index(
     client: Any,
     *,
@@ -717,7 +734,15 @@ def ensure_index(
         number_of_shards=number_of_shards,
         number_of_replicas=0,
     )
-    client.indices.create(index=index, body=body)
+    try:
+        client.indices.create(index=index, body=body)
+    except Exception as exc:
+        if not _is_serverless_unavailable_settings_error(exc):
+            raise
+        logging.info(
+            "Retrying index creation without shard/replica settings for Elasticsearch serverless"
+        )
+        client.indices.create(index=index, body=_serverless_create_body(body))
     logging.info("Created index %s", index)
 
 

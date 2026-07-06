@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-if [ "${1:-}" != "--" ]; then
+if [ "${1:-}" != "--recreate" ]; then
     echo "Refusing to run without explicit destructive confirmation."
     echo "Usage: $0 --recreate <neo4j_password> [import_dir] [neo4j_image]"
     exit 2

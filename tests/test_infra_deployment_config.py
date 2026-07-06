@@ -218,3 +218,51 @@ def test_bulk_actions_passes_trial_tier_sizing_and_backoff_options() -> None:
     assert captured["initial_backoff"] == 1.5
     assert captured["max_backoff"] == 30.0
     assert captured["retry_on_status"] == (429, 502, 503, 504)
+
+
+def test_ensure_index_retries_without_shard_and_replica_settings_for_serverless() -> None:
+    from src.infra.scripts.import_elasticsearch_hybrid import ensure_index
+
+    class ServerlessCreateError(Exception):
+        def __str__(self) -> str:
+            return (
+                "BadRequestError(400, 'illegal_argument_exception', "
+                "'Settings [index.number_of_replicas,index.number_of_shards] "
+                "are not available when running in serverless mode')"
+            )
+
+    class FakeIndices:
+        def __init__(self) -> None:
+            self.created_bodies = []
+
+        def exists(self, *, index):
+            return False
+
+        def create(self, *, index, body):
+            self.created_bodies.append(body)
+            if len(self.created_bodies) == 1:
+                raise ServerlessCreateError()
+            return {"acknowledged": True}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.indices = FakeIndices()
+
+    client = FakeClient()
+
+    ensure_index(
+        client,
+        index="vietlegal_chunks_hybrid_v1",
+        recreate=False,
+        vector_dims=1024,
+        number_of_shards=1,
+    )
+
+    assert len(client.indices.created_bodies) == 2
+    first_settings = client.indices.created_bodies[0]["settings"]["index"]
+    second_settings = client.indices.created_bodies[1]["settings"]["index"]
+    assert "number_of_shards" in first_settings
+    assert "number_of_replicas" in first_settings
+    assert "number_of_shards" not in second_settings
+    assert "number_of_replicas" not in second_settings
+    assert client.indices.created_bodies[1]["mappings"]["properties"]["vector"]["dims"] == 1024
