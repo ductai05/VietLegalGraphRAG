@@ -1,5 +1,9 @@
 [tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
 pythonpath = [
+    ".",
     "pipeline/02_preprocessing/clean",
     "pipeline/02_preprocessing/chunk",
     "pipeline/03_embeddings/dense/src",

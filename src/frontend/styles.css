@@ -1065,6 +1065,30 @@ button {
   display: none;
 }
 
+.citation-list {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--paper-ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.citation-list li::marker {
+  color: #c2172f;
+}
+
+.trace-line {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 2px solid rgba(36, 31, 56, 0.18);
+  color: #746a52;
+  font-family: "Press Start 2P", sans-serif;
+  font-size: 8px;
+  line-height: 1.6;
+}
+
 .typing .bubble {
   color: var(--body-subtle);
   background: var(--panel-soft);

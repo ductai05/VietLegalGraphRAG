@@ -263,3 +263,34 @@ def test_ensure_index_retries_without_shard_and_replica_settings_for_serverless(
     assert "number_of_shards" not in second_settings
     assert "number_of_replicas" not in second_settings
     assert client.indices.created_bodies[1]["mappings"]["properties"]["vector"]["dims"] == 1024
+
+
+def test_dense_shard_path_resolves_manifest_filenames_under_artifact_subdirs(tmp_path) -> None:
+    from src.infra.scripts.import_elasticsearch_hybrid import resolve_dense_shard_path
+
+    dense_dir = tmp_path / "vnlegal_lal_v0.1"
+    payload_dir = dense_dir / "payload"
+    vector_dir = dense_dir / "vectors"
+    payload_dir.mkdir(parents=True)
+    vector_dir.mkdir(parents=True)
+    payload_file = payload_dir / "payload_shard_00000.parquet"
+    vector_file = vector_dir / "vectors_shard_00000.npy"
+    payload_file.touch()
+    vector_file.touch()
+
+    assert (
+        resolve_dense_shard_path(
+            dense_dir,
+            "payload_shard_00000.parquet",
+            artifact_subdir="payload",
+        )
+        == payload_file
+    )
+    assert (
+        resolve_dense_shard_path(
+            dense_dir,
+            "vectors_shard_00000.npy",
+            artifact_subdir="vectors",
+        )
+        == vector_file
+    )
