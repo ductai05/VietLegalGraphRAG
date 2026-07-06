@@ -41,6 +41,8 @@ nano /opt/vietlegal/env/production.env
 The backend connects to Neo4j over Docker bridge:
 
 ```dotenv
+ELASTICSEARCH_INDEX=vietlegal_chunks_hybrid_v1
+ELASTICSEARCH_ALIAS=vietlegal_chunks
 NEO4J_URI=bolt://vietlegal-neo4j:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=<neo4j-password>
@@ -53,6 +55,48 @@ External admin clients can use:
 neo4j+ssc://<DROPLET_IP>:7687
 https://<DROPLET_IP>:7473
 ```
+
+## Elasticsearch Hybrid Import
+
+Use `scripts/import_elasticsearch_hybrid.py` when pipeline artifacts are ready.
+It creates one Elasticsearch index, indexes sparse/text payload first, then
+updates dense vectors into the same documents by `chunk_id`.
+
+Expected local artifact layout:
+
+```text
+data/retrieval/
+  sparse/bm25_v0.1/sparse_payload.parquet
+  dense/vnlegal_lal_v0.1/
+    manifest.json
+    payload/*.parquet
+    vectors/*.npy
+```
+
+Install host-side import dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Run a fresh import:
+
+```bash
+python src/infra/scripts/import_elasticsearch_hybrid.py \
+  --env-file src/infra/production.env \
+  --recreate \
+  --index vietlegal_chunks_hybrid_v1 \
+  --alias vietlegal_chunks
+```
+
+Operational notes:
+
+- `--recreate` deletes and recreates only the target Elasticsearch index.
+- The checkpoint defaults to `data/retrieval/elasticsearch_hybrid_ingest_checkpoint.json`.
+- Bad or oversized records are written to the `.deadletter.jsonl` file.
+- `--max-error-rate` defaults to `0.01`, so up to 1 percent bad records can be
+  tolerated before the script stops.
+- For a smoke run, use `--max-sparse-rows 10000 --max-dense-shards 1`.
 
 ## Neo4j Fresh Import
 
