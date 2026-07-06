@@ -20,12 +20,12 @@ except ModuleNotFoundError as exc:
         raise
     Elasticsearch = None
     helpers = None
-from pipeline.embedding.elasticsearch_common import (
+from pipeline.embedding.src.elasticsearch_common import (
     build_index_definition,
     make_index_action,
     resolve_credentials,
 )
-from pipeline.embedding.embedding_common import (
+from pipeline.embedding.src.embedding_common import (
     VECTOR_SIZE,
     atomic_write_json,
     file_fingerprint,

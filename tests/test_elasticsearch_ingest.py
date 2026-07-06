@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pipeline.embedding.build_elasticsearch import (
+from pipeline.embedding.scripts.build_elasticsearch import (
     prepare_build_manifest,
     upload_and_checkpoint_shard,
     upload_shard,

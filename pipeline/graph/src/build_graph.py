@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from pipeline.graph.schema import (
+from pipeline.graph.src.schema import (
     CHUNK_FIELDS,
     DOCUMENT_FIELDS,
     EDGE_FIELDS,

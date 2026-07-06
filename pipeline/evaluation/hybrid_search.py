@@ -17,12 +17,12 @@ import numpy as np
 for _key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
     os.environ.pop(_key, None)
 
-from pipeline.embedding.dense_retrieval import format_citation
-from pipeline.embedding.embedding_common import encode_texts, load_encoder, COLLECTION_NAME, MODEL_NAME, setup_logging
-from pipeline.embedding.elasticsearch_common import build_elasticsearch_filter, resolve_num_candidates
+from pipeline.embedding.src.dense_retrieval import format_citation
+from pipeline.embedding.src.embedding_common import encode_texts, load_encoder, COLLECTION_NAME, MODEL_NAME, setup_logging
+from pipeline.embedding.src.elasticsearch_common import build_elasticsearch_filter, resolve_num_candidates
 from pipeline.sparse_retrieval.src.elastic_client import build_elasticsearch_client
 from pipeline.sparse_retrieval.src.tokenizer import tokenize_vi
-from pipeline.embedding.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
+from pipeline.embedding.src.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:

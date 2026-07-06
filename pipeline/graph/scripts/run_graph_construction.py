@@ -1,4 +1,4 @@
-from pipeline.graph.build_graph import main
+from pipeline.graph.src.build_graph import main
 
 
 if __name__ == "__main__":

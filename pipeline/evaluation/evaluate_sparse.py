@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
                         help="List of k values for evaluation metrics")
     parser.add_argument("--chunks", type=Path, default=os.environ.get("CHUNKS_PATH"),
                         help="Path to chunks.parquet or sparse_base.parquet to resolve duplicate chunk texts")
-    parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "05_sparse_retrieval" / "config.env",
+    parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "sparse_retrieval" / "config.env",
                         help="Path to environment file")
     return parser.parse_args()
 
@@ -148,12 +148,12 @@ class SparseRetriever:
 def main() -> None:
     # Pre-parse env-file configuration
     temp_parser = argparse.ArgumentParser(add_help=False)
-    temp_parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "05_sparse_retrieval" / "config.env")
+    temp_parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "sparse_retrieval" / "config.env")
     temp_args, _ = temp_parser.parse_known_args()
     
     load_env_file(temp_args.env_file)
     if not temp_args.env_file.exists():
-        load_env_file(BASE_DIR / "pipeline" / "05_sparse_retrieval" / ".env")
+        load_env_file(BASE_DIR / "pipeline" / "sparse_retrieval" / ".env")
         load_env_file(BASE_DIR / ".env")
 
     args = parse_args()

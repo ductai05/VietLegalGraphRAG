@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from pipeline.embedding.elasticsearch_common import (
+from pipeline.embedding.src.elasticsearch_common import (
     build_elasticsearch_filter,
     build_index_definition,
     make_index_action,

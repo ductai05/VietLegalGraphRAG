@@ -16,9 +16,9 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-from pipeline.embedding.dense_retrieval import DenseRetriever
-from pipeline.embedding.embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging
-from pipeline.embedding.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
+from pipeline.embedding.src.dense_retrieval import DenseRetriever
+from pipeline.embedding.src.embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging
+from pipeline.embedding.src.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
 
 
 def parse_args() -> argparse.Namespace:
