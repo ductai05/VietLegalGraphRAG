@@ -3,7 +3,7 @@ name: Deploy to DigitalOcean Droplet
 on:
   push:
     branches:
-      - main
+      - production
 
 jobs:
   deploy:
@@ -20,9 +20,10 @@ jobs:
           port: ${{ secrets.DROPLET_PORT || 22 }}
           script: |
             cd /opt/VietLegalGraphRAG
-            
-            # Pull latest changes from main branch
-            git pull origin main
-            
+
+            # Pull latest changes from production branch
+            git pull origin production
+
             # Rebuild and restart modified services
             docker compose -f src/infra/docker-compose.production.yml up --build -d
+
