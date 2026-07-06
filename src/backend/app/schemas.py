@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class RerankConfigModel(BaseModel):
     enabled: bool = True
-    model: str = "BAAI/bge-reranker-v2-m3"
+    model: str = "rerank-2.5"
     candidate_k: int = Field(default=50, gt=0)
     batch_size: int = Field(default=8, gt=0)
     device: str = "auto"

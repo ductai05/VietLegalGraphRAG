@@ -68,5 +68,10 @@ class RetrievalService:
             hits = self.fusion_retriever.merge(dense_hits, sparse_hits, candidate_k)
 
         if request.rerank.enabled:
-            return self.reranker.rerank(request.query, hits, request.top_k)
+            return self.reranker.rerank(
+                request.query,
+                hits,
+                request.top_k,
+                model=request.rerank.model,
+            )
         return hits[:request.top_k]

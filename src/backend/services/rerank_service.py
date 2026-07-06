@@ -7,12 +7,24 @@ from contracts import RetrievalHit
 
 
 class Reranker(Protocol):
-    def rerank(self, query: str, hits: list[RetrievalHit], top_k: int) -> list[RetrievalHit]:
+    def rerank(
+        self,
+        query: str,
+        hits: list[RetrievalHit],
+        top_k: int,
+        model: str | None = None,
+    ) -> list[RetrievalHit]:
         ...
 
 
 class NoopReranker:
-    def rerank(self, query: str, hits: list[RetrievalHit], top_k: int) -> list[RetrievalHit]:
+    def rerank(
+        self,
+        query: str,
+        hits: list[RetrievalHit],
+        top_k: int,
+        model: str | None = None,
+    ) -> list[RetrievalHit]:
         return hits[:top_k]
 
 
@@ -39,15 +51,22 @@ class VoyageReranker:
         self.model = model
         self.batch_size = batch_size
 
-    def rerank(self, query: str, hits: list[RetrievalHit], top_k: int) -> list[RetrievalHit]:
+    def rerank(
+        self,
+        query: str,
+        hits: list[RetrievalHit],
+        top_k: int,
+        model: str | None = None,
+    ) -> list[RetrievalHit]:
         if not hits:
             return []
         documents = [format_rerank_document(hit) for hit in hits]
+        rerank_model = model or self.model
         try:
             response = self.client.rerank(
                 query=query,
                 documents=documents,
-                model=self.model,
+                model=rerank_model,
                 top_k=min(top_k, len(hits)),
             )
         except Exception:
