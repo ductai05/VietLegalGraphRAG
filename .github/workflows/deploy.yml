@@ -1,0 +1,29 @@
+name: Deploy to DigitalOcean Droplet
+
+on:
+  push:
+    branches:
+      - production
+
+jobs:
+  deploy:
+    name: Deploy to Droplet via SSH
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: ${{ secrets.DROPLET_USER || 'root' }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DROPLET_PORT || 22 }}
+          script: |
+            cd /opt/VietLegalGraphRAG
+
+            # Pull latest changes from production branch
+            git pull origin production
+
+            # Rebuild and restart modified services
+            docker compose -f src/infra/docker-compose.production.yml up --build -d
+

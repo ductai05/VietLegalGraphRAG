@@ -1,5 +1,6 @@
 # IDE
 /.idea
+.worktrees/
 .env
 *.zip
 /report*/
@@ -36,3 +37,6 @@ venv/
 !/output/llm_evaluation_complete/
 !/output/llm_evaluation_complete/audit.json
 !/output/llm_evaluation_complete/summary.json
+
+# Google Cloud Vision credentials (never commit service-account JSON)
+credentials/
