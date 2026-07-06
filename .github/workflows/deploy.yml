@@ -11,7 +11,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH and deploy changed services
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy files to Droplet
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: ${{ secrets.DROPLET_USER || 'root' }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DROPLET_PORT || 22 }}
+          source: "."
+          target: "/opt/VietLegalGraphRAG"
+          overwrite: true
+
+      - name: SSH and deploy services
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DROPLET_IP }}
@@ -26,10 +40,6 @@ jobs:
             COMPOSE_FILE="src/infra/docker-compose.production.yml"
 
             cd "$APP_DIR"
-
-            git fetch origin main
-            git checkout main || git checkout -b main
-            git pull origin main
 
             if [ ! -f "$ENV_FILE" ]; then
               echo "Missing env file: $ENV_FILE"
