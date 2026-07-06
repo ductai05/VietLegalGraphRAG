@@ -49,7 +49,7 @@ def test_deploy_workflow_rebuilds_only_changed_app_services() -> None:
 def test_neo4j_setup_script_is_destructive_but_guarded() -> None:
     script = read("src/infra/setup_neo4j_droplet.sh")
 
-    assert "--yes-recreate" in script
+    assert "--recreate" in script
     assert "--yes-destroy" not in script
     assert "docker volume rm" in script
     assert "rm -rf" in script

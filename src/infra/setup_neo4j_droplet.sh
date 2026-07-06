@@ -12,17 +12,17 @@
 #   scp *_edges.csv root@<DROPLET_IP>:/opt/vietlegal/neo4j/import/
 #
 # Run:
-#   bash setup_neo4j_droplet.sh --yes-recreate '<neo4j_password>'
+#   bash setup_neo4j_droplet.sh --recreate '<neo4j_password>'
 
 set -euo pipefail
 
-if [ "${1:-}" != "--yes-recreate" ]; then
+if [ "${1:-}" != "--" ]; then
     echo "Refusing to run without explicit destructive confirmation."
-    echo "Usage: $0 --yes-recreate <neo4j_password> [import_dir] [neo4j_image]"
+    echo "Usage: $0 --recreate <neo4j_password> [import_dir] [neo4j_image]"
     exit 2
 fi
 
-NEO4J_PASSWORD="${2:?Usage: $0 --yes-recreate <neo4j_password> [import_dir] [neo4j_image]}"
+NEO4J_PASSWORD="${2:?Usage: $0 --recreate <neo4j_password> [import_dir] [neo4j_image]}"
 IMPORT_DIR="${3:-/opt/vietlegal/neo4j/import}"
 NEO4J_IMAGE="${4:-neo4j:5-community}"
 

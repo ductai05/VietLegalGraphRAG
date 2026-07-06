@@ -56,7 +56,7 @@ https://<DROPLET_IP>:7473
 
 ## Neo4j Fresh Import
 
-The setup script is destructive and requires `--yes-recreate`.
+The setup script is destructive and requires `--recreate`.
 
 Upload CSV files:
 
@@ -70,7 +70,7 @@ Run setup:
 
 ```bash
 scp src/infra/setup_neo4j_droplet.sh root@<DROPLET_IP>:/tmp/
-ssh root@<DROPLET_IP> 'bash /tmp/setup_neo4j_droplet.sh --yes-recreate "<neo4j-password>"'
+ssh root@<DROPLET_IP> 'bash /tmp/setup_neo4j_droplet.sh --recreate "<neo4j-password>"'
 ```
 
 The script deletes known old Neo4j containers and volumes, clears
