@@ -33,7 +33,6 @@ services:
       - GOOGLE_SERVICE_ACCOUNT_CLIENT_ID
       - RERANK_PROVIDER
       - RERANK_MODEL
-      - JINA_API_KEY
       - VOYAGE_API_KEY
       - LLM_PROVIDER
       - LLM_BASE_URL

@@ -157,3 +157,64 @@ def test_hybrid_elasticsearch_actions_use_one_index_and_sparse_then_dense_update
     assert dense_action["_op_type"] == "update"
     assert dense_action["doc_as_upsert"] is False
     assert dense_action["doc"]["vector"] == [0.0] * 1024
+
+
+def test_dense_action_batch_skips_duplicate_chunk_ids() -> None:
+    from src.infra.scripts.import_elasticsearch_hybrid import (
+        DenseDedupeTracker,
+        build_dense_action_batch,
+    )
+
+    tracker = DenseDedupeTracker()
+    rows = [{"chunk_id": "chunk-1"}, {"chunk_id": "chunk-2"}, {"chunk_id": "chunk-1"}]
+    vectors = np.zeros((3, 1024), dtype=np.float16)
+
+    actions, failed = build_dense_action_batch(
+        rows,
+        vectors,
+        index="vietlegal_chunks_hybrid_v1",
+        vector_dims=1024,
+        dead_letter_path=ROOT / "tmp.deadletter.jsonl",
+        base_ordinal=0,
+        dedupe_tracker=tracker,
+    )
+
+    assert failed == 0
+    assert [action["_id"] for action in actions] == ["chunk-1", "chunk-2"]
+    assert tracker.duplicates_skipped == 1
+
+
+def test_bulk_actions_passes_trial_tier_sizing_and_backoff_options() -> None:
+    from src.infra.scripts.import_elasticsearch_hybrid import bulk_actions
+
+    captured = {}
+
+    def fake_bulk(client, actions, **kwargs):
+        captured["client"] = client
+        captured["actions"] = list(actions)
+        captured.update(kwargs)
+        return len(captured["actions"]), []
+
+    result = bulk_actions(
+        client="fake-client",
+        actions=[{"_id": "1"}, {"_id": "2"}],
+        batch_size=100,
+        max_chunk_bytes=5 * 1024 * 1024,
+        max_retries=4,
+        initial_backoff=1.5,
+        max_backoff=30.0,
+        request_timeout=120,
+        dead_letter_path=ROOT / "tmp.deadletter.jsonl",
+        phase="sparse_bulk",
+        bulk_fn=fake_bulk,
+    )
+
+    assert result.ok == 2
+    assert result.failed == 0
+    assert captured["client"] == "fake-client"
+    assert captured["chunk_size"] == 100
+    assert captured["max_chunk_bytes"] == 5 * 1024 * 1024
+    assert captured["max_retries"] == 4
+    assert captured["initial_backoff"] == 1.5
+    assert captured["max_backoff"] == 30.0
+    assert captured["retry_on_status"] == (429, 502, 503, 504)

@@ -21,7 +21,7 @@ Do not move existing pipeline modules here without updating imports and tests.
 - LightRAG is only the orchestration layer. It does not replace hybrid Elasticsearch retrieval.
 - Current answer generation remains `ExtractiveAnswerService`; a future LLM-backed `AnswerService` can replace it behind the same service contract.
 - Default answer temperature is `0.2`.
-- Reranker provider remains undecided; evaluate Jina AI and Voyage AI without locking the architecture to either provider.
+- Reranker provider remains undecided; evaluate Voyage AI without locking the architecture to either provider.
 
 ## LightRAG Flow
 

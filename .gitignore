@@ -41,3 +41,11 @@ venv/
 # Google Cloud Vision credentials (never commit service-account JSON)
 credentials/
 /docs/superpowers
+# Ignore all env files
+*.env
+*.env.*
+.env
+.env.*
+!*.env.example
+!**/.env.example
+

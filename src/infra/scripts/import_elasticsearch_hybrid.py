@@ -19,7 +19,7 @@ import os
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -121,6 +121,21 @@ class BulkResult:
     @property
     def rows_per_second(self) -> float:
         return self.ok / max(self.elapsed_seconds, 1e-9)
+
+
+@dataclass
+class DenseDedupeTracker:
+    """Track dense chunk ids so duplicate vectors do not update the same doc twice."""
+
+    seen_chunk_ids: set[str] = field(default_factory=set)
+    duplicates_skipped: int = 0
+
+    def should_update(self, chunk_id: str) -> bool:
+        if chunk_id in self.seen_chunk_ids:
+            self.duplicates_skipped += 1
+            return False
+        self.seen_chunk_ids.add(chunk_id)
+        return True
 
 
 def keyword_mapping(ignore_above: int = 8192) -> dict[str, Any]:
@@ -471,6 +486,7 @@ def build_dense_action_batch(
     vector_dims: int,
     dead_letter_path: Path,
     base_ordinal: int,
+    dedupe_tracker: DenseDedupeTracker | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     if len(rows) != len(vectors):
         raise ValueError(
@@ -481,6 +497,9 @@ def build_dense_action_batch(
     failed = 0
     for offset, row in enumerate(rows):
         try:
+            chunk_id = _require_chunk_id(row)
+            if dedupe_tracker is not None and not dedupe_tracker.should_update(chunk_id):
+                continue
             actions.append(
                 make_dense_update_action(
                     index,
@@ -534,7 +553,10 @@ def bulk_actions(
     client: Any,
     actions: Iterable[dict[str, Any]],
     batch_size: int,
+    max_chunk_bytes: int,
     max_retries: int,
+    initial_backoff: float,
+    max_backoff: float,
     request_timeout: int,
     dead_letter_path: Path,
     phase: str,
@@ -542,8 +564,14 @@ def bulk_actions(
 ) -> BulkResult:
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if max_chunk_bytes <= 0:
+        raise ValueError("max_chunk_bytes must be positive")
     if max_retries < 0:
         raise ValueError("max_retries cannot be negative")
+    if initial_backoff <= 0:
+        raise ValueError("initial_backoff must be positive")
+    if max_backoff <= 0:
+        raise ValueError("max_backoff must be positive")
     if isinstance(actions, Sequence) and len(actions) == 0:
         return BulkResult(ok=0, failed=0, elapsed_seconds=1e-9)
 
@@ -563,7 +591,11 @@ def bulk_actions(
         client,
         actions,
         chunk_size=batch_size,
+        max_chunk_bytes=max_chunk_bytes,
         max_retries=max_retries,
+        initial_backoff=initial_backoff,
+        max_backoff=max_backoff,
+        retry_on_status=(429, 502, 503, 504),
         raise_on_error=False,
         request_timeout=request_timeout,
     )
@@ -781,7 +813,10 @@ def ingest_sparse_payload(
     checkpoint_path: Path,
     dead_letter_path: Path,
     batch_size: int,
+    max_chunk_bytes: int,
     max_retries: int,
+    initial_backoff: float,
+    max_backoff: float,
     request_timeout: int,
     max_text_chars: int | None,
     max_errors: int,
@@ -837,7 +872,10 @@ def ingest_sparse_payload(
             client=client,
             actions=actions,
             batch_size=batch_size,
+            max_chunk_bytes=max_chunk_bytes,
             max_retries=max_retries,
+            initial_backoff=initial_backoff,
+            max_backoff=max_backoff,
             request_timeout=request_timeout,
             dead_letter_path=dead_letter_path,
             phase="sparse_bulk",
@@ -878,7 +916,7 @@ def _read_dense_payload_rows(path: Path) -> list[dict[str, Any]]:
         raise ModuleNotFoundError(
             "Dense ingest requires `pyarrow`. Install root requirements first."
         ) from exc
-    return pq.read_table(path).to_pylist()
+    return pq.read_table(path, columns=["chunk_id"]).to_pylist()
 
 
 def _completed_dense_shards(
@@ -905,7 +943,10 @@ def ingest_dense_vectors(
     checkpoint_path: Path,
     dead_letter_path: Path,
     batch_size: int,
+    max_chunk_bytes: int,
     max_retries: int,
+    initial_backoff: float,
+    max_backoff: float,
     request_timeout: int,
     vector_dims: int,
     max_errors: int,
@@ -926,7 +967,28 @@ def ingest_dense_vectors(
     processed_rows = sum(int(item.get("processed", 0)) for item in shard_state.values())
     indexed = int(dense_state.get("indexed", 0))
     failed = int(dense_state.get("failed", 0))
+    duplicates_skipped = sum(
+        int(item.get("duplicates_skipped", 0)) for item in shard_state.values()
+    )
     selected_rows = sum(int(info["rows"]) for _, info in shards)
+    dedupe_tracker = DenseDedupeTracker()
+    primed_rows = 0
+
+    for shard_key, shard_info in shards:
+        previous = shard_state.get(shard_key, {})
+        if (
+            previous.get("status") == "done"
+            and previous.get("rows") == shard_info.get("rows")
+        ):
+            payload_path = dense_dir / shard_info["payload"]
+            for row in _read_dense_payload_rows(payload_path):
+                dedupe_tracker.seen_chunk_ids.add(_require_chunk_id(row))
+                primed_rows += 1
+    if primed_rows:
+        logging.info(
+            "Dense phase: primed dedupe tracker with %s chunk ids from checkpointed shards",
+            f"{primed_rows:,}",
+        )
 
     for ordinal, (shard_key, shard_info) in enumerate(shards, start=1):
         previous = shard_state.get(shard_key, {})
@@ -953,6 +1015,7 @@ def ingest_dense_vectors(
             )
         shard_indexed = 0
         shard_failed = 0
+        shard_duplicates_start = dedupe_tracker.duplicates_skipped
         shard_started = time.perf_counter()
         for start in range(0, len(rows), batch_size):
             stop = min(start + batch_size, len(rows))
@@ -963,12 +1026,16 @@ def ingest_dense_vectors(
                 vector_dims=vector_dims,
                 dead_letter_path=dead_letter_path,
                 base_ordinal=start,
+                dedupe_tracker=dedupe_tracker,
             )
             result = bulk_actions(
                 client=client,
                 actions=action_batch,
                 batch_size=batch_size,
+                max_chunk_bytes=max_chunk_bytes,
                 max_retries=max_retries,
+                initial_backoff=initial_backoff,
+                max_backoff=max_backoff,
                 request_timeout=request_timeout,
                 dead_letter_path=dead_letter_path,
                 phase="dense_bulk",
@@ -978,11 +1045,14 @@ def ingest_dense_vectors(
         processed_rows += int(shard_info["rows"])
         indexed += shard_indexed
         failed += shard_failed
+        shard_duplicates = dedupe_tracker.duplicates_skipped - shard_duplicates_start
+        duplicates_skipped += shard_duplicates
         shard_state[shard_key] = {
             "status": "done",
             "rows": int(shard_info["rows"]),
             "indexed": shard_indexed,
             "failed": shard_failed,
+            "duplicates_skipped": shard_duplicates,
         }
         dense_state.update(
             {
@@ -990,6 +1060,7 @@ def ingest_dense_vectors(
                 "failed": failed,
                 "processed": processed_rows,
                 "total_rows": selected_rows,
+                "duplicates_skipped": duplicates_skipped,
             }
         )
         atomic_write_json(checkpoint_path, checkpoint)
@@ -1001,9 +1072,10 @@ def ingest_dense_vectors(
             phase="dense",
         )
         logging.info(
-            "Dense phase: shard=%s indexed=%s processed=%s/%s failed=%s rate=%.1f rows/s",
+            "Dense phase: shard=%s indexed=%s duplicates=%s processed=%s/%s failed=%s rate=%.1f rows/s",
             shard_key,
             f"{shard_indexed:,}",
+            f"{shard_duplicates:,}",
             f"{processed_rows:,}",
             f"{selected_rows:,}",
             f"{failed:,}",
@@ -1032,7 +1104,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dead-letter", type=Path, default=None)
     parser.add_argument("--sparse-batch-size", type=int, default=1000)
     parser.add_argument("--dense-batch-size", type=int, default=200)
+    parser.add_argument(
+        "--sparse-max-chunk-mb",
+        type=float,
+        default=float(os.getenv("ELASTICSEARCH_SPARSE_MAX_CHUNK_MB", "8")),
+        help="Max serialized bulk request size for sparse indexing.",
+    )
+    parser.add_argument(
+        "--dense-max-chunk-mb",
+        type=float,
+        default=float(os.getenv("ELASTICSEARCH_DENSE_MAX_CHUNK_MB", "8")),
+        help="Max serialized bulk request size for dense vector updates.",
+    )
     parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument(
+        "--retry-initial-backoff",
+        type=float,
+        default=float(os.getenv("ELASTICSEARCH_RETRY_INITIAL_BACKOFF", "1")),
+    )
+    parser.add_argument(
+        "--retry-max-backoff",
+        type=float,
+        default=float(os.getenv("ELASTICSEARCH_RETRY_MAX_BACKOFF", "60")),
+    )
     parser.add_argument("--request-timeout", type=int, default=300)
     parser.add_argument("--vector-dims", type=int, default=DEFAULT_VECTOR_DIMS)
     parser.add_argument("--number-of-shards", type=int, default=1)
@@ -1055,6 +1149,10 @@ def validate_args(args: argparse.Namespace) -> None:
     positive = {
         "--sparse-batch-size": args.sparse_batch_size,
         "--dense-batch-size": args.dense_batch_size,
+        "--sparse-max-chunk-mb": args.sparse_max_chunk_mb,
+        "--dense-max-chunk-mb": args.dense_max_chunk_mb,
+        "--retry-initial-backoff": args.retry_initial_backoff,
+        "--retry-max-backoff": args.retry_max_backoff,
         "--request-timeout": args.request_timeout,
         "--vector-dims": args.vector_dims,
         "--number-of-shards": args.number_of_shards,
@@ -1066,6 +1164,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--final-replicas cannot be negative")
     if args.max_retries < 0:
         raise ValueError("--max-retries cannot be negative")
+    if args.retry_max_backoff < args.retry_initial_backoff:
+        raise ValueError("--retry-max-backoff must be >= --retry-initial-backoff")
     if args.max_errors < 0:
         raise ValueError("--max-errors cannot be negative")
     if args.max_error_rate < 0:
@@ -1150,7 +1250,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 checkpoint_path=args.checkpoint,
                 dead_letter_path=dead_letter_path,
                 batch_size=args.sparse_batch_size,
+                max_chunk_bytes=int(args.sparse_max_chunk_mb * 1024 * 1024),
                 max_retries=args.max_retries,
+                initial_backoff=args.retry_initial_backoff,
+                max_backoff=args.retry_max_backoff,
                 request_timeout=args.request_timeout,
                 max_text_chars=args.max_text_chars,
                 max_errors=args.max_errors,
@@ -1166,7 +1269,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 checkpoint_path=args.checkpoint,
                 dead_letter_path=dead_letter_path,
                 batch_size=args.dense_batch_size,
+                max_chunk_bytes=int(args.dense_max_chunk_mb * 1024 * 1024),
                 max_retries=args.max_retries,
+                initial_backoff=args.retry_initial_backoff,
+                max_backoff=args.retry_max_backoff,
                 request_timeout=args.request_timeout,
                 vector_dims=args.vector_dims,
                 max_errors=args.max_errors,

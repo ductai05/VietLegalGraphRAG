@@ -86,7 +86,9 @@ python src/infra/scripts/import_elasticsearch_hybrid.py \
   --env-file src/infra/production.env \
   --recreate \
   --index vietlegal_chunks_hybrid_v1 \
-  --alias vietlegal_chunks
+  --alias vietlegal_chunks \
+  --sparse-max-chunk-mb 8 \
+  --dense-max-chunk-mb 8
 ```
 
 Operational notes:
@@ -94,6 +96,11 @@ Operational notes:
 - `--recreate` deletes and recreates only the target Elasticsearch index.
 - The checkpoint defaults to `data/retrieval/elasticsearch_hybrid_ingest_checkpoint.json`.
 - Bad or oversized records are written to the `.deadletter.jsonl` file.
+- Dense import skips duplicate `chunk_id` rows and records `duplicates_skipped`
+  in the checkpoint instead of updating the same Elasticsearch document twice.
+- Trial tier imports should keep `--sparse-max-chunk-mb` and
+  `--dense-max-chunk-mb` modest, for example 5 to 10 MB, to avoid repeated
+  429/timeout retries.
 - `--max-error-rate` defaults to `0.01`, so up to 1 percent bad records can be
   tolerated before the script stops.
 - For a smoke run, use `--max-sparse-rows 10000 --max-dense-shards 1`.

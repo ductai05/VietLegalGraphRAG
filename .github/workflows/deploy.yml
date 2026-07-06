@@ -3,7 +3,7 @@ name: Deploy to DigitalOcean Droplet
 on:
   push:
     branches:
-      - production
+      - main
 
 jobs:
   deploy:
@@ -28,12 +28,12 @@ jobs:
             cd "$APP_DIR"
 
             OLD_REV="$(git rev-parse HEAD)"
-            git fetch origin production
-            NEW_REV="$(git rev-parse origin/production)"
+            git fetch origin main
+            NEW_REV="$(git rev-parse origin/main)"
             CHANGED_FILES="$(git diff --name-only "$OLD_REV" "$NEW_REV" || true)"
 
-            git checkout production
-            git pull --ff-only origin production
+            git checkout main
+            git pull --ff-only origin main
 
             if [ ! -f "$ENV_FILE" ]; then
               echo "Missing env file: $ENV_FILE"

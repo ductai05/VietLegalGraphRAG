@@ -12,7 +12,6 @@ def test_pipeline_uses_numbered_local_execution_stages() -> None:
         "01_eda/download",
         "01_eda/eda",
         "02_preprocessing/clean",
-        "02_preprocessing/merge",
         "02_preprocessing/chunk",
         "03_embeddings/dense",
         "03_embeddings/sparse",
