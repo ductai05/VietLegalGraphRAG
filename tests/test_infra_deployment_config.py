@@ -42,12 +42,9 @@ def test_frontend_has_nginx_container_definition() -> None:
     assert "proxy_pass $backend_upstream" in nginx
 
 
-def test_deploy_workflow_rebuilds_only_changed_app_services() -> None:
+def test_deploy_workflow_rebuilds_all_app_services() -> None:
     workflow = read(".github/workflows/deploy.yml")
 
-    assert "git diff --name-only" in workflow
-    assert "DEPLOY_BACKEND" in workflow
-    assert "DEPLOY_FRONTEND" in workflow
     assert "up -d --no-deps backend" in workflow
     assert "up -d --no-deps frontend" in workflow
     assert "up --build -d" not in workflow
