@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from embedding_common import PAYLOAD_FIELDS, VECTOR_SIZE, stable_point_id
+from pipeline.embedding.embedding_common import PAYLOAD_FIELDS, VECTOR_SIZE, stable_point_id
 
 INTEGER_FIELDS = {
     "issuance_date_ts",

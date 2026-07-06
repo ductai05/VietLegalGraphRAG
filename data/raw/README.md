@@ -1,14 +1,20 @@
-# 📂 Raw Data
+# Raw Data
 
-Thư mục này chứa **dữ liệu thô** (raw data) được thu thập từ các nguồn pháp luật Việt Nam.
+Thư mục này chứa dữ liệu gốc được tải từ các nguồn bên ngoài, trước khi làm sạch và chunking.
 
-## Mục đích
+## Cấu trúc
 
-- Lưu trữ dữ liệu gốc, chưa qua xử lý (file `.parquet`).
-- Dữ liệu ở đây là đầu vào cho các bước tiền xử lý (preprocessing) trong pipeline.
+```text
+raw/
+└── vietnamese_legal_documents/
+```
+
+## Vai trò
+
+- Lưu bản sao dữ liệu gốc để pipeline có đầu vào tái lập.
+- Không chỉnh sửa trực tiếp dữ liệu raw.
+- Mọi biến đổi nên được thực hiện qua pipeline và lưu kết quả vào `data/processed/`.
 
 ## Lưu ý
 
-- **Thư mục này bị Git ignore** - các file dữ liệu sẽ **không** được commit lên repository.
-- Để tải dữ liệu về máy, vui lòng chạy script: `pipeline/01_data_download/download_data.py`.
-- Không chỉnh sửa trực tiếp dữ liệu trong thư mục này. Mọi biến đổi nên được thực hiện qua pipeline và lưu kết quả vào `data/preprocessed/`.
+Thư mục này bị Git ignore đối với data artifact. Chỉ `README.md` và `.gitkeep` được track để giữ cấu trúc trên remote.

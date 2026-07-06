@@ -122,8 +122,7 @@ def main():
         # 1. Run Dense Evaluation
         dense_output = args.output_dir / "elasticsearch_dense_eval.json"
         dense_cmd = [
-            sys.executable,
-            str(BASE_DIR / "pipeline" / "07_evaluation" / "evaluate_dense.py"),
+            sys.executable, "-m", "pipeline.evaluation.evaluate_dense",
             "--gold", str(eval_gold_path),
             "--output", str(dense_output)
         ]
@@ -145,8 +144,7 @@ def main():
         # 2. Run Sparse Evaluation
         sparse_output = args.output_dir / "elasticsearch_sparse_eval.json"
         sparse_cmd = [
-            sys.executable,
-            str(BASE_DIR / "pipeline" / "07_evaluation" / "evaluate_sparse.py"),
+            sys.executable, "-m", "pipeline.evaluation.evaluate_sparse",
             "--eval-questions", str(eval_gold_path),
             "--url", args.url,
             "--output", str(sparse_output)
@@ -167,8 +165,7 @@ def main():
             out_file = args.output_dir / f"elasticsearch_hybrid_rerank_eval_k{k_val}.json"
             rerank_outputs[k_val] = out_file
             hybrid_cmd = [
-                sys.executable,
-                str(BASE_DIR / "pipeline" / "07_evaluation" / "hybrid_search.py"),
+                sys.executable, "-m", "pipeline.evaluation.hybrid_search",
                 "--gold", str(eval_gold_path),
                 "--url", args.url,
                 "--candidate-k", str(k_val),
@@ -189,8 +186,7 @@ def main():
 
         # 4. Run Plotting Metrics
         plot_cmd = [
-            sys.executable,
-            str(BASE_DIR / "pipeline" / "07_evaluation" / "plot_metrics.py"),
+            sys.executable, "-m", "pipeline.evaluation.plot_metrics",
             "--dense", str(dense_output),
             "--sparse", str(sparse_output),
             "--hybrid", str(rerank_outputs[50]),  # Pass one rerank output to extract baseline hybrid RRF metrics

@@ -11,7 +11,7 @@ import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 
-from embedding_common import (
+from pipeline.embedding.embedding_common import (
     MODEL_NAME,
     PAYLOAD_FIELDS,
     VECTOR_SIZE,

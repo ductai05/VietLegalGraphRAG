@@ -28,7 +28,7 @@ except ModuleNotFoundError as exc:
     if exc.name != "elasticsearch":
         raise
     Elasticsearch = None
-from embedding_common import (
+from pipeline.embedding.embedding_common import (
     COLLECTION_NAME,
     MODEL_NAME,
     encode_texts,
@@ -36,7 +36,7 @@ from embedding_common import (
     load_faiss_module,
     read_json,
 )
-from elasticsearch_common import (
+from pipeline.embedding.elasticsearch_common import (
     build_elasticsearch_filter,
     normalize_search_hits,
     resolve_credentials,

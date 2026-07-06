@@ -11,14 +11,11 @@
 venv
 Learning.md
 
-# Data - ignore content, keep folder structure
-/data/*
-!/data/raw/
-# /data/raw/*
-!/data/raw/README.md
-!/data/preprocessed/
-# /data/preprocessed/*
-!/data/preprocessed/README.md
+# Data - ignore generated artifacts, keep documented folder structure
+/data/**
+!/data/**/
+!/data/**/README.md
+!/data/**/.gitkeep
 
 # Python
 __pycache__/
@@ -34,7 +31,6 @@ venv/
 
 # Kaggle temp files
 /kaggle/
-/data/preprocessed
 
 # Evaluation checkpoints can contain large prompts and model responses.
 /output/llm_evaluation*/

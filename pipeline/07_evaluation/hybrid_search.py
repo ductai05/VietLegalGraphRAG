@@ -17,17 +17,12 @@ import numpy as np
 for _key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
     os.environ.pop(_key, None)
 
-# Add pipeline/04_embedding and pipeline/05_sparse_retrieval to path
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(BASE_DIR / "pipeline" / "04_embedding"))
-sys.path.append(str(BASE_DIR / "pipeline" / "05_sparse_retrieval"))
-
-from dense_retrieval import format_citation
-from embedding_common import encode_texts, load_encoder, COLLECTION_NAME, MODEL_NAME, setup_logging
-from elasticsearch_common import build_elasticsearch_filter, resolve_num_candidates
-from src.elastic_client import build_elasticsearch_client
-from src.tokenizer import tokenize_vi
-from rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
+from pipeline.embedding.dense_retrieval import format_citation
+from pipeline.embedding.embedding_common import encode_texts, load_encoder, COLLECTION_NAME, MODEL_NAME, setup_logging
+from pipeline.embedding.elasticsearch_common import build_elasticsearch_filter, resolve_num_candidates
+from pipeline.sparse_retrieval.src.elastic_client import build_elasticsearch_client
+from pipeline.sparse_retrieval.src.tokenizer import tokenize_vi
+from pipeline.embedding.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -343,8 +338,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path | None = None) -> Path:
-    sys.path.append(str(Path(__file__).resolve().parent))
-    import convert_eval_to_gold
+    from pipeline.evaluation import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
     convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold_hybrid.jsonl"
     if chunks_file:

@@ -16,12 +16,9 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Add pipeline/04_embedding to search path for dense_retrieval, embedding_common, rerank imports
-sys.path.append(str(Path(__file__).resolve().parent.parent / "04_embedding"))
-
-from dense_retrieval import DenseRetriever
-from embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging
-from rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
+from pipeline.embedding.dense_retrieval import DenseRetriever
+from pipeline.embedding.embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging
+from pipeline.embedding.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
 
 
 def parse_args() -> argparse.Namespace:

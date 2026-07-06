@@ -11,14 +11,11 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Import common evaluation utilities from dense retrieval
-sys.path.append(str(BASE_DIR / "pipeline" / "04_embedding"))
-from evaluate_dense import evaluate_hits_relevance, load_jsonl
+from pipeline.evaluation.evaluate_dense import evaluate_hits_relevance, load_jsonl
 
 # Import Elasticsearch client and tokenizer from sparse retrieval
-sys.path.append(str(BASE_DIR / "pipeline" / "05_sparse_retrieval"))
-from src.elastic_client import build_elasticsearch_client
-from src.tokenizer import tokenize_vi
+from pipeline.sparse_retrieval.src.elastic_client import build_elasticsearch_client
+from pipeline.sparse_retrieval.src.tokenizer import tokenize_vi
 
 DEFAULT_EVAL_FILE = BASE_DIR / "output" / "eval_questions.json"
 DEFAULT_OUTPUT_FILE = BASE_DIR / "output" / "sparse_eval_results.json"
@@ -68,8 +65,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path | None = None) -> Path:
-    sys.path.append(str(Path(__file__).resolve().parent))
-    import convert_eval_to_gold
+    from pipeline.evaluation import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
     convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold_sparse.jsonl"
     if chunks_file:

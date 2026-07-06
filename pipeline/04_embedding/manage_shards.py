@@ -19,7 +19,7 @@ import pyarrow.compute as pc
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
-from embedding_common import VECTOR_SIZE, atomic_write_json, read_json
+from pipeline.embedding.embedding_common import VECTOR_SIZE, atomic_write_json, read_json
 
 SHARD_SIZE = 10_000
 NUM_MEMBERS = 5

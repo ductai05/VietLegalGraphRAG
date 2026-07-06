@@ -8,7 +8,7 @@ from pathlib import Path
 
 import polars as pl
 
-from embedding_common import atomic_write_json, file_fingerprint, setup_logging
+from pipeline.embedding.embedding_common import atomic_write_json, file_fingerprint, setup_logging
 
 REQUIRED_CHUNK_COLUMNS = {
     "chunk_id",

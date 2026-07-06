@@ -20,14 +20,12 @@ except ModuleNotFoundError as exc:
         raise
     Elasticsearch = None
     helpers = None
-
-sys.path.append(str(Path(__file__).resolve().parent))
-from elasticsearch_common import (  # noqa: E402
+from pipeline.embedding.elasticsearch_common import (
     build_index_definition,
     make_index_action,
     resolve_credentials,
 )
-from embedding_common import (  # noqa: E402
+from pipeline.embedding.embedding_common import (
     VECTOR_SIZE,
     atomic_write_json,
     file_fingerprint,
