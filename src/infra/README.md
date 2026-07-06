@@ -102,23 +102,31 @@ Operational notes:
 
 The setup script is destructive and requires `--recreate`.
 
-Upload CSV files:
+Upload graph CSV files and recreate Neo4j:
 
 ```bash
-ssh root@<DROPLET_IP> 'mkdir -p /opt/vietlegal/neo4j/import'
-scp documents.csv articles.csv legal_types.csv authorities.csv sectors.csv root@<DROPLET_IP>:/opt/vietlegal/neo4j/import/
-scp *_edges.csv root@<DROPLET_IP>:/opt/vietlegal/neo4j/import/
+bash src/infra/scripts/import_neo4j_droplet.sh \
+  --host <DROPLET_IP> \
+  --user root \
+  --ssh-port 22 \
+  --source data/retrieval/graph/kg_v0.1 \
+  --neo4j-password "<neo4j-password>" \
+  --recreate
 ```
 
-Run setup:
+Upload only, without recreating Neo4j:
 
 ```bash
-scp src/infra/setup_neo4j_droplet.sh root@<DROPLET_IP>:/tmp/
-ssh root@<DROPLET_IP> 'bash /tmp/setup_neo4j_droplet.sh --recreate "<neo4j-password>"'
+bash src/infra/scripts/import_neo4j_droplet.sh \
+  --host <DROPLET_IP> \
+  --source data/retrieval/graph/kg_v0.1 \
+  --upload-only
 ```
 
-The script deletes known old Neo4j containers and volumes, clears
-`/opt/vietlegal/neo4j/data`, bulk imports the CSV files, and starts
+The wrapper uploads CSVs from the source root, `nodes/`, and `edges/` into
+`/opt/vietlegal/neo4j/import`. With `--recreate`, it uploads and runs
+`setup_neo4j_droplet.sh`, which deletes known old Neo4j containers and volumes,
+clears `/opt/vietlegal/neo4j/data`, bulk imports the CSV files, and starts
 `vietlegal-neo4j` on `vietlegal_net`.
 
 Use `docker restart vietlegal-neo4j` for a normal Neo4j restart. Use the setup

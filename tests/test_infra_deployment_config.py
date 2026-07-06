@@ -16,6 +16,7 @@ def read(path: str) -> str:
 def test_production_compose_manages_only_app_services() -> None:
     compose = read("src/infra/docker-compose.production.yml")
 
+    assert not (ROOT / "src/infra/docker-compose.droplet.yml").exists()
     assert "  backend:" in compose
     assert "  frontend:" in compose
     assert "  graph_db:" not in compose
@@ -63,6 +64,21 @@ def test_neo4j_setup_script_is_destructive_but_guarded() -> None:
     assert "docker network create vietlegal_net" in script
     assert "--network vietlegal_net" in script
     assert "NEO4J_server_bolt_tls__level=OPTIONAL" in script
+
+
+def test_neo4j_droplet_import_wrapper_uploads_graph_artifacts_over_ssh() -> None:
+    script_path = ROOT / "src/infra/scripts/import_neo4j_droplet.sh"
+    assert script_path.is_file()
+
+    script = script_path.read_text(encoding="utf-8")
+    assert "setup_neo4j_droplet.sh" in script
+    assert "/opt/vietlegal/neo4j/import" in script
+    assert "scp -P" in script
+    assert "ssh -p" in script
+    assert "--recreate" in script
+    assert "--upload-only" in script
+    assert "nodes" in script
+    assert "edges" in script
 
 
 def test_backend_requirements_are_installable_and_include_runtime_clients() -> None:
