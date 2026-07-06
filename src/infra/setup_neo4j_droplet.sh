@@ -1,132 +1,173 @@
 #!/usr/bin/env bash
-# =============================================================================
-# VietLegalGraphRAG — DigitalOcean Droplet Neo4j Setup Script
-# =============================================================================
-# This script sets up Neo4j with TLS on a DigitalOcean Droplet.
+# VietLegalGraphRAG Neo4j setup for a DigitalOcean Droplet.
 #
-# Prerequisite:
-#   1. Create an Ubuntu Droplet on DigitalOcean (2 vCPU, 4GB/8GB RAM recommended).
-#   2. Copy the contents of your local 'data/graph/' directory to '/tmp/neo4j_imports/' on the Droplet:
-#      scp -r data/graph/ root@<DROPLET_IP>:/tmp/neo4j_imports/
-#   3. Copy this script to the Droplet and run it:
-#      scp src/infra/setup_neo4j_droplet.sh root@<DROPLET_IP>:/tmp/
-#      ssh root@<DROPLET_IP> 'bash /tmp/setup_neo4j_droplet.sh "your_strong_password"'
-# =============================================================================
+# This script is intentionally destructive. It stops old Neo4j containers,
+# removes known old Neo4j Docker volumes, deletes the new Neo4j data directory,
+# imports CSV files, and starts a fresh Neo4j container on the shared Docker
+# bridge network used by the backend and frontend.
+#
+# Upload data first, for example:
+#   ssh root@<DROPLET_IP> 'mkdir -p /opt/vietlegal/neo4j/import'
+#   scp documents.csv articles.csv legal_types.csv authorities.csv sectors.csv root@<DROPLET_IP>:/opt/vietlegal/neo4j/import/
+#   scp *_edges.csv root@<DROPLET_IP>:/opt/vietlegal/neo4j/import/
+#
+# Run:
+#   bash setup_neo4j_droplet.sh --yes-recreate '<neo4j_password>'
 
 set -euo pipefail
 
-NEO4J_PASSWORD="${1:?Usage: $0 <neo4j_password>}"
-IMPORT_DIR="${2:-/tmp/neo4j_imports}"
-NEO4J_IMAGE="${3:-neo4j:5-community}"
+if [ "${1:-}" != "--yes-recreate" ]; then
+    echo "Refusing to run without explicit destructive confirmation."
+    echo "Usage: $0 --yes-recreate <neo4j_password> [import_dir] [neo4j_image]"
+    exit 2
+fi
 
-CERT_DIR="/opt/neo4j-certs"
-DATA_DIR="/opt/neo4j-data"
+NEO4J_PASSWORD="${2:?Usage: $0 --yes-recreate <neo4j_password> [import_dir] [neo4j_image]}"
+IMPORT_DIR="${3:-/opt/vietlegal/neo4j/import}"
+NEO4J_IMAGE="${4:-neo4j:5-community}"
+
+RUNTIME_ROOT="/opt/vietlegal"
+NEO4J_ROOT="${RUNTIME_ROOT}/neo4j"
+DATA_DIR="${NEO4J_ROOT}/data"
+CERT_DIR="${NEO4J_ROOT}/certs"
+NETWORK_NAME="vietlegal_net"
+CONTAINER_NAME="vietlegal-neo4j"
+
+REQUIRED_FILES=(
+    documents.csv
+    articles.csv
+    legal_types.csv
+    authorities.csv
+    sectors.csv
+    doc_doc_edges.csv
+    doc_art_edges.csv
+    art_art_next_edges.csv
+    art_art_parent_edges.csv
+    doc_type_edges.csv
+    doc_auth_edges.csv
+    doc_sector_edges.csv
+)
 
 echo "============================================"
-echo "  VietLegalGraphRAG — Neo4j DO Droplet Setup"
+echo "  VietLegalGraphRAG Neo4j destructive setup"
 echo "============================================"
+echo "Runtime root: ${RUNTIME_ROOT}"
+echo "Import dir:   ${IMPORT_DIR}"
+echo "Data dir:     ${DATA_DIR}"
+echo "Container:    ${CONTAINER_NAME}"
+echo "Network:      ${NETWORK_NAME}"
 echo ""
 
-# ---------------------------------------------------------------------------
-# STEP 1: Install Docker and Configure Swap
-# ---------------------------------------------------------------------------
-echo "=== STEP 1: Installing Docker and Configuring Swap ==="
-if ! command -v docker &>/dev/null; then
+echo "=== STEP 1: Installing Docker prerequisites ==="
+if ! command -v docker >/dev/null 2>&1; then
     apt-get update -qq
     apt-get install -y -qq docker.io
     systemctl enable docker
     systemctl start docker
-    echo "✅ Docker installed successfully"
+    echo "Docker installed"
 else
-    echo "✅ Docker is already installed"
+    echo "Docker already installed"
 fi
 
-# Configure Swap if not already configured (Crucial for 4GB Droplet during bulk import)
+if ! docker compose version >/dev/null 2>&1; then
+    apt-get update -qq
+    apt-get install -y -qq docker-compose-plugin || apt-get install -y -qq docker-compose-v2 || true
+fi
+
+echo "=== STEP 2: Configuring swap ==="
 if ! swapon --show | grep -q "/swapfile"; then
-    echo "Configuring 4GB Swap Space..."
     fallocate -l 4G /swapfile
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
-    echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    echo "✅ Swap space configured"
+    if ! grep -q '^/swapfile ' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+    echo "Swap configured"
 else
-    echo "✅ Swap space already configured"
+    echo "Swap already configured"
 fi
 
-# ---------------------------------------------------------------------------
-# STEP 2: Configure UFW (Firewall)
-# ---------------------------------------------------------------------------
-echo "=== STEP 2: Configuring Firewall ==="
-if command -v ufw &>/dev/null; then
-    # Allow SSH (required to prevent lockouts)
+echo "=== STEP 3: Configuring firewall ==="
+if command -v ufw >/dev/null 2>&1; then
     ufw allow OpenSSH
-    # Allow bolt+s (7687) and HTTPS browser (7473)
+    ufw allow 80/tcp
+    ufw allow 8000/tcp
     ufw allow 7687/tcp
     ufw allow 7473/tcp
-    # Enable UFW non-interactively
     ufw --force enable
-    echo "✅ UFW configured: ports 7687, 7473 allowed"
+    echo "UFW configured"
 else
-    echo "⚠️ ufw not found, skipping firewall config. Please ensure ports 7687 & 7473 are open."
+    echo "ufw not found, skipping firewall configuration"
 fi
 
-# ---------------------------------------------------------------------------
-# STEP 3: Generate Self-signed TLS Certificates
-# ---------------------------------------------------------------------------
-echo "=== STEP 3: Generating TLS Certificates ==="
-mkdir -p "${CERT_DIR}" "${DATA_DIR}"
+echo "=== STEP 4: Validating import files ==="
+if [ ! -d "${IMPORT_DIR}" ]; then
+    echo "Import directory does not exist: ${IMPORT_DIR}"
+    exit 1
+fi
 
-# Generate self-signed cert (valid 3 years)
+for file in "${REQUIRED_FILES[@]}"; do
+    if [ ! -f "${IMPORT_DIR}/${file}" ]; then
+        echo "Missing required import file: ${IMPORT_DIR}/${file}"
+        exit 1
+    fi
+done
+echo "Import files validated"
+
+echo "=== STEP 5: Creating Docker network ==="
+docker network create vietlegal_net >/dev/null 2>&1 || true
+
+echo "=== STEP 6: Generating TLS certificates ==="
+rm -rf "${CERT_DIR}"
+mkdir -p "${CERT_DIR}/bolt/trusted" "${CERT_DIR}/bolt/revoked"
+mkdir -p "${CERT_DIR}/https/trusted" "${CERT_DIR}/https/revoked"
+
 openssl req -x509 -newkey rsa:2048 \
     -keyout "${CERT_DIR}/private.key" \
     -out "${CERT_DIR}/public.crt" \
     -days 1095 -nodes \
-    -subj "/CN=neo4j-legal/O=VietLegalGraphRAG" \
-    2>/dev/null
+    -subj "/CN=vietlegal-neo4j/O=VietLegalGraphRAG" \
+    >/dev/null 2>&1
 
-# Neo4j expects specific file structure for bolt TLS
-mkdir -p "${CERT_DIR}/bolt/trusted" "${CERT_DIR}/bolt/revoked"
-cp "${CERT_DIR}/private.key" "${CERT_DIR}/bolt/"
-cp "${CERT_DIR}/public.crt" "${CERT_DIR}/bolt/"
-cp "${CERT_DIR}/public.crt" "${CERT_DIR}/bolt/trusted/"
-
-# Same for HTTPS connector
-mkdir -p "${CERT_DIR}/https/trusted" "${CERT_DIR}/https/revoked"
-cp "${CERT_DIR}/private.key" "${CERT_DIR}/https/"
-cp "${CERT_DIR}/public.crt" "${CERT_DIR}/https/"
-cp "${CERT_DIR}/public.crt" "${CERT_DIR}/https/trusted/"
-
-# Fix ownership for Neo4j Docker container (runs as 7474 by default)
+cp "${CERT_DIR}/private.key" "${CERT_DIR}/bolt/private.key"
+cp "${CERT_DIR}/public.crt" "${CERT_DIR}/bolt/public.crt"
+cp "${CERT_DIR}/public.crt" "${CERT_DIR}/bolt/trusted/public.crt"
+cp "${CERT_DIR}/private.key" "${CERT_DIR}/https/private.key"
+cp "${CERT_DIR}/public.crt" "${CERT_DIR}/https/public.crt"
+cp "${CERT_DIR}/public.crt" "${CERT_DIR}/https/trusted/public.crt"
 chown -R 7474:7474 "${CERT_DIR}"
 chmod 600 "${CERT_DIR}/bolt/private.key" "${CERT_DIR}/https/private.key"
+echo "TLS certificates generated"
 
-echo "✅ TLS certificates generated at ${CERT_DIR}"
+echo "=== STEP 7: Removing old Neo4j containers, volumes, and data ==="
+docker stop "${CONTAINER_NAME}" neo4j-legal graph_db infra-graph_db-1 vietlegal-app-graph_db-1 vietlegal-neo4j-neo4j-1 2>/dev/null || true
+docker rm "${CONTAINER_NAME}" neo4j-legal graph_db infra-graph_db-1 vietlegal-app-graph_db-1 vietlegal-neo4j-neo4j-1 2>/dev/null || true
+docker volume rm neo4j_prod_data infra_neo4j_prod_data vietlegal_neo4j_prod_data vietlegal-app_neo4j_prod_data 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# STEP 4: Stop existing container
-# ---------------------------------------------------------------------------
-docker stop neo4j-legal 2>/dev/null || true
-docker rm neo4j-legal 2>/dev/null || true
+case "${DATA_DIR}" in
+    /opt/vietlegal/neo4j/data)
+        rm -rf "${DATA_DIR}"
+        ;;
+    *)
+        echo "Refusing to delete unexpected data directory: ${DATA_DIR}"
+        exit 1
+        ;;
+esac
 
-# ---------------------------------------------------------------------------
-# STEP 5: Run Bulk Import
-# ---------------------------------------------------------------------------
-echo "=== STEP 5: Running Neo4j Bulk Import ==="
-if [ ! -d "${IMPORT_DIR}" ]; then
-    echo "❌ ERROR: Import directory not found at: ${IMPORT_DIR}"
-    echo "Please upload your CSV files to the Droplet first."
-    exit 1
-fi
+mkdir -p "${DATA_DIR}"
+chown -R 7474:7474 "${DATA_DIR}"
+echo "Old Neo4j runtime removed"
 
+echo "=== STEP 8: Running Neo4j bulk import ==="
 docker run --rm \
-    -v "${IMPORT_DIR}:/import" \
+    -v "${IMPORT_DIR}:/import:ro" \
     -v "${DATA_DIR}:/data" \
     "${NEO4J_IMAGE}" \
     neo4j-admin database import full \
         --skip-duplicate-nodes=true \
         --skip-bad-relationships=true \
-        --report-file=/import/import.report \
+        --report-file=/data/import.report \
         --nodes=Document=/import/documents.csv \
         --nodes=Article=/import/articles.csv \
         --nodes=LegalType=/import/legal_types.csv \
@@ -142,25 +183,26 @@ docker run --rm \
         --overwrite-destination=true \
         neo4j
 
-echo "✅ Bulk import completed successfully"
+chown -R 7474:7474 "${DATA_DIR}"
+echo "Bulk import completed"
 
-# ---------------------------------------------------------------------------
-# STEP 6: Launch Neo4j with TLS
-# ---------------------------------------------------------------------------
-echo "=== STEP 6: Starting Neo4j Container with TLS ==="
+echo "=== STEP 9: Starting Neo4j container ==="
 docker run -d \
-    --name neo4j-legal \
+    --name "${CONTAINER_NAME}" \
+    --hostname "${CONTAINER_NAME}" \
+    --network vietlegal_net \
     --restart unless-stopped \
     -p 7687:7687 \
     -p 7473:7473 \
     -v "${DATA_DIR}:/data" \
-    -v "${CERT_DIR}:/certificates" \
+    -v "${CERT_DIR}:/certificates:ro" \
+    -v "${IMPORT_DIR}:/import:ro" \
     -e NEO4J_AUTH="neo4j/${NEO4J_PASSWORD}" \
     -e NEO4J_server_memory_heap_initial__size=1024m \
     -e NEO4J_server_memory_heap_max__size=1024m \
     -e NEO4J_server_memory_pagecache_size=1500m \
     -e NEO4J_server_bolt_enabled=true \
-    -e NEO4J_server_bolt_tls__level=REQUIRED \
+    -e NEO4J_server_bolt_tls__level=OPTIONAL \
     -e NEO4J_server_bolt_listen__address=0.0.0.0:7687 \
     -e NEO4J_server_https_enabled=true \
     -e NEO4J_server_https_listen__address=0.0.0.0:7473 \
@@ -177,19 +219,10 @@ docker run -d \
     -e NEO4J_dbms_ssl_policy_https_client__auth=NONE \
     "${NEO4J_IMAGE}"
 
-echo "✅ Neo4j started successfully"
 echo ""
-echo "=========================================================="
-echo "  Setup Complete! Connection Details:"
-echo "=========================================================="
-echo "  Bolt URI (TLS): neo4j+s://<YOUR_DROPLET_IP>:7687"
-echo "  Browser Console: https://<YOUR_DROPLET_IP>:7473"
-echo "  Username:        neo4j"
-echo "  Password:        ${NEO4J_PASSWORD}"
-echo "=========================================================="
-echo ""
-echo "Configure your backend .env with:"
-echo "NEO4J_URI=neo4j+ssc://<YOUR_DROPLET_IP>:7687  (ssc accepts self-signed cert)"
-echo "NEO4J_USER=neo4j"
-echo "NEO4J_PASSWORD=${NEO4J_PASSWORD}"
-echo "=========================================================="
+echo "Neo4j setup complete"
+echo "Internal backend URI: bolt://vietlegal-neo4j:7687"
+echo "External Bolt URI:    neo4j+ssc://<DROPLET_IP>:7687"
+echo "Browser console:      https://<DROPLET_IP>:7473"
+echo "Username:             neo4j"
+echo "Password:             ${NEO4J_PASSWORD}"

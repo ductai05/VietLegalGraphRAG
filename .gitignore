@@ -40,3 +40,4 @@ venv/
 
 # Google Cloud Vision credentials (never commit service-account JSON)
 credentials/
+/docs/superpowers
