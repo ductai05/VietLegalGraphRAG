@@ -944,6 +944,27 @@ def _read_dense_payload_rows(path: Path) -> list[dict[str, Any]]:
     return pq.read_table(path, columns=["chunk_id"]).to_pylist()
 
 
+def resolve_dense_shard_path(
+    dense_dir: Path,
+    manifest_path_value: str,
+    *,
+    artifact_subdir: str,
+) -> Path:
+    candidate = Path(manifest_path_value)
+    if candidate.is_absolute():
+        return candidate
+
+    direct = dense_dir / candidate
+    if direct.exists():
+        return direct
+
+    nested = dense_dir / artifact_subdir / candidate
+    if nested.exists():
+        return nested
+
+    return direct
+
+
 def _completed_dense_shards(
     manifest: dict[str, Any],
     *,
@@ -1005,7 +1026,11 @@ def ingest_dense_vectors(
             previous.get("status") == "done"
             and previous.get("rows") == shard_info.get("rows")
         ):
-            payload_path = dense_dir / shard_info["payload"]
+            payload_path = resolve_dense_shard_path(
+                dense_dir,
+                shard_info["payload"],
+                artifact_subdir="payload",
+            )
             for row in _read_dense_payload_rows(payload_path):
                 dedupe_tracker.seen_chunk_ids.add(_require_chunk_id(row))
                 primed_rows += 1
@@ -1029,8 +1054,16 @@ def ingest_dense_vectors(
             )
             continue
 
-        payload_path = dense_dir / shard_info["payload"]
-        vector_path = dense_dir / shard_info["vectors"]
+        payload_path = resolve_dense_shard_path(
+            dense_dir,
+            shard_info["payload"],
+            artifact_subdir="payload",
+        )
+        vector_path = resolve_dense_shard_path(
+            dense_dir,
+            shard_info["vectors"],
+            artifact_subdir="vectors",
+        )
         rows = _read_dense_payload_rows(payload_path)
         vectors = np.load(vector_path, mmap_mode="r")
         if len(rows) != len(vectors):

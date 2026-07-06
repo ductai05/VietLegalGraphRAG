@@ -44,7 +44,12 @@ class LightRAGService:
         retrieval_hits = self.retrieval_service.search(request)
         graph_context: GraphContext | None = None
         graph_payload: dict[str, Any] = {}
-        lightrag_enabled = bool(request.graph.enabled and request.graph.use_lightrag)
+        graph_runtime_enabled = bool(getattr(self.graph_retriever, "enabled", True))
+        lightrag_enabled = bool(
+            request.graph.enabled
+            and request.graph.use_lightrag
+            and graph_runtime_enabled
+        )
         lightrag_error = None
 
         if lightrag_enabled:

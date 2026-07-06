@@ -9,12 +9,22 @@ from routes.health import router as health_router
 from routes.search import router as search_router
 
 
+def _cors_origins(frontend_origin: str) -> list[str]:
+    origins = {
+        origin.strip()
+        for origin in frontend_origin.split(",")
+        if origin.strip()
+    }
+    origins.update({"http://localhost:5173", "http://127.0.0.1:5173"})
+    return sorted(origins)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="VietLegalGraphRAG API")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_origin],
+        allow_origins=_cors_origins(settings.frontend_origin),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
