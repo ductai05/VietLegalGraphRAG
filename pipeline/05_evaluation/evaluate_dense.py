@@ -1,7 +1,7 @@
 """Evaluate dense retrieval, optionally reranking a larger candidate pool.
 
 Example:
-python pipeline/07_evaluation/evaluate_dense.py --gold pipeline/07_evaluation/eval_questions_gold.jsonl --elastic-cloud-id "$ELASTIC_CLOUD_ID" --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output output/dense_rerank_eval_results.json
+python pipeline/05_evaluation/evaluate_dense.py --gold pipeline/05_evaluation/eval_questions_gold.jsonl --elastic-cloud-id "$ELASTIC_CLOUD_ID" --chunks data/legal_chunking_dataset/chunks.parquet --candidate-k 100 --top-k 10 --rerank --reranker-model BAAI/bge-reranker-v2-m3 --output output/dense_rerank_eval_results.json
 """
 
 from __future__ import annotations
@@ -15,10 +15,15 @@ from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+PIPELINE_DIR = Path(__file__).resolve().parents[1]
+DENSE_SRC = PIPELINE_DIR / "03_embeddings" / "dense" / "src"
+for _path in [DENSE_SRC]:
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from pipeline.embedding.src.dense_retrieval import DenseRetriever
-from pipeline.embedding.src.embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging
-from pipeline.embedding.src.rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
+from dense_retrieval import DenseRetriever
+from embedding_common import COLLECTION_NAME, MODEL_NAME, setup_logging
+from rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
 
 
 def parse_args() -> argparse.Namespace:

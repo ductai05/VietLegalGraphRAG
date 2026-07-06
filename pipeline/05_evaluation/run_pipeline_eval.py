@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+EVAL_DIR = Path(__file__).resolve().parent
 
 
 def decode_cloud_id(cloud_id: str) -> str:
@@ -122,7 +123,7 @@ def main():
         # 1. Run Dense Evaluation
         dense_output = args.output_dir / "elasticsearch_dense_eval.json"
         dense_cmd = [
-            sys.executable, "-m", "pipeline.evaluation.evaluate_dense",
+            sys.executable, str(EVAL_DIR / "evaluate_dense.py"),
             "--gold", str(eval_gold_path),
             "--output", str(dense_output)
         ]
@@ -144,7 +145,7 @@ def main():
         # 2. Run Sparse Evaluation
         sparse_output = args.output_dir / "elasticsearch_sparse_eval.json"
         sparse_cmd = [
-            sys.executable, "-m", "pipeline.evaluation.evaluate_sparse",
+            sys.executable, str(EVAL_DIR / "evaluate_sparse.py"),
             "--eval-questions", str(eval_gold_path),
             "--url", args.url,
             "--output", str(sparse_output)
@@ -165,7 +166,7 @@ def main():
             out_file = args.output_dir / f"elasticsearch_hybrid_rerank_eval_k{k_val}.json"
             rerank_outputs[k_val] = out_file
             hybrid_cmd = [
-                sys.executable, "-m", "pipeline.evaluation.hybrid_search",
+                sys.executable, str(EVAL_DIR / "hybrid_search.py"),
                 "--gold", str(eval_gold_path),
                 "--url", args.url,
                 "--candidate-k", str(k_val),
@@ -186,7 +187,7 @@ def main():
 
         # 4. Run Plotting Metrics
         plot_cmd = [
-            sys.executable, "-m", "pipeline.evaluation.plot_metrics",
+            sys.executable, str(EVAL_DIR / "plot_metrics.py"),
             "--dense", str(dense_output),
             "--sparse", str(sparse_output),
             "--hybrid", str(rerank_outputs[50]),  # Pass one rerank output to extract baseline hybrid RRF metrics

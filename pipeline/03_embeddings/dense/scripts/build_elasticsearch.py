@@ -20,12 +20,17 @@ except ModuleNotFoundError as exc:
         raise
     Elasticsearch = None
     helpers = None
-from pipeline.embedding.src.elasticsearch_common import (
+
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from elasticsearch_common import (
     build_index_definition,
     make_index_action,
     resolve_credentials,
 )
-from pipeline.embedding.src.embedding_common import (
+from embedding_common import (
     VECTOR_SIZE,
     atomic_write_json,
     file_fingerprint,

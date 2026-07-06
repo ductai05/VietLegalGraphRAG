@@ -1,4 +1,4 @@
-from pipeline.preprocessing.chunk.legal_chunker import chunk_legal_document
+from legal_chunker import chunk_legal_document
 
 
 

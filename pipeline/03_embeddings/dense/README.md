@@ -23,7 +23,7 @@ Pipeline này hiện thực kế hoạch trong `PLAN_EMBEDDING.md` cho model
 | `dense_retrieval.py` | Query prefix, filter, citation và expansion từ `chunks.parquet` |
 | `manage_shards.py` | CLI quản lý shard (verify, merge shards/faiss, repair) |
 | `embedding_common.py` | Hằng số và utility dùng chung |
-| `pipeline/07_evaluation/evaluate_dense.py` | Tính Recall@K, MRR@K, nDCG@K từ gold JSONL |
+| `pipeline/05_evaluation/evaluate_dense.py` | Tính Recall@K, MRR@K, nDCG@K từ gold JSONL |
 
 ## 1. Chuẩn bị Kaggle
 
@@ -411,7 +411,7 @@ comparable with the existing dense retrieval contract.
 ### Elasticsearch evaluation
 
 ```powershell
-python pipeline/07_evaluation/evaluate_dense.py `
+python pipeline/05_evaluation/evaluate_dense.py `
   --gold "output/eval_questions_gold.jsonl" `
   --elastic-cloud-id $env:ELASTIC_CLOUD_ID `
   --elastic-index "legal_chunks_dense_v1" `
@@ -462,7 +462,7 @@ Tạo file UTF-8 JSONL, mỗi dòng:
 Chạy:
 
 ```bash
-!python pipeline/07_evaluation/evaluate_dense.py \
+!python pipeline/05_evaluation/evaluate_dense.py \
   --gold /kaggle/input/<eval-dataset>/dense_gold.jsonl \
   --elastic-cloud-id "$ELASTIC_CLOUD_ID" \
   --chunks "$CHUNKS" \
@@ -479,8 +479,8 @@ metadata-aware `(query, passage_text)` pairs. If model initialization or scoring
 fails, evaluation logs the exception and falls back to dense order.
 
 ```bash
-python pipeline/07_evaluation/evaluate_dense.py \
-  --gold pipeline/07_evaluation/eval_questions_gold.jsonl \
+python pipeline/05_evaluation/evaluate_dense.py \
+  --gold pipeline/05_evaluation/eval_questions_gold.jsonl \
   --url http://129.212.184.109:8333/ \
   --chunks data/legal_chunking_dataset/chunks.parquet \
   --candidate-k 100 \

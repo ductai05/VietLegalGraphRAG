@@ -22,16 +22,16 @@ GEMINI_API_KEY=your_api_key_here
 
 ```bash
 # Dry-run: chỉ sampling, không gọi API (kiểm tra dữ liệu)
-python pipeline/07_evaluation/generate_eval_questions.py --dry-run
+python pipeline/05_evaluation/generate_eval_questions.py --dry-run
 
 # Chạy đầy đủ: sampling + generate questions
-python pipeline/07_evaluation/generate_eval_questions.py
+python pipeline/05_evaluation/generate_eval_questions.py
 
 # Chạy với seed tùy chỉnh
-python pipeline/07_evaluation/generate_eval_questions.py --seed 123
+python pipeline/05_evaluation/generate_eval_questions.py --seed 123
 
 # Resume từ checkpoint (nếu bị gián đoạn)
-python pipeline/07_evaluation/generate_eval_questions.py --resume
+python pipeline/05_evaluation/generate_eval_questions.py --resume
 ```
 
 ### Output
@@ -82,13 +82,13 @@ organization.
 Smoke test:
 
 ```bash
-python pipeline/07_evaluation/evaluate_llm.py --limit 2
+python pipeline/05_evaluation/evaluate_llm.py --limit 2
 ```
 
 Full benchmark:
 
 ```bash
-python pipeline/07_evaluation/evaluate_llm.py
+python pipeline/05_evaluation/evaluate_llm.py
 ```
 
 Outputs are written under `output/llm_evaluation/`:

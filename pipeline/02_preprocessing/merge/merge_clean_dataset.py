@@ -13,7 +13,8 @@
 # </h1>
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:02.487003Z","iopub.execute_input":"2026-05-24T17:23:02.487236Z","iopub.status.idle":"2026-05-24T17:23:10.186340Z","shell.execute_reply.started":"2026-05-24T17:23:02.487209Z","shell.execute_reply":"2026-05-24T17:23:10.185214Z"}}
-!pip install langchain transformers torch langchain-text-splitters beautifulsoup4 lxml pyarrow -q
+# Install these in the environment before running the script:
+# python -m pip install langchain transformers torch langchain-text-splitters beautifulsoup4 lxml pyarrow
 
 # %% [code] {"execution":{"iopub.status.busy":"2026-05-24T17:23:48.007995Z","iopub.execute_input":"2026-05-24T17:23:48.008368Z","iopub.status.idle":"2026-05-24T17:23:51.640974Z","shell.execute_reply.started":"2026-05-24T17:23:48.008325Z","shell.execute_reply":"2026-05-24T17:23:51.640051Z"},"jupyter":{"source_hidden":true},"scrolled":true}
 # === Clear RAM ===

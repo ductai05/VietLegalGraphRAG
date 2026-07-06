@@ -1,7 +1,7 @@
 """
 Plot retrieval metrics (Recall, MRR, NDCG) across multiple configurations.
 Usage: 
-python pipeline/07_evaluation/plot_metrics.py \
+python pipeline/05_evaluation/plot_metrics.py \
     --dense data/legal_embedding/dense_eval_results.json \
     --sparse data/legal_embedding/sparse_eval_results.json \
     --hybrid data/legal_embedding/hybrid_eval_results.json \

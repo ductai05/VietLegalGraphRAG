@@ -1,9 +1,9 @@
 """
 Analyze retrieval errors and extract 10 incorrect queries.
 Usage:
-python pipeline/07_evaluation/error_analysis.py \
+python pipeline/05_evaluation/error_analysis.py \
     --eval-results data/legal_embedding/hybrid_rerank_eval_results.json \
-    --gold pipeline/07_evaluation/eval_questions_gold.jsonl \
+    --gold pipeline/05_evaluation/eval_questions_gold.jsonl \
     --chunks data/legal_chunking_dataset/chunks.parquet \
     --output output/error_analysis.md
 """

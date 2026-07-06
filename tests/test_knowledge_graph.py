@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 def test_normalizes_relationship_labels_to_four_canonical_types():
-    from pipeline.graph.src.schema import normalize_relationship_label
+    from schema import normalize_relationship_label
 
     expected = {
         "V\u0103n b\u1ea3n c\u0103n c\u1ee9": ("CITES", False),
@@ -31,7 +31,7 @@ def test_normalizes_relationship_labels_to_four_canonical_types():
 
 
 def test_skips_self_loops_and_reverses_passive_relationships():
-    from pipeline.graph.src.build_graph import build_graph_tables
+    from build_graph import build_graph_tables
 
     passive_amend = "V\u0103n b\u1ea3n \u0111\u01b0\u1ee3c s\u1eeda \u0111\u1ed5i"
     citation = "V\u0103n b\u1ea3n d\u1eabn chi\u1ebfu"
@@ -56,7 +56,7 @@ def test_skips_self_loops_and_reverses_passive_relationships():
 
 
 def test_document_relationship_edges_preserve_raw_label_for_export_and_neo4j():
-    from pipeline.graph.src.build_graph import build_graph_tables, export_graph_artifacts
+    from build_graph import build_graph_tables, export_graph_artifacts
 
     raw_label = "V\u0103n b\u1ea3n \u0111\u01b0\u1ee3c s\u1eeda \u0111\u1ed5i"
     graph = build_graph_tables(
@@ -89,7 +89,7 @@ def test_document_relationship_edges_preserve_raw_label_for_export_and_neo4j():
 
 
 def test_builds_document_graph_tables():
-    from pipeline.graph.src.build_graph import build_graph_tables
+    from build_graph import build_graph_tables
 
     metadata_rows = [
         {
@@ -145,7 +145,7 @@ def test_builds_document_graph_tables():
 
 
 def test_attaches_chunks_to_documents_without_double_prefixing_ids():
-    from pipeline.graph.src.build_graph import build_graph_tables
+    from build_graph import build_graph_tables
 
     graph = build_graph_tables(
         metadata_rows=[
@@ -202,7 +202,7 @@ def test_attaches_chunks_to_documents_without_double_prefixing_ids():
 
 
 def test_exports_graph_artifacts(tmp_path):
-    from pipeline.graph.src.build_graph import build_graph_tables, export_graph_artifacts
+    from build_graph import build_graph_tables, export_graph_artifacts
 
     graph = build_graph_tables(
         metadata_rows=[
@@ -244,7 +244,7 @@ def test_exports_graph_artifacts(tmp_path):
 
 
 def test_configures_stdout_for_utf8_when_supported():
-    from pipeline.graph.src.build_graph import configure_stdout_for_utf8
+    from build_graph import configure_stdout_for_utf8
 
     class FakeStdout:
         encoding = "cp1252"

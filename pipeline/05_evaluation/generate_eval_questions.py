@@ -6,7 +6,7 @@ Tạo bộ câu hỏi trắc nghiệm (multiple-choice) từ chunks văn bản p
 
 Sử dụng: Gemini API với model gemma-4-31b-it
 Input:   data/legal_chunking_dataset/{chunks,metadata}.parquet
-Output:  pipeline/07_evaluation/eval_questions.json
+Output:  pipeline/05_evaluation/eval_questions.json
 
 Usage:
     # Dry-run (chỉ sampling, không gọi API)

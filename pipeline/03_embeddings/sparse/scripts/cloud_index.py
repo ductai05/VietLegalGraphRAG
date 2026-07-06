@@ -13,7 +13,12 @@ from typing import Any
 import pyarrow.parquet as pq
 from elasticsearch import helpers
 
-from pipeline.sparse_retrieval.src.elastic_client import (
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from elastic_client import (
     INDEX_ALIAS,
     INDEX_NAME,
     atomic_write_json,

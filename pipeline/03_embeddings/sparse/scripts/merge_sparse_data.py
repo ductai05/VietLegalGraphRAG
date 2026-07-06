@@ -9,7 +9,11 @@ import sys
 
 import polars as pl
 
-from pipeline.sparse_retrieval.src.elastic_client import atomic_write_json
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from elastic_client import atomic_write_json
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)

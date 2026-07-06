@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from pipeline.embedding.src.dense_retrieval import DenseRetriever
+from dense_retrieval import DenseRetriever
 
 
 
@@ -39,8 +39,8 @@ class ElasticsearchRetrievalTests(unittest.TestCase):
     def test_cli_help_does_not_require_optional_storage_dependencies(self):
         root = Path(__file__).resolve().parents[1]
         scripts = [
-            root / "pipeline" / "embedding" / "src" / "dense_retrieval.py",
-            root / "pipeline" / "evaluation" / "evaluate_dense.py",
+            root / "pipeline" / "03_embeddings" / "dense" / "src" / "dense_retrieval.py",
+            root / "pipeline" / "05_evaluation" / "evaluate_dense.py",
         ]
         for script in scripts:
             with self.subTest(script=script.name):
@@ -95,9 +95,9 @@ class ElasticsearchRetrievalTests(unittest.TestCase):
         client = FakeElasticsearchClient()
 
         with (
-            patch("pipeline.embedding.src.dense_retrieval.Elasticsearch", return_value=client),
+            patch("dense_retrieval.Elasticsearch", return_value=client),
             patch(
-                "pipeline.embedding.src.dense_retrieval.load_encoder",
+                "dense_retrieval.load_encoder",
                 return_value=("tokenizer", "model", "cpu", "revision"),
             ),
         ):

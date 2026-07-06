@@ -12,8 +12,12 @@ import polars as pl
 import pyarrow.parquet as pq
 from tqdm.auto import tqdm
 
-from pipeline.sparse_retrieval.src.elastic_client import INDEX_NAME, atomic_write_json, iter_bulk_ndjson
-from pipeline.sparse_retrieval.src.normalizer import (
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from elastic_client import INDEX_NAME, atomic_write_json, iter_bulk_ndjson
+from normalizer import (
     METADATA_COLUMNS,
     SPARSE_SCHEMA,
     bool_expr,
@@ -22,7 +26,7 @@ from pipeline.sparse_retrieval.src.normalizer import (
     normalize_sparse_record,
     string_expr,
 )
-from pipeline.sparse_retrieval.src.tokenizer import add_tokenized_fields
+from tokenizer import add_tokenized_fields
 
 REQUIRED_CHUNK_COLUMNS = {
     "chunk_id",

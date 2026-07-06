@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pipeline.graph.scripts.verify_neo4j import (
+from verify_neo4j import (
     EXPECTED_LEGAL_RELATIONS,
     REQUIRED_LABELS,
     VerificationReport,
@@ -171,7 +171,7 @@ def _make_healthy_driver() -> FakeDriver:
 
 
 def test_verify_healthy_database_reports_connected() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -186,7 +186,7 @@ def test_verify_healthy_database_reports_connected() -> None:
 
 
 def test_verify_healthy_database_reports_version() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -199,7 +199,7 @@ def test_verify_healthy_database_reports_version() -> None:
 
 
 def test_verify_healthy_database_reports_node_and_edge_counts() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -215,7 +215,7 @@ def test_verify_healthy_database_reports_node_and_edge_counts() -> None:
 
 
 def test_verify_healthy_database_reports_required_labels_present() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -230,7 +230,7 @@ def test_verify_healthy_database_reports_required_labels_present() -> None:
 
 
 def test_verify_healthy_database_reports_all_legal_relations() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -245,7 +245,7 @@ def test_verify_healthy_database_reports_all_legal_relations() -> None:
 
 
 def test_raw_label_all_present_reports_zero_missing() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -259,7 +259,7 @@ def test_raw_label_all_present_reports_zero_missing() -> None:
 
 
 def test_render_healthy_report_contains_key_terms() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -290,7 +290,7 @@ def test_render_healthy_report_contains_key_terms() -> None:
 
 
 def test_connection_failure_reports_not_connected() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(
             FakeSession(), connectivity=False
         )
@@ -308,7 +308,7 @@ def test_connection_failure_reports_not_connected() -> None:
 
 
 def test_connection_failure_report_render_shows_failed() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(
             FakeSession(), connectivity=False
         )
@@ -336,7 +336,7 @@ def test_missing_document_label_causes_unhealthy() -> None:
         "CALL db.labels() YIELD label RETURN collect(label) AS labels"
     ] = [FakeRecord({"labels": ["Chunk"]})]
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -358,7 +358,7 @@ def test_missing_chunk_label_causes_unhealthy() -> None:
         "CALL db.labels() YIELD label RETURN collect(label) AS labels"
     ] = [FakeRecord({"labels": ["Document"]})]
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -380,7 +380,7 @@ def test_missing_both_required_labels_causes_unhealthy() -> None:
         "CALL db.labels() YIELD label RETURN collect(label) AS labels"
     ] = [FakeRecord({"labels": ["LegalType", "Sector"]})]
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -413,7 +413,7 @@ def test_missing_relationship_type_is_warning_not_error() -> None:
         "RETURN collect(relationshipType) AS types"
     ] = [FakeRecord({"types": ["CITES", "AMENDS", "HAS_CHUNK"]})]
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -439,7 +439,7 @@ def test_render_shows_missing_relationship_with_warning_symbol() -> None:
         "RETURN collect(relationshipType) AS types"
     ] = [FakeRecord({"types": ["CITES"]})]
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -465,7 +465,7 @@ def test_missing_raw_label_produces_warning() -> None:
     records = _common_records()
     records.update(_make_raw_label_with_count(total_legal=100, missing_count=10))
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -485,7 +485,7 @@ def test_render_shows_raw_label_warning() -> None:
     records = _common_records()
     records.update(_make_raw_label_with_count(total_legal=100, missing_count=10))
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -509,7 +509,7 @@ def test_raw_label_ignores_non_legal_edge_has_chunk() -> None:
     # must not be counted
     records.update(_make_raw_label_with_count(total_legal=50, missing_count=0))
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -531,7 +531,7 @@ def test_raw_label_ignores_other_non_legal_edges() -> None:
     ]
     records.update(_make_raw_label_with_count(total_legal=30, missing_count=0))
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -551,7 +551,7 @@ def test_whitespace_only_raw_label_treated_as_missing() -> None:
         _make_raw_label_with_count(total_legal=50, missing_count=5)
     )
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -575,7 +575,7 @@ def test_zero_legal_edges_skips_raw_label_check() -> None:
     records = _common_records()
     records.update(_make_raw_label_with_count(total_legal=0, missing_count=0))
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -601,7 +601,7 @@ def test_query_failure_produces_error_not_exception() -> None:
                 raise RuntimeError("Database is down")
             return []
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(BrokenSession())
         report = verify_neo4j(
             uri="bolt://fake:7687",
@@ -643,7 +643,7 @@ def test_missing_optional_relationship_does_not_block_healthy() -> None:
 
 
 def test_main_returns_zero_on_healthy_verification() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = _make_healthy_driver()
         exit_code = main()
 
@@ -651,7 +651,7 @@ def test_main_returns_zero_on_healthy_verification() -> None:
 
 
 def test_main_returns_nonzero_on_connection_failure() -> None:
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(
             FakeSession(), connectivity=False
         )
@@ -667,7 +667,7 @@ def test_main_returns_nonzero_on_missing_required_label() -> None:
         "CALL db.labels() YIELD label RETURN collect(label) AS labels"
     ] = [FakeRecord({"labels": []})]
 
-    with patch("pipeline.graph.scripts.verify_neo4j.GraphDatabase") as mock_db:
+    with patch("verify_neo4j.GraphDatabase") as mock_db:
         mock_db.driver.return_value = FakeDriver(FakeSession(records))
         exit_code = main()
 

@@ -28,7 +28,7 @@ def parse_args():
 
 def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path) -> Path:
     # Delegate to convert_eval_to_gold to ensure text-equivalent chunk IDs are resolved
-    from pipeline.evaluation import convert_eval_to_gold
+    import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
     convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold.jsonl"
     convert_eval_to_gold.CHUNKS_FILE = chunks_file

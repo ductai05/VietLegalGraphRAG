@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ftfy import fix_text
 
-from pipeline.evaluation.evaluate_llm import GroqKeyPool, build_context, parse_response, summarize
+from evaluate_llm import GroqKeyPool, build_context, parse_response, summarize
 
 
 

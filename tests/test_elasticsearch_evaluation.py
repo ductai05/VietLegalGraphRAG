@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from pipeline.evaluation.evaluate_dense import main
+from evaluate_dense import main
 
 
 
@@ -33,8 +33,8 @@ class ElasticsearchEvaluationTests(unittest.TestCase):
                 str(output_path),
             ]
             with (
-                patch("pipeline.evaluation.evaluate_dense.DenseRetriever", return_value=retriever) as factory,
-                patch("pipeline.evaluation.evaluate_dense.setup_logging"),
+                patch("evaluate_dense.DenseRetriever", return_value=retriever) as factory,
+                patch("evaluate_dense.setup_logging"),
                 patch("builtins.print"),
                 patch.object(sys, "argv", argv),
             ):

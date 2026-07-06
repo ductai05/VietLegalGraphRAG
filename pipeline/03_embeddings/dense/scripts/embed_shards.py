@@ -5,13 +5,18 @@ from __future__ import annotations
 import argparse
 import gc
 import logging
+import sys
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 
-from pipeline.embedding.src.embedding_common import (
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from embedding_common import (
     MODEL_NAME,
     PAYLOAD_FIELDS,
     VECTOR_SIZE,

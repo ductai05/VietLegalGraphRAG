@@ -10,12 +10,17 @@ from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+PIPELINE_DIR = Path(__file__).resolve().parents[1]
+SPARSE_SRC = PIPELINE_DIR / "03_embeddings" / "sparse" / "src"
+for _path in [SPARSE_SRC]:
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from pipeline.evaluation.evaluate_dense import evaluate_hits_relevance, load_jsonl
+from evaluate_dense import evaluate_hits_relevance, load_jsonl
 
 # Import Elasticsearch client and tokenizer from sparse retrieval
-from pipeline.sparse_retrieval.src.elastic_client import build_elasticsearch_client
-from pipeline.sparse_retrieval.src.tokenizer import tokenize_vi
+from elastic_client import build_elasticsearch_client
+from tokenizer import tokenize_vi
 
 DEFAULT_EVAL_FILE = BASE_DIR / "output" / "eval_questions.json"
 DEFAULT_OUTPUT_FILE = BASE_DIR / "output" / "sparse_eval_results.json"
@@ -59,13 +64,13 @@ def parse_args() -> argparse.Namespace:
                         help="List of k values for evaluation metrics")
     parser.add_argument("--chunks", type=Path, default=os.environ.get("CHUNKS_PATH"),
                         help="Path to chunks.parquet or sparse_base.parquet to resolve duplicate chunk texts")
-    parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "sparse_retrieval" / "config.env",
+    parser.add_argument("--env-file", type=Path, default=PIPELINE_DIR / "03_embeddings" / "sparse" / "config.env",
                         help="Path to environment file")
     return parser.parse_args()
 
 
 def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path | None = None) -> Path:
-    from pipeline.evaluation import convert_eval_to_gold
+    import convert_eval_to_gold
     convert_eval_to_gold.EVAL_FILE = eval_file
     convert_eval_to_gold.GOLD_FILE = eval_file.parent / "eval_questions_gold_sparse.jsonl"
     if chunks_file:
@@ -148,12 +153,12 @@ class SparseRetriever:
 def main() -> None:
     # Pre-parse env-file configuration
     temp_parser = argparse.ArgumentParser(add_help=False)
-    temp_parser.add_argument("--env-file", type=Path, default=BASE_DIR / "pipeline" / "sparse_retrieval" / "config.env")
+    temp_parser.add_argument("--env-file", type=Path, default=PIPELINE_DIR / "03_embeddings" / "sparse" / "config.env")
     temp_args, _ = temp_parser.parse_known_args()
     
     load_env_file(temp_args.env_file)
     if not temp_args.env_file.exists():
-        load_env_file(BASE_DIR / "pipeline" / "sparse_retrieval" / ".env")
+        load_env_file(PIPELINE_DIR / "03_embeddings" / "sparse" / ".env")
         load_env_file(BASE_DIR / ".env")
 
     args = parse_args()

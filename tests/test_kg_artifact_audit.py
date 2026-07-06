@@ -2,7 +2,7 @@ import csv
 import json
 from pathlib import Path
 
-from pipeline.graph.src.audit_graph_artifacts import audit_graph_artifacts
+from audit_graph_artifacts import audit_graph_artifacts
 
 
 def write_csv(path: Path, rows: list[dict[str, str]]) -> None:

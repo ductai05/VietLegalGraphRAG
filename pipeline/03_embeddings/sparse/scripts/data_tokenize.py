@@ -8,7 +8,7 @@ from pathlib import Path
 
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
-SPARSE_DIR = Path(os.environ["SPARSE_DIR"]) if "SPARSE_DIR" in os.environ else None
+SPARSE_DIR = Path(os.environ["SPARSE_DIR"]) if "SPARSE_DIR" in os.environ else Path(__file__).resolve().parents[1]
 CHUNKS_PATH = Path(os.environ["CHUNKS_PATH"]) if "CHUNKS_PATH" in os.environ else None
 METADATA_PATH = Path(os.environ["METADATA_PATH"]) if "METADATA_PATH" in os.environ else None
 WORK_DIR = Path(os.environ.get("SPARSE_WORK_DIR", "/kaggle/working/legal_sparse"))
