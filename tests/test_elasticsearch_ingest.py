@@ -5,29 +5,12 @@ from pathlib import Path
 
 import numpy as np
 
-EMBEDDING_DIR = Path(__file__).resolve().parents[1] / "pipeline" / "04_embedding"
-sys.path.insert(0, str(EMBEDDING_DIR))
-
-if "elasticsearch" not in sys.modules:
-    elasticsearch_module = types.ModuleType("elasticsearch")
-    helpers_module = types.ModuleType("elasticsearch.helpers")
-    elasticsearch_module.Elasticsearch = object
-    elasticsearch_module.helpers = helpers_module
-    helpers_module.BulkIndexError = RuntimeError
-    helpers_module.parallel_bulk = None
-    sys.modules["elasticsearch"] = elasticsearch_module
-    sys.modules["elasticsearch.helpers"] = helpers_module
-
-if "polars" not in sys.modules:
-    polars_module = types.ModuleType("polars")
-    polars_module.DataFrame = object
-    sys.modules["polars"] = polars_module
-
-from build_elasticsearch import (  # noqa: E402
+from build_elasticsearch import (
     prepare_build_manifest,
     upload_and_checkpoint_shard,
     upload_shard,
 )
+
 
 
 class FakePayload:

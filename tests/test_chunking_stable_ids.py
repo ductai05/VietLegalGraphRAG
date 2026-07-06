@@ -1,11 +1,5 @@
-import sys
-from pathlib import Path
+from legal_chunker import chunk_legal_document
 
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "pipeline" / "03_preprocessing" / "chunk"))
-
-from legal_chunker import chunk_legal_document  # noqa: E402
 
 
 def test_chunk_ids_are_stable_across_runs():

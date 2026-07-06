@@ -1,7 +1,0 @@
-﻿model,setup,questions,accuracy,valid_json_rate,mean_latency_seconds,citation_validity,gold_citation_rate,retrieval_hit_rate
-llama-3.1-8b-instant,no_rag,200,0.715,1.0,40.374485,,,
-llama-3.1-8b-instant,hybrid_rerank,200,0.79,0.995,49.844692,0.955,0.545,0.8
-llama-3.3-70b-versatile,no_rag,200,0.845,1.0,2.5935795,,,
-llama-3.3-70b-versatile,hybrid_rerank,200,0.885,1.0,44.8087325,0.97,0.6,0.8
-qwen/qwen3-32b,no_rag,200,0.745,1.0,42.7290085,,,
-qwen/qwen3-32b,hybrid_rerank,200,0.89,1.0,52.137054,0.96,0.575,0.8

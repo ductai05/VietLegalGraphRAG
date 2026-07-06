@@ -1,5 +1,6 @@
 # IDE
 /.idea
+.worktrees/
 .env
 *.zip
 /report*/
@@ -10,14 +11,11 @@
 venv
 Learning.md
 
-# Data - ignore content, keep folder structure
-/data/*
-!/data/raw/
-# /data/raw/*
-!/data/raw/README.md
-!/data/preprocessed/
-# /data/preprocessed/*
-!/data/preprocessed/README.md
+# Data - ignore generated artifacts, keep documented folder structure
+/data/**
+!/data/**/
+!/data/**/README.md
+!/data/**/.gitkeep
 
 # Python
 __pycache__/
@@ -33,10 +31,21 @@ venv/
 
 # Kaggle temp files
 /kaggle/
-/data/preprocessed
 
 # Evaluation checkpoints can contain large prompts and model responses.
 /output/llm_evaluation*/
 !/output/llm_evaluation_complete/
 !/output/llm_evaluation_complete/audit.json
 !/output/llm_evaluation_complete/summary.json
+
+# Google Cloud Vision credentials (never commit service-account JSON)
+credentials/
+/docs/superpowers
+# Ignore all env files
+*.env
+*.env.*
+.env
+.env.*
+!*.env.example
+!**/.env.example
+

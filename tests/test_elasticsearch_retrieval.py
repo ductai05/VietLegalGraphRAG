@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import types
@@ -7,29 +8,8 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-EMBEDDING_DIR = Path(__file__).resolve().parents[1] / "pipeline" / "04_embedding"
-sys.path.insert(0, str(EMBEDDING_DIR))
+from dense_retrieval import DenseRetriever
 
-if "polars" not in sys.modules:
-    polars_module = types.ModuleType("polars")
-    sys.modules["polars"] = polars_module
-
-if "pyarrow" not in sys.modules:
-    pyarrow_module = types.ModuleType("pyarrow")
-    pyarrow_ipc_module = types.ModuleType("pyarrow.ipc")
-    pyarrow_module.ipc = pyarrow_ipc_module
-    sys.modules["pyarrow"] = pyarrow_module
-    sys.modules["pyarrow.ipc"] = pyarrow_ipc_module
-
-if "elasticsearch" not in sys.modules:
-    elasticsearch_module = types.ModuleType("elasticsearch")
-    elasticsearch_helpers_module = types.ModuleType("elasticsearch.helpers")
-    elasticsearch_module.Elasticsearch = object
-    elasticsearch_module.helpers = elasticsearch_helpers_module
-    sys.modules["elasticsearch"] = elasticsearch_module
-    sys.modules["elasticsearch.helpers"] = elasticsearch_helpers_module
-
-from dense_retrieval import DenseRetriever  # noqa: E402
 
 
 class FakeElasticsearchClient:
@@ -59,19 +39,24 @@ class ElasticsearchRetrievalTests(unittest.TestCase):
     def test_cli_help_does_not_require_optional_storage_dependencies(self):
         root = Path(__file__).resolve().parents[1]
         scripts = [
-            root / "pipeline" / "04_embedding" / "dense_retrieval.py",
-            root / "pipeline" / "07_evaluation" / "evaluate_dense.py",
+            root / "pipeline" / "03_embeddings" / "dense" / "src" / "dense_retrieval.py",
+            root / "pipeline" / "05_evaluation" / "evaluate_dense.py",
         ]
         for script in scripts:
             with self.subTest(script=script.name):
+                env = os.environ.copy()
+                env["PYTHONPATH"] = str(root) + (os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
                 result = subprocess.run(
                     [sys.executable, str(script), "--help"],
                     capture_output=True,
                     text=True,
                     check=False,
+                    env=env,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("--elastic-cloud-id", result.stdout)
+                self.assertNotIn("--storage-dir", result.stdout)
+                self.assertNotIn("--url", result.stdout)
 
     def test_search_builds_knn_prefilter_and_normalizes_cosine_score(self):
         client = FakeElasticsearchClient()
@@ -128,12 +113,10 @@ class ElasticsearchRetrievalTests(unittest.TestCase):
         retriever.close()
         client.close.assert_called_once_with()
 
-    def test_constructor_rejects_multiple_targets(self):
-        with self.assertRaisesRegex(ValueError, "exactly one"):
+    def test_constructor_rejects_qdrant_targets(self):
+        with self.assertRaisesRegex(ValueError, "Qdrant"):
             DenseRetriever(
                 url="http://localhost:6333",
-                elastic_cloud_id="cloud-id",
-                elastic_api_key="api-key",
             )
 
 

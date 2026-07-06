@@ -1,0 +1,90 @@
+name: Deploy to DigitalOcean Droplet
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy changed app services to Droplet
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and deploy changed services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: ${{ secrets.DROPLET_USER || 'root' }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DROPLET_PORT || 22 }}
+          script: |
+            set -euo pipefail
+
+            APP_DIR="/opt/VietLegalGraphRAG"
+            ENV_FILE="/opt/vietlegal/env/production.env"
+            COMPOSE_FILE="src/infra/docker-compose.production.yml"
+
+            cd "$APP_DIR"
+
+            OLD_REV="$(git rev-parse HEAD)"
+            git fetch origin main
+            NEW_REV="$(git rev-parse origin/main)"
+            CHANGED_FILES="$(git diff --name-only "$OLD_REV" "$NEW_REV" || true)"
+
+            git checkout main
+            git pull --ff-only origin main
+
+            if [ ! -f "$ENV_FILE" ]; then
+              echo "Missing env file: $ENV_FILE"
+              exit 1
+            fi
+
+            docker network inspect vietlegal_net >/dev/null 2>&1 || docker network create vietlegal_net
+
+            DEPLOY_BACKEND=false
+            DEPLOY_FRONTEND=false
+
+            if [ -z "$CHANGED_FILES" ]; then
+              echo "No changed files detected between $OLD_REV and $NEW_REV"
+            fi
+
+            for file in $CHANGED_FILES; do
+              [ -z "$file" ] && continue
+              case "$file" in
+                src/infra/docker-compose.production.yml|src/infra/production.env.example)
+                  DEPLOY_BACKEND=true
+                  DEPLOY_FRONTEND=true
+                  ;;
+                src/backend/*|src/backend/requirements.txt)
+                  DEPLOY_BACKEND=true
+                  ;;
+                src/frontend/*)
+                  DEPLOY_FRONTEND=true
+                  ;;
+                .github/workflows/deploy.yml)
+                  DEPLOY_BACKEND=true
+                  DEPLOY_FRONTEND=true
+                  ;;
+              esac
+            done
+
+            if [ "$DEPLOY_BACKEND" = true ]; then
+              echo "Building backend"
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build backend
+              echo "Starting backend"
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps backend
+            else
+              echo "Backend unchanged"
+            fi
+
+            if [ "$DEPLOY_FRONTEND" = true ]; then
+              echo "Building frontend"
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build frontend
+              echo "Starting frontend"
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps frontend
+            else
+              echo "Frontend unchanged"
+            fi
+
+            docker image prune -f

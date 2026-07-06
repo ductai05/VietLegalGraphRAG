@@ -10,13 +10,13 @@ Văn bản pháp luật thường dài dòng, chồng chéo và khó tiếp cậ
 ## ✨ Tính năng chính
 - 💬 **Chatbot Pháp lý Tùy chỉnh:** Trả lời các câu hỏi về luật pháp. Người dùng có thể chọn chế độ giải thích *Dễ hiểu* (dành cho người dân) hoặc *Chuyên sâu* (dành cho sinh viên, chuyên viên luật).
 - 🔍 **Trích dẫn Minh bạch (Citations):** Không như các chatbot "hộp đen" khác, hệ thống sẽ trích xuất và hiển thị rõ ràng điều khoản, nghị định được dùng làm căn cứ ngay cạnh câu trả lời.
-- 📄 **Phân tích Rủi ro Hợp đồng (OCR):** Người dùng chỉ cần tải lên hình ảnh hợp đồng, hệ thống sẽ trích xuất nội dung (PaddleOCR) và chỉ ra các điều khoản bất lợi/rủi ro tiềm ẩn.
+- 📄 **Phân tích Rủi ro Hợp đồng (OCR):** Người dùng chỉ cần tải lên hình ảnh hợp đồng, hệ thống sẽ trích xuất nội dung bằng Google Cloud Vision OCR và chỉ ra các điều khoản bất lợi/rủi ro tiềm ẩn.
 
 ## 🛠️ Kiến trúc & Công nghệ
 - **Mô hình Ngôn ngữ (LLMs):** Gemini, Qwen.
 - **Embedding Models:** PhoBERT, BGE-M3, vietlegal-harrier.
 - **GraphRAG Framework:** LangChain, LightRAG.
-- **Xử lý ảnh (OCR):** PaddleOCR.
+- **Xử lý ảnh (OCR):** Google Cloud Vision OCR.
 - **Backend & Cơ sở dữ liệu:** Python, FastAPI, cơ sở dữ liệu đồ thị **Neo4j**.
 - **Frontend:** TypeScript, Next.js.
 
@@ -64,6 +64,33 @@ VietLegalGraphRAG/
 ├── LICENSE
 └── README.md
 ```
+
+## 🎯 MVP Runtime Scope
+
+The MVP runtime uses **Elasticsearch Cloud** for both dense and sparse retrieval, **Neo4j on a dedicated VPS** for the legal knowledge graph, **Google Cloud Vision OCR** as an external managed OCR service, and **FastAPI** for the backend contract consumed by the frontend.
+
+Qdrant references in older embedding notes are historical and are not required for the MVP runtime. Frontend code should call the backend API only and should not call Elasticsearch, Neo4j, reranker models or LLM providers directly.
+
+Local PaddleOCR is no longer part of the MVP runtime. OCR authentication uses a Google Service Account JSON credential that must not be committed to git.
+
+LightRAG is only the orchestration layer. It does not replace Elasticsearch retrieval. The MVP answer flow is: user query -> intent detection -> hybrid Elasticsearch retrieval (dense + sparse) -> RRF -> optional rerank -> document resolution -> optional one-hop Neo4j graph expansion -> context assembly -> answer -> citation + trace.
+
+## 📋 MVP Decision Log
+
+Decisions recorded during Phase 0 scope freeze, per the MVP phase backlog specification.
+
+### `Chunk` vs `Article` Neo4j Label
+
+- **Decision:** Keep `Chunk` as the internal Neo4j label. The API layer maps `Chunk` to `Article` in response fields when the semantic context requires it (document article traversal, section references).
+- **Rationale:** Renaming the label requires a full graph migration with no functional benefit at this stage. A clean rename can follow after the demo.
+- **Risk:** Internal code must consistently refer to "chunk" in graph queries and "article" in API responses, creating a mapping burden. Mitigated by keeping the mapping logic in one place (GraphRetriever and schemas).
+
+### Graph Size Strategy
+
+- **Decision:** Prepare both a subset smoke graph path and a full-corpus graph path. The demo uses the subset graph.
+- **Subset scope:** Filtered by top legal types (Luật, Nghị định, Thông tư) or a document count limit manageable on local hardware (~10K documents).
+- **Full graph:** Available if the demo machine has sufficient RAM and SSD for the complete corpus (>518K documents). Not the default demo path.
+- **Rationale:** Full Neo4j import may exceed small local machines. A subset ensures reproducible demo behavior regardless of presenter hardware.
 
 ## 🛠 Hướng dẫn Cài đặt
 
