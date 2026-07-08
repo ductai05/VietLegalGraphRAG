@@ -9,7 +9,11 @@ from answer_service import ExtractiveAnswerService, OpenAICompatibleAnswerServic
 from config import Settings, get_settings
 from context_assembler import ContextAssembler
 from contracts import GraphContext, RetrievalHit
-from elasticsearch_retriever import ElasticsearchTextRetriever
+from elasticsearch_retriever import (
+    ElasticsearchDenseRetriever,
+    ElasticsearchTextRetriever,
+)
+from embedding_service import OpenAICompatibleEmbedder, VoyageEmbedder
 from graph_retriever import GraphRetriever
 from lightrag_service import LightRAGService
 from rerank_service import NoopReranker, VoyageReranker
@@ -62,6 +66,7 @@ class RuntimeServices:
     graph_retriever: Any
     answer_service: Any
     lightrag_service: LightRAGService
+    ocr_service: Any
     status: dict[str, str]
     warnings: list[str]
 
@@ -72,6 +77,7 @@ def get_runtime_services() -> RuntimeServices:
     warnings: list[str] = []
     status: dict[str, str] = {}
 
+    ocr_service = _build_ocr_service(settings, warnings, status)
     retrieval_service = _build_retrieval_service(settings, warnings, status)
     graph_retriever = _build_graph_retriever(settings, warnings, status)
     answer_service = _build_answer_service(settings, warnings, status)
@@ -87,6 +93,7 @@ def get_runtime_services() -> RuntimeServices:
         graph_retriever=graph_retriever,
         answer_service=answer_service,
         lightrag_service=lightrag_service,
+        ocr_service=ocr_service,
         status=status,
         warnings=warnings,
     )
@@ -101,6 +108,9 @@ def _build_retrieval_service(
         warnings.append("runtime.fallback")
         warnings.append("elasticsearch.not_configured")
         status["elasticsearch"] = "fallback"
+        status["embedding"] = "disabled"
+        status["dense"] = "disabled"
+        status["dense_retrieval"] = "disabled"
         status["reranker"] = "noop"
         return DemoRetrievalService()
 
@@ -119,25 +129,139 @@ def _build_retrieval_service(
                 settings.elasticsearch_password,
             )
         client = Elasticsearch(settings.elasticsearch_url, **kwargs)
-        retriever = ElasticsearchTextRetriever(
-            client,
-            index=settings.elasticsearch_alias or settings.elasticsearch_index,
-        )
+        if not client.ping():
+            raise RuntimeError("elasticsearch unreachable")
+        index = settings.elasticsearch_alias or settings.elasticsearch_index
+        retriever = ElasticsearchTextRetriever(client, index=index)
         status["elasticsearch"] = "configured"
-        warnings.append("dense_vector_query_unavailable")
+        dense_retriever = _build_dense_retriever(
+            settings, warnings, status, client=client, index=index
+        )
+        if dense_retriever is None:
+            warnings.append("dense.not_configured")
+        dense_status = "configured" if dense_retriever else "disabled"
+        status["dense"] = dense_status
+        status["dense_retrieval"] = dense_status
         return RetrievalService(
-            dense_retriever=retriever,
+            dense_retriever=dense_retriever,
             sparse_retriever=retriever,
             reranker=_build_reranker(settings, warnings, status),
         )
-    except Exception as exc:
+    except Exception:
         if not settings.runtime_fallback_enabled:
             raise
+        # Warning codes are client-visible: never include exception details.
         warnings.append("runtime.fallback")
-        warnings.append(f"elasticsearch.init_failed:{exc.__class__.__name__}")
+        warnings.append("elasticsearch.init_failed")
         status["elasticsearch"] = "fallback"
+        status["embedding"] = "disabled"
+        status["dense"] = "disabled"
+        status["dense_retrieval"] = "disabled"
         status["reranker"] = "noop"
         return DemoRetrievalService()
+
+
+def _build_embedder(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+) -> Any:
+    provider = settings.embedding_provider.strip().lower()
+    if provider in {"", "none"}:
+        status["embedding"] = "disabled"
+        return None
+    if not settings.embedding_api_key:
+        warnings.append("embedding.not_configured")
+        status["embedding"] = "disabled"
+        return None
+    dims = settings.embedding_dims or None
+    try:
+        if provider == "voyage":
+            import voyageai
+
+            embedder: Any = VoyageEmbedder(
+                client=voyageai.Client(api_key=settings.embedding_api_key),
+                model=settings.embedding_model,
+                dims=dims,
+            )
+        elif provider == "openai-compatible":
+            from openai import OpenAI
+
+            kwargs: dict[str, Any] = {"api_key": settings.embedding_api_key}
+            if settings.embedding_base_url:
+                kwargs["base_url"] = settings.embedding_base_url
+            embedder = OpenAICompatibleEmbedder(
+                client=OpenAI(**kwargs),
+                model=settings.embedding_model,
+                dims=dims,
+            )
+        else:
+            warnings.append("embedding.unknown_provider")
+            status["embedding"] = "disabled"
+            return None
+        status["embedding"] = provider
+        return embedder
+    except Exception:
+        if not settings.runtime_fallback_enabled:
+            raise
+        warnings.append("embedding.init_failed")
+        status["embedding"] = "disabled"
+        return None
+
+
+def _build_dense_retriever(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+    *,
+    client: Any,
+    index: str,
+) -> Any:
+    if settings.dense_num_candidates_factor_invalid:
+        warnings.append("config.dense_num_candidates_factor_invalid")
+    if settings.dense_min_num_candidates_invalid:
+        warnings.append("config.dense_min_num_candidates_invalid")
+    embedder = _build_embedder(settings, warnings, status)
+    if embedder is None:
+        return None
+    try:
+        index_dims = _mapping_vector_dims(client, index)
+    except Exception:
+        if not settings.runtime_fallback_enabled:
+            raise
+        warnings.append("dense.mapping_check_failed")
+        status["embedding"] = "disabled"
+        status["dense_retrieval"] = "disabled"
+        return None
+    if index_dims is None:
+        warnings.append("dense.vector_mapping_missing")
+        status["embedding"] = "disabled"
+        status["dense_retrieval"] = "disabled"
+        return None
+    if embedder.dims is not None and embedder.dims != index_dims:
+        warnings.append("dense.dim_mismatch")
+        status["embedding"] = "disabled"
+        status["dense_retrieval"] = "disabled"
+        return None
+    return ElasticsearchDenseRetriever(
+        client,
+        index=index,
+        embedder=embedder,
+        num_candidates_factor=settings.dense_num_candidates_factor,
+        min_num_candidates=settings.dense_min_num_candidates,
+    )
+
+
+def _mapping_vector_dims(client: Any, index: str) -> int | None:
+    """Return dims of the `vector` dense_vector field, or None if absent."""
+    mapping = client.indices.get_mapping(index=index)
+    for index_mapping in dict(mapping).values():
+        properties = (index_mapping.get("mappings") or {}).get("properties") or {}
+        vector = properties.get("vector") or {}
+        if vector.get("type") == "dense_vector":
+            dims = vector.get("dims")
+            return int(dims) if dims is not None else None
+    return None
 
 
 def _build_reranker(
@@ -160,10 +284,10 @@ def _build_reranker(
             client=voyageai.Client(api_key=settings.voyage_api_key),
             model=settings.rerank_model,
         )
-    except Exception as exc:
+    except Exception:
         if not settings.runtime_fallback_enabled:
             raise
-        warnings.append(f"reranker.init_failed:{exc.__class__.__name__}")
+        warnings.append("reranker.init_failed")
         status["reranker"] = "noop"
         return NoopReranker()
 
@@ -186,10 +310,10 @@ def _build_graph_retriever(
         )
         status["neo4j"] = "configured"
         return GraphRetriever(driver, database=settings.neo4j_database)
-    except Exception as exc:
+    except Exception:
         if not settings.runtime_fallback_enabled:
             raise
-        warnings.append(f"neo4j.init_failed:{exc.__class__.__name__}")
+        warnings.append("neo4j.init_failed")
         status["neo4j"] = "disabled"
         return NoopGraphRetriever()
 
@@ -217,10 +341,10 @@ def _build_answer_service(
             client=OpenAI(**kwargs),
             model=settings.llm_model,
         )
-    except Exception as exc:
+    except Exception:
         if not settings.runtime_fallback_enabled:
             raise
-        warnings.append(f"llm.init_failed:{exc.__class__.__name__}")
+        warnings.append("llm.init_failed")
         status["llm"] = "extractive"
         return ExtractiveAnswerService()
 
@@ -232,3 +356,32 @@ def _elasticsearch_is_configured(settings: Settings) -> bool:
         or (settings.elasticsearch_username and settings.elasticsearch_password)
     )
     return explicitly_configured or has_auth
+
+
+def _build_ocr_service(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+) -> Any:
+    from ocr_service import GoogleVisionOcrService, NoopOcrService
+
+    provider = settings.ocr_provider.strip().lower()
+    if provider in {"", "none"}:
+        status["ocr"] = "disabled"
+        return NoopOcrService()
+    if provider == "google":
+        if settings.ocr_config_invalid:
+            warnings.append("config.ocr_max_file_mb_invalid")
+        try:
+            service = GoogleVisionOcrService()
+            status["ocr"] = "google"
+            return service
+        except Exception:
+            if not settings.runtime_fallback_enabled:
+                raise
+            warnings.append("ocr.init_failed")
+            status["ocr"] = "disabled"
+            return NoopOcrService()
+    warnings.append("ocr.unknown_provider")
+    status["ocr"] = "disabled"
+    return NoopOcrService()

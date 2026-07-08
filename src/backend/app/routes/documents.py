@@ -1,10 +1,82 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 
 from dependencies import RuntimeServices, get_runtime_services
+from config import get_settings
+from schemas import OcrResponseModel, OcrPageModel  # noqa: F401 - used in type stubs
 
 router = APIRouter()
+
+
+@router.post("/documents/ocr", response_model=OcrResponseModel)
+def ocr_upload(
+    file: UploadFile = File(...),
+    runtime: RuntimeServices = Depends(get_runtime_services),
+) -> OcrResponseModel:
+    settings = get_settings()
+
+    # Provider check
+    provider = settings.ocr_provider.strip().lower()
+    if provider in {"", "none"}:
+        raise HTTPException(
+            status_code=422,
+            detail="ocr.disabled",
+        )
+    if provider not in {"google"}:
+        raise HTTPException(
+            status_code=422,
+            detail="ocr.unknown_provider",
+        )
+
+    # Read content
+    content = file.file.read()
+
+    # Empty file
+    if not content:
+        raise HTTPException(
+            status_code=422,
+            detail="ocr.empty_file",
+        )
+
+    # Size check
+    max_bytes = settings.ocr_max_file_bytes
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail="ocr.file_too_large",
+        )
+
+    # MIME check
+    mime = file.content_type or ""
+    allowed = settings.ocr_allowed_mime_types
+    if mime not in allowed:
+        raise HTTPException(
+            status_code=415,
+            detail="ocr.unsupported_media_type",
+        )
+
+    # Process
+    try:
+        result = runtime.ocr_service.process(content, mime)
+    except ValueError as e:
+        raise HTTPException(status_code=415, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=502, detail="ocr.provider_error")
+    except Exception:
+        raise HTTPException(status_code=502, detail="ocr.processing_error")
+
+    warnings: list[str] = []
+    if not result.get("success", False):
+        warnings.append("ocr.no_text_extracted")
+
+    return OcrResponseModel(
+        success=result.get("success", False),
+        text=result.get("text", ""),
+        pages=[OcrPageModel(**p) for p in result.get("pages", [])],
+        provider=runtime.status.get("ocr", "unknown"),
+        warnings=warnings,
+    )
 
 
 @router.get("/documents/{doc_id}/graph")

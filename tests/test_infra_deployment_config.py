@@ -186,14 +186,23 @@ def test_bulk_actions_passes_trial_tier_sizing_and_backoff_options() -> None:
 
     captured = {}
 
+    class FakeClient:
+        def __init__(self) -> None:
+            self.option_calls = []
+
+        def options(self, **kwargs):
+            self.option_calls.append(kwargs)
+            return "client-with-options"
+
     def fake_bulk(client, actions, **kwargs):
         captured["client"] = client
         captured["actions"] = list(actions)
         captured.update(kwargs)
         return len(captured["actions"]), []
 
+    client = FakeClient()
     result = bulk_actions(
-        client="fake-client",
+        client=client,
         actions=[{"_id": "1"}, {"_id": "2"}],
         batch_size=100,
         max_chunk_bytes=5 * 1024 * 1024,
@@ -208,13 +217,15 @@ def test_bulk_actions_passes_trial_tier_sizing_and_backoff_options() -> None:
 
     assert result.ok == 2
     assert result.failed == 0
-    assert captured["client"] == "fake-client"
+    assert client.option_calls == [{"request_timeout": 120}]
+    assert captured["client"] == "client-with-options"
     assert captured["chunk_size"] == 100
     assert captured["max_chunk_bytes"] == 5 * 1024 * 1024
     assert captured["max_retries"] == 4
     assert captured["initial_backoff"] == 1.5
     assert captured["max_backoff"] == 30.0
     assert captured["retry_on_status"] == (429, 502, 503, 504)
+    assert "request_timeout" not in captured
 
 
 def test_ensure_index_retries_without_shard_and_replica_settings_for_serverless() -> None:

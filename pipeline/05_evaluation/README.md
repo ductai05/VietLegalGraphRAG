@@ -101,3 +101,82 @@ The default context budget is 4,000 characters to remain reproducible under
 Groq's 6,000 TPM free-tier limit. All ten ranked chunks remain represented;
 the text budget is weighted toward the highest ranks (25%, 15%, 10%, then an
 equal share for ranks 4-10), keeping both the start and end of truncated chunks.
+
+## Hybrid Elasticsearch search
+
+`hybrid_search.py` is the smoke test and evaluation entrypoint for the merged
+Elasticsearch hybrid index. Use the same alias for dense and sparse search:
+`vietlegal_chunks`.
+
+Recommended smoke query:
+
+```text
+thủ tục cấp giấy phép xây dựng
+```
+
+RRF strategy:
+
+- Dense phase runs kNN over `embedding`.
+- Sparse phase runs BM25 over the Vietnamese tokenized text fields.
+- The script fuses both ranked lists with 1-based Reciprocal Rank Fusion:
+  `score = sum(1 / (rrf_k + rank))`.
+- Use `--rrf-k 60` as the default. Lower values make top ranks more dominant;
+  higher values soften the difference between ranks.
+- Reranking should happen after RRF, not before. The reranker receives the top
+  `--candidate-k` fused candidates and reorders them with
+  `BAAI/bge-reranker-v2-m3`.
+
+Smoke test without reranker:
+
+```powershell
+python pipeline/05_evaluation/hybrid_search.py `
+  --env-file src/infra/production.env `
+  --index vietlegal_chunks `
+  --query "thủ tục cấp giấy phép xây dựng" `
+  --candidate-k 50 `
+  --top-k 10 `
+  --rrf-k 60 `
+  --elastic-num-candidates 1000
+```
+
+Smoke test with BGE reranker:
+
+```powershell
+python pipeline/05_evaluation/hybrid_search.py `
+  --env-file src/infra/production.env `
+  --index vietlegal_chunks `
+  --query "thủ tục cấp giấy phép xây dựng" `
+  --candidate-k 50 `
+  --top-k 10 `
+  --rrf-k 60 `
+  --elastic-num-candidates 1000 `
+  --rerank `
+  --reranker-model BAAI/bge-reranker-v2-m3 `
+  --rerank-batch-size 8 `
+  --device cuda
+```
+
+Use `--device cpu` if CUDA is not available. On CPU, reduce
+`--candidate-k` to 20 or 30 for quick checks.
+
+Full hybrid evaluation with reranker:
+
+```powershell
+python pipeline/05_evaluation/hybrid_search.py `
+  --env-file src/infra/production.env `
+  --index vietlegal_chunks `
+  --gold output/eval_questions_gold.jsonl `
+  --candidate-k 100 `
+  --top-k 10 `
+  --k-values 1 3 5 10 `
+  --rrf-k 60 `
+  --elastic-num-candidates 1000 `
+  --rerank `
+  --reranker-model BAAI/bge-reranker-v2-m3 `
+  --rerank-batch-size 8 `
+  --device cuda `
+  --output output/elasticsearch_hybrid_bge_rerank_eval.json
+```
+
+If the gold file is still in `eval_questions.json` format, pass that file with
+`--chunks <path-to-chunks.parquet>` so the script can convert it to JSONL first.

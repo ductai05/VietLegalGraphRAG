@@ -586,9 +586,14 @@ def bulk_actions(
             ) from exc
         bulk = helpers.bulk
 
+    bulk_client = (
+        client.options(request_timeout=request_timeout)
+        if hasattr(client, "options")
+        else client
+    )
     started = time.perf_counter()
     ok, errors = bulk(
-        client,
+        bulk_client,
         actions,
         chunk_size=batch_size,
         max_chunk_bytes=max_chunk_bytes,
@@ -597,7 +602,6 @@ def bulk_actions(
         max_backoff=max_backoff,
         retry_on_status=(429, 502, 503, 504),
         raise_on_error=False,
-        request_timeout=request_timeout,
     )
     for error in errors:
         append_dead_letter(

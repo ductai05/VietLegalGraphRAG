@@ -57,6 +57,62 @@ def test_settings_reads_runtime_provider_environment(monkeypatch) -> None:
     assert settings.llm_model == "legal-model"
 
 
+def test_settings_dense_num_candidates_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("DENSE_NUM_CANDIDATES_FACTOR", raising=False)
+    monkeypatch.delenv("DENSE_MIN_NUM_CANDIDATES", raising=False)
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 4
+    assert settings.dense_min_num_candidates == 100
+
+
+def test_settings_dense_num_candidates_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("DENSE_NUM_CANDIDATES_FACTOR", "7")
+    monkeypatch.setenv("DENSE_MIN_NUM_CANDIDATES", "250")
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 7
+    assert settings.dense_min_num_candidates == 250
+
+
+def test_settings_dense_num_candidates_invalid_values_use_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("DENSE_NUM_CANDIDATES_FACTOR", "0")
+    monkeypatch.setenv("DENSE_MIN_NUM_CANDIDATES", "-5")
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 4
+    assert settings.dense_min_num_candidates == 100
+
+
+def test_settings_dense_num_candidates_malformed_values_use_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("DENSE_NUM_CANDIDATES_FACTOR", "many")
+    monkeypatch.setenv("DENSE_MIN_NUM_CANDIDATES", "lots")
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 4
+    assert settings.dense_min_num_candidates == 100
+
+
 def test_answer_endpoint_uses_degraded_fallback_without_external_credentials(monkeypatch) -> None:
     for key in [
         "ELASTICSEARCH_URL",

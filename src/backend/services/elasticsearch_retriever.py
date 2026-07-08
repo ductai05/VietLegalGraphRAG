@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from contracts import RetrievalHit
@@ -70,6 +71,62 @@ class ElasticsearchTextRetriever:
         return hits
 
 
+class ElasticsearchDenseRetriever:
+    """kNN retrieval over the `vector` field.
+
+    Shares filter building and hit mapping with the BM25 retriever so both
+    paths return identical `RetrievalHit` shapes; only the score key differs
+    (``scores={"dense": ...}``). Embedding or search failures degrade to an
+    empty hit list (dense contributes nothing; sparse still answers).
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        index: str,
+        embedder: Any,
+        vector_field: str = "vector",
+        num_candidates_factor: int = 4,
+        min_num_candidates: int = 100,
+    ) -> None:
+        self.client = client
+        self.index = index
+        self.embedder = embedder
+        self.vector_field = vector_field
+        self.num_candidates_factor = num_candidates_factor
+        self.min_num_candidates = min_num_candidates
+
+    def search(self, request: RetrievalRequest, candidate_k: int) -> list[RetrievalHit]:
+        try:
+            query_vector = self.embedder.embed_query(request.query)
+            knn: dict[str, Any] = {
+                "field": self.vector_field,
+                "query_vector": query_vector,
+                "k": candidate_k,
+                "num_candidates": max(
+                    candidate_k * self.num_candidates_factor,
+                    self.min_num_candidates,
+                ),
+            }
+            filter_clauses = build_filter_clauses(request.filters)
+            if filter_clauses:
+                knn["filter"] = filter_clauses
+            response = self.client.search(
+                index=self.index,
+                knn=knn,
+                size=candidate_k,
+                source_excludes=[self.vector_field],
+            )
+        except Exception:
+            logging.exception("Dense retrieval failed; returning no dense hits")
+            return []
+        raw_hits = response.get("hits", {}).get("hits", [])
+        return [
+            retrieval_hit_from_elasticsearch(rank, raw_hit, score_key="dense")
+            for rank, raw_hit in enumerate(raw_hits, start=1)
+        ]
+
+
 def build_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not filters:
         return []
@@ -94,7 +151,11 @@ def build_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]
     return clauses
 
 
-def retrieval_hit_from_elasticsearch(rank: int, hit: dict[str, Any]) -> RetrievalHit:
+def retrieval_hit_from_elasticsearch(
+    rank: int,
+    hit: dict[str, Any],
+    score_key: str = "bm25",
+) -> RetrievalHit:
     source = dict(hit.get("_source") or {})
     source.pop("vector", None)
     chunk_id = str(source.get("chunk_id") or hit.get("_id") or "")
@@ -117,7 +178,7 @@ def retrieval_hit_from_elasticsearch(rank: int, hit: dict[str, Any]) -> Retrieva
         effect_status=str(source.get("effect_status") or ""),
         section_path=section_path,
         text=text,
-        scores={"bm25": float(hit.get("_score") or 0.0)},
+        scores={score_key: float(hit.get("_score") or 0.0)},
         citation=format_citation(
             document_number=document_number,
             title=title,
