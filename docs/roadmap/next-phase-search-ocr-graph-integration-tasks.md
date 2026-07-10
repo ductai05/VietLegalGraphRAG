@@ -24,12 +24,12 @@ Verify command baseline for every task: `python -m pytest tests` (green without 
 
 | ID | Task | Files | Tests | Verify |
 |----|------|-------|-------|--------|
-| B1 | `EMBEDDING_PROVIDER/MODEL/API_KEY` settings | `src/backend/app/config.py` | settings-read cases | pytest |
-| B2 | `embedding_service.py`: Voyage / OpenAI-compatible / None embedders (Protocol; reuse existing SDKs) | new `src/backend/services/embedding_service.py` | new `tests/test_embedding_service.py` (mocked clients) | pytest |
+| B1 | local HF `EMBEDDING_MODEL/DEVICE/CACHE_DIR/MAX_LENGTH/DIMS` settings | `src/backend/app/config.py` | settings-read cases | pytest |
+| B2 | `embedding_service.py`: local Hugging Face `darklethelong/vnlegal-lal` query embedder (Protocol; no external embedding API) | new `src/backend/services/embedding_service.py` | new `tests/test_embedding_service.py` (mocked encoder) | pytest |
 | B3 | `ElasticsearchDenseRetriever` (knn query, shared filters/mapper, `scores={"dense":…}`) | `src/backend/services/elasticsearch_retriever.py` | knn-body assertions with `Mock()` client in `tests/test_dense_retrieval.py` | pytest |
 | B4 | Wire dense in DI; remove permanent `dense_vector_query_unavailable`; sparse-alias + warning when unconfigured; hybrid single-pass when aliased (B1-audit) | `src/backend/app/dependencies.py`, `retrieval_service.py` | trace asserts: hybrid = 1 BM25 + 1 kNN when configured; 1 BM25 when not | pytest |
 | B5 | Startup vector-dim check vs alias mapping; mismatch → dense disabled + warning | `dependencies.py` | mocked `indices.get_mapping` cases | pytest |
-| B6 🔑 | Live smoke: dense + hybrid against ES Cloud staging index; confirm pipeline embedding model/dims (see `pipeline/03_embeddings`) | none | manual | `curl -s localhost:8000/search -d '{"query":"...","retrieval_mode":"dense",...}'` — requires `ELASTICSEARCH_URL/API_KEY`, `EMBEDDING_API_KEY` |
+| B6 🔑 | Live smoke: dense + hybrid against ES Cloud staging index; confirm pipeline embedding model/dims (see `pipeline/03_embeddings`) | none | manual | `curl -s localhost:8000/search -d '{"query":"...","retrieval_mode":"dense",...}'` - requires `ELASTICSEARCH_URL/API_KEY` and local HF model cache |
 | B7 🔑 | Decision gate: if index `vector` mapping unusable for kNN → STOP, write reindex proposal (separate approval; production data) | docs only | — | — |
 
 ## C. Graph (Phase 3)

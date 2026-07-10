@@ -34,8 +34,8 @@ Fixes: B4, B10.
 
 Fixes: B1. Spec §6.
 
-1. `config.py`: `EMBEDDING_PROVIDER/MODEL/API_KEY` settings.
-2. New `services/embedding_service.py`: `VoyageEmbedder` / `OpenAICompatibleEmbedder` / `NoneEmbedder` behind a `Protocol` (reuse existing client libs — no new deps).
+1. `config.py`: local HF `EMBEDDING_MODEL/DEVICE/CACHE_DIR/MAX_LENGTH/DIMS` settings.
+2. New `services/embedding_service.py`: local `darklethelong/vnlegal-lal` query embedder behind a `Protocol` (no external embedding API).
 3. New `ElasticsearchDenseRetriever` (same module as text retriever): `knn` query, same `build_filter_clauses`, maps via existing `retrieval_hit_from_elasticsearch` with `scores={"dense": _score}`.
 4. `dependencies.py`: wire dense retriever when embedder configured; else sparse-alias + `dense_unavailable` warning; drop the permanent `dense_vector_query_unavailable` warning.
 5. Startup dim check vs index mapping (`indices.get_mapping` on the alias); mismatch → warning + dense disabled.
@@ -97,7 +97,7 @@ Fixes: S1, S3, S5, S6, I2.
 
 - **Any ES reindex/mapping change** (only if Phase 2 discovers an unusable `vector` mapping) — production data, hours-long, needs alias cutover plan.
 - **Deploy pipeline changes** (Phase 6.5) — touches production droplet.
-- **Enabling dense retrieval in production** — new per-query embedding cost (Voyage/LLM provider billing); roll out behind `EMBEDDING_PROVIDER=none` default.
+- **Enabling dense retrieval in production** — local HF model adds CPU/RAM and cold-start cost; keep a persistent Hugging Face cache volume and monitor latency.
 
 ## Verification per phase
 

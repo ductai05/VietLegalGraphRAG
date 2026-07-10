@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Protocol
 
 from contracts import RetrievalHit
@@ -13,6 +14,7 @@ class Reranker(Protocol):
         hits: list[RetrievalHit],
         top_k: int,
         model: str | None = None,
+        timeout_ms: int | None = None,
     ) -> list[RetrievalHit]:
         ...
 
@@ -24,6 +26,7 @@ class NoopReranker:
         hits: list[RetrievalHit],
         top_k: int,
         model: str | None = None,
+        timeout_ms: int | None = None,
     ) -> list[RetrievalHit]:
         return hits[:top_k]
 
@@ -57,18 +60,23 @@ class VoyageReranker:
         hits: list[RetrievalHit],
         top_k: int,
         model: str | None = None,
+        timeout_ms: int | None = None,
     ) -> list[RetrievalHit]:
         if not hits:
             return []
         documents = [format_rerank_document(hit) for hit in hits]
         rerank_model = model or self.model
         try:
-            response = self.client.rerank(
+            response = self._call_rerank(
                 query=query,
                 documents=documents,
                 model=rerank_model,
                 top_k=min(top_k, len(hits)),
+                timeout_ms=timeout_ms,
             )
+        except TimeoutError:
+            logging.warning("Voyage rerank timed out; returning original retrieval order")
+            return hits[:top_k]
         except Exception:
             logging.exception("Voyage rerank failed; returning original retrieval order")
             return hits[:top_k]
@@ -90,6 +98,30 @@ class VoyageReranker:
         for rank, hit in enumerate(reranked[:top_k], start=1):
             hit.rank = rank
         return reranked[:top_k]
+
+    def _call_rerank(
+        self,
+        *,
+        query: str,
+        documents: list[str],
+        model: str,
+        top_k: int,
+        timeout_ms: int | None,
+    ) -> object:
+        kwargs = {
+            "query": query,
+            "documents": documents,
+            "model": model,
+            "top_k": top_k,
+        }
+        if timeout_ms is None:
+            return self.client.rerank(**kwargs)
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.client.rerank, **kwargs)
+        try:
+            return future.result(timeout=timeout_ms / 1000)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _get_value(item: object, name: str) -> object | None:

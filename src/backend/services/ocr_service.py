@@ -25,13 +25,27 @@ class NoopOcrService:
 
 
 class GoogleVisionOcrService:
-    """Lazy import: google.cloud.vision only loaded on first process() call."""
+    """Lazy import: google.cloud.vision only loaded on first process() call.
 
-    def __init__(self) -> None:
+    Supports two credential sources:
+    1. GOOGLE_SERVICE_ACCOUNT_* individual env vars (explicit).
+    2. GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials (ADC).
+    """
+
+    def __init__(self, language_hints: tuple[str, ...] | None = None) -> None:
+        self._language_hints = language_hints or ()
+        # Always initialise to None so ADC path does not raise AttributeError.
+        self._project_id: str | None = None
+        self._private_key_id: str | None = None
+        self._private_key: str | None = None
+        self._client_email: str | None = None
+        self._client_id: str | None = None
+        self._credentials: Any = None
+
+        # Explicit individual vars take precedence.
         project_id = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PROJECT_ID")
         private_key = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")
         client_email = os.environ.get("GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL")
-        self._credentials = None
 
         if project_id and private_key and client_email:
             self._project_id = project_id
@@ -41,12 +55,12 @@ class GoogleVisionOcrService:
             self._client_id = os.environ.get("GOOGLE_SERVICE_ACCOUNT_CLIENT_ID")
 
     def _ensure_credentials(self) -> Any:
-        from google.oauth2 import service_account
-
         if self._credentials is not None:
             return self._credentials
         if self._project_id:
-            credentials_info = {
+            from google.oauth2 import service_account
+
+            credentials_info: dict[str, Any] = {
                 "type": "service_account",
                 "project_id": self._project_id,
                 "private_key_id": self._private_key_id,
@@ -56,10 +70,17 @@ class GoogleVisionOcrService:
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{self._client_email.replace('@', '%40')}" if self._client_email else "",
+                "client_x509_cert_url": (
+                    f"https://www.googleapis.com/robot/v1/metadata/x509/{self._client_email.replace('@', '%40')}"
+                    if self._client_email else ""
+                ),
                 "universe_domain": "googleapis.com",
             }
             self._credentials = service_account.Credentials.from_service_account_info(credentials_info)
+        else:
+            # Fall back to Application Default Credentials (ADC).
+            import google.auth
+            self._credentials, self._project_id = google.auth.default()
         return self._credentials
 
     def _client(self) -> Any:
@@ -80,7 +101,12 @@ class GoogleVisionOcrService:
 
         client = self._client()
         image = vision.Image(content=content)
-        response = client.document_text_detection(image=image)
+        request_kwargs: dict[str, Any] = {"image": image}
+        if self._language_hints:
+            request_kwargs["image_context"] = vision.ImageContext(
+                language_hints=list(self._language_hints)
+            )
+        response = client.document_text_detection(**request_kwargs)
 
         if response.error.message:
             raise RuntimeError("ocr.provider_error")
@@ -98,10 +124,15 @@ class GoogleVisionOcrService:
 
         client = self._client()
         feature = vision.Feature(type_=vision.Feature.Type.DOCUMENT_TEXT_DETECTION)
-        request = vision.AnnotateFileRequest(
-            input_config=vision.InputConfig(content=content, mime_type="application/pdf"),
-            features=[feature],
-        )
+        file_request_kwargs: dict[str, Any] = {
+            "input_config": vision.InputConfig(content=content, mime_type="application/pdf"),
+            "features": [feature],
+        }
+        if self._language_hints:
+            file_request_kwargs["image_context"] = vision.ImageContext(
+                language_hints=list(self._language_hints)
+            )
+        request = vision.AnnotateFileRequest(**file_request_kwargs)
         response = client.batch_annotate_files(requests=[request])
 
         full_text = ""

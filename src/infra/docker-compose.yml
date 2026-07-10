@@ -54,13 +54,29 @@ services:
       - BACKEND_PORT
       - ELASTICSEARCH_URL
       - ELASTICSEARCH_API_KEY
-      - ELASTICSEARCH_DENSE_INDEX
-      - ELASTICSEARCH_SPARSE_INDEX
+      - ELASTICSEARCH_INDEX
+      - ELASTICSEARCH_ALIAS
+      - EMBEDDING_PROVIDER
+      - EMBEDDING_MODEL
+      - EMBEDDING_DEVICE
+      - EMBEDDING_CACHE_DIR
+      - EMBEDDING_MAX_LENGTH
+      - EMBEDDING_DIMS
+      - EMBEDDING_ONNX_MODEL_PATH
+      - EMBEDDING_ONNX_TOKENIZER_PATH
+      - HF_HUB_DISABLE_SYMLINKS_WARNING
+      - DENSE_NUM_CANDIDATES_FACTOR
+      - DENSE_MIN_NUM_CANDIDATES
       - NEO4J_URI
       - NEO4J_USER
       - NEO4J_PASSWORD
       - NEO4J_DATABASE
       - GOOGLE_APPLICATION_CREDENTIALS
+      - OCR_PROVIDER
+      - OCR_MAX_FILE_MB
+      - OCR_MAX_PDF_PAGES
+      - OCR_ALLOWED_MIME_TYPES
+      - OCR_LANGUAGE_HINTS
       - RERANK_PROVIDER
       - RERANK_MODEL
       - VOYAGE_API_KEY
@@ -70,6 +86,7 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./credentials:/app/credentials:ro
+      - ./hf-cache:/app/.cache/huggingface
     healthcheck:
       test:
         [

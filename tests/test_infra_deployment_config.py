@@ -29,6 +29,7 @@ def test_production_compose_manages_only_app_services() -> None:
     assert "ELASTICSEARCH_SPARSE_INDEX" not in compose
     assert "external: true" in compose
     assert "name: vietlegal_net" in compose
+    assert '"127.0.0.1:${BACKEND_PORT:-8000}:8000"' in compose
 
 
 def test_frontend_has_nginx_container_definition() -> None:
@@ -40,6 +41,19 @@ def test_frontend_has_nginx_container_definition() -> None:
     assert (ROOT / "src/frontend/nginx.conf").is_file()
     assert "resolver 127.0.0.11" in nginx
     assert "proxy_pass $backend_upstream" in nginx
+    assert "limit_req_zone" in nginx
+    assert "limit_req zone=api" in nginx
+    assert "gzip on;" in nginx
+    assert "X-Content-Type-Options" in nginx
+    assert "Cache-Control" in nginx
+
+
+def test_frontend_dockerfile_copies_only_public_assets() -> None:
+    dockerfile = read("src/frontend/Dockerfile")
+
+    assert "COPY src/frontend/ /usr/share/nginx/html/" not in dockerfile
+    for asset in ("*.html", "*.css", "*.js", "*.svg"):
+        assert asset in dockerfile
 
 
 def test_deploy_workflow_rebuilds_all_app_services() -> None:
@@ -48,6 +62,18 @@ def test_deploy_workflow_rebuilds_all_app_services() -> None:
     assert "up -d --no-deps backend" in workflow
     assert "up -d --no-deps frontend" in workflow
     assert "up --build -d" not in workflow
+    assert "Waiting for backend health" in workflow
+    assert "curl --fail --silent --show-error" in workflow
+
+
+def test_ci_runs_lint_and_blocks_tracked_env_files() -> None:
+    workflow = read(".github/workflows/ci.yml")
+
+    assert "ruff check" in workflow
+    assert "git ls-files '*.env'" in workflow
+    assert "!*.env.example" in read(".gitignore")
+    assert "https://download.pytorch.org/whl/cpu" in workflow
+    assert "grep -v '^torch==' src/backend/requirements.txt" in workflow
 
 
 def test_neo4j_setup_script_is_destructive_but_guarded() -> None:
@@ -87,10 +113,21 @@ def test_backend_requirements_are_installable_and_include_runtime_clients() -> N
     assert "elasticsearch" in requirements
     assert "openai" in requirements
     assert "voyageai" in requirements
+    assert "torch" in requirements
+    assert "transformers" in requirements
+    assert "pypdf" in requirements
     for line in requirements.splitlines():
         if not line or line.startswith("#"):
             continue
         assert re.match(r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[0-9][A-Za-z0-9_.!+-]*$", line), line
+
+
+def test_backend_dockerfile_uses_cpu_torch_wheel() -> None:
+    dockerfile = read("src/backend/Dockerfile")
+
+    assert "https://download.pytorch.org/whl/cpu" in dockerfile
+    assert "grep -v '^torch==' /tmp/requirements.txt" in dockerfile
+    assert "pip install --no-cache-dir -r /tmp/requirements.txt" not in dockerfile
 
 
 def test_production_env_uses_single_hybrid_elasticsearch_index() -> None:
@@ -305,3 +342,33 @@ def test_dense_shard_path_resolves_manifest_filenames_under_artifact_subdirs(tmp
         )
         == vector_file
     )
+
+
+def test_env_examples_do_not_reintroduce_retired_backend_keys() -> None:
+    retired = {
+        "ELASTICSEARCH_DENSE_INDEX",
+        "ELASTICSEARCH_SPARSE_INDEX",
+        "DEFAULT_RETRIEVAL_MODE",
+        "DEFAULT_TEMPERATURE",
+        "BACKEND_HOST",
+        "RERANK_DEVICE",
+        "RERANK_TIMEOUT_MS",
+    }
+    for path in (
+        ".env.example",
+        "src/infra/.env.example",
+        "src/infra/production.env.example",
+    ):
+        content = read(path)
+        for key in retired:
+            assert f"{key}=" not in content, f"{key} should not appear in {path}"
+
+
+def test_hf_cache_is_ignored_and_warning_suppressed_in_examples() -> None:
+    assert "src/infra/hf-cache/" in read(".gitignore")
+    for path in (
+        ".env.example",
+        "src/infra/.env.example",
+        "src/infra/production.env.example",
+    ):
+        assert "HF_HUB_DISABLE_SYMLINKS_WARNING=1" in read(path)

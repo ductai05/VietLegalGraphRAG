@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from verify_neo4j import (
     EXPECTED_LEGAL_RELATIONS,
     REQUIRED_LABELS,

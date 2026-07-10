@@ -21,7 +21,21 @@ const chatInput = document.querySelector("#chat-input");
 const messageList = document.querySelector("#message-list");
 const promptButtons = document.querySelectorAll("[data-prompt]");
 const handoffButtons = document.querySelectorAll("[data-handoff]");
-const API_BASE = window.AURORA_API_BASE || "/api";
+const ocrForm = document.querySelector("#ocr-form");
+const ocrFile = document.querySelector("#ocr-file");
+const REQUEST_TIMEOUT_MS = 30000;
+const API_BASE = resolveApiBase();
+
+function resolveApiBase() {
+  if (window.AURORA_API_BASE) {
+    return window.AURORA_API_BASE;
+  }
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") {
+    return "http://localhost:8000";
+  }
+  return "/api";
+}
 
 const revealItems = document.querySelectorAll(".reveal");
 
@@ -146,7 +160,7 @@ function scrollMessages() {
 }
 
 async function requestAnswer(text) {
-  const response = await fetch(`${API_BASE}/answer`, {
+  const response = await fetchWithTimeout(`${API_BASE}/answer`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -177,11 +191,44 @@ async function requestAnswer(text) {
     })
   });
 
+  await ensureOk(response);
+  return response.json();
+}
+
+async function requestOcr(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetchWithTimeout(`${API_BASE}/documents/ocr`, {
+    method: "POST",
+    body: formData
+  });
+  await ensureOk(response);
+  return response.json();
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("request.timeout");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function ensureOk(response) {
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Backend returned ${response.status}`);
   }
-  return response.json();
 }
 
 async function sendMessage(text) {
@@ -207,8 +254,11 @@ async function sendMessage(text) {
     scrollMessages();
   } catch (error) {
     typing.remove();
+    const message = error.message === "request.timeout"
+      ? "The API request timed out. Please try again with a shorter question."
+      : "Backend is unavailable. Please try again after the API service is running.";
     messageList.appendChild(createMessage(
-      "Backend is unavailable. Please try again after the API service is running.",
+      message,
       "assistant",
       false,
       { trace: { runtime: "offline", execution_mode: "request_failed" } }
@@ -233,11 +283,69 @@ function requestHandoff() {
   window.setTimeout(() => {
     typing.remove();
     messageList.appendChild(createMessage(
-      "Understood. Flagging this matter for attorney handoff now. Someone will pick up the full conversation history, so you will not need to repeat yourself.",
+      "This handoff is demo only. In production, this action must call a reviewed attorney workflow before any human follow-up is promised.",
       "assistant"
     ));
     scrollMessages();
   }, 650);
+}
+
+function renderOcrPreview(payload) {
+  if (!messageList) {
+    return;
+  }
+  const article = document.createElement("article");
+  article.className = "message assistant-message";
+
+  const avatar = document.createElement("img");
+  avatar.src = "aurora-sprite.svg";
+  avatar.alt = "";
+  avatar.width = 40;
+  avatar.height = 40;
+  article.appendChild(avatar);
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+
+  const title = document.createElement("p");
+  title.textContent = "OCR extracted text preview";
+  bubble.appendChild(title);
+
+  const preview = document.createElement("pre");
+  preview.className = "ocr-preview";
+  preview.textContent = payload.text || "No text was extracted.";
+  bubble.appendChild(preview);
+
+  article.appendChild(bubble);
+  messageList.appendChild(article);
+  scrollMessages();
+}
+
+async function submitOcrUpload(event) {
+  event.preventDefault();
+  if (!ocrFile || !ocrFile.files || !ocrFile.files[0] || !messageList) {
+    return;
+  }
+  const file = ocrFile.files[0];
+  messageList.appendChild(createMessage(`Upload OCR file: ${file.name}`, "user"));
+  const typing = createMessage("", "assistant", true);
+  messageList.appendChild(typing);
+  scrollMessages();
+  try {
+    const payload = await requestOcr(file);
+    typing.remove();
+    renderOcrPreview(payload);
+  } catch (error) {
+    typing.remove();
+    const message = error.message === "request.timeout"
+      ? "The API request timed out while processing OCR."
+      : "OCR is unavailable or rejected this file.";
+    messageList.appendChild(createMessage(message, "assistant"));
+    scrollMessages();
+    console.error(error);
+  } finally {
+    ocrForm.reset();
+  }
 }
 
 if (chatForm && chatInput) {
@@ -266,3 +374,7 @@ promptButtons.forEach((button) => {
 handoffButtons.forEach((button) => {
   button.addEventListener("click", requestHandoff);
 });
+
+if (ocrForm) {
+  ocrForm.addEventListener("submit", submitOcrUpload);
+}

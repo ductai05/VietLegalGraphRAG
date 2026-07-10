@@ -1,0 +1,15 @@
+meta {
+  name: 08 OCR Upload
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/documents/ocr
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  file: @file({{ocrFile}})
+}

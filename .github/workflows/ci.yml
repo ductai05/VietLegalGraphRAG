@@ -29,8 +29,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f src/backend/requirements.txt ]; then pip install -r src/backend/requirements.txt; fi
-          pip install pytest pytest-asyncio anyio httpx
+          if [ -f src/backend/requirements.txt ]; then
+            grep -v '^torch==' src/backend/requirements.txt > /tmp/backend-requirements-no-torch.txt
+            pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+            pip install -r /tmp/backend-requirements-no-torch.txt
+          fi
+          pip install pytest pytest-asyncio anyio httpx ruff
+
+      - name: Block tracked env files
+        run: |
+          tracked_env="$(git ls-files '*.env' '.env.*' ':!:*.env.example' ':!:**/*.env.example')"
+          if [ -n "$tracked_env" ]; then
+            echo "Tracked non-example env files are not allowed:"
+            echo "$tracked_env"
+            exit 1
+          fi
+
+      - name: Run Ruff
+        run: |
+          ruff check src/backend/app src/backend/services src/infra/scripts tests
 
       - name: Run Pytest
         run: |

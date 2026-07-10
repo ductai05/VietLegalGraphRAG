@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 
 from dependencies import RuntimeServices, get_runtime_services
@@ -55,6 +58,21 @@ def ocr_upload(
             status_code=415,
             detail="ocr.unsupported_media_type",
         )
+    if mime == "application/pdf":
+        try:
+            from pypdf import PdfReader
+
+            page_count = len(PdfReader(io.BytesIO(content)).pages)
+        except Exception:
+            raise HTTPException(
+                status_code=422,
+                detail="ocr.invalid_pdf",
+            )
+        if page_count > settings.ocr_max_pdf_pages:
+            raise HTTPException(
+                status_code=422,
+                detail="ocr.pdf_too_many_pages",
+            )
 
     # Process
     try:
@@ -84,9 +102,19 @@ def document_graph(
     doc_id: str,
     runtime: RuntimeServices = Depends(get_runtime_services),
 ) -> dict:
-    return runtime.graph_retriever.get_document_neighbors(doc_id).to_dict()
+    result = runtime.graph_retriever.get_document_neighbors(doc_id)
+    return result.to_dict()
 
 
 @router.get("/documents/{doc_id}/version-chain")
-def version_chain(doc_id: str) -> dict:
-    return {"doc_id": doc_id, "chain": []}
+def version_chain(
+    doc_id: str,
+    runtime: RuntimeServices = Depends(get_runtime_services),
+) -> dict:
+    chain: list[dict[str, Any]] = []
+    if getattr(runtime.graph_retriever, "enabled", True):
+        try:
+            chain = runtime.graph_retriever.get_version_chain(doc_id)
+        except Exception:
+            pass  # No secrets in errors
+    return {"doc_id": doc_id, "chain": chain}

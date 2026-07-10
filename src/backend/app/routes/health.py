@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 
 from config import get_settings
@@ -9,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/health")
-def health(runtime: RuntimeServices = Depends(get_runtime_services)) -> dict[str, str]:
+def health(runtime: RuntimeServices = Depends(get_runtime_services)) -> dict[str, Any]:
     settings = get_settings()
     degraded = any(
         value in {"fallback", "disabled"} for value in runtime.status.values()
@@ -27,13 +29,13 @@ def health(runtime: RuntimeServices = Depends(get_runtime_services)) -> dict[str
     ):
         degraded = True
     if (
-        runtime.status.get("embedding") == "disabled"
-        and settings.embedding_provider.strip().lower() not in {"", "none"}
+        runtime.status.get("ocr") == "disabled"
+        and settings.ocr_provider.strip().lower() not in {"", "none"}
     ):
         degraded = True
     if (
-        runtime.status.get("ocr") == "disabled"
-        and settings.ocr_provider.strip().lower() not in {"", "none"}
+        runtime.status.get("ocr") == "google"
+        and settings.ocr_config_invalid
     ):
         degraded = True
     status = "degraded" if degraded else "ok"
@@ -50,4 +52,5 @@ def health(runtime: RuntimeServices = Depends(get_runtime_services)) -> dict[str
         ),
         "runtime": runtime.status.get("runtime", "unknown"),
         "ocr": runtime.status.get("ocr", "unknown"),
+        "warnings": runtime.warnings,
     }
