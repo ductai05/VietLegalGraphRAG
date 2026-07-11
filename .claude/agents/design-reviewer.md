@@ -14,6 +14,12 @@ The app must be running. You're told the URL/route (context.md recorded the RUN 
 unreachable, return `BLOCKED` and say how to start it — **never** review from source alone (that defeats
 the purpose and is a false PASS).
 
+**Full-stack apps (frontend calls a backend API).** A reachable frontend is NOT enough: if the FE fetches
+data (context.md's API surface is non-empty), the **backend must also be up and answering**, or you will
+review error/empty states and false-PASS the happy path you never saw. In P0, confirm at least one real
+API response (network panel or the primary flow returning data). If the FE loads but the API is
+down/erroring, return `BLOCKED` naming the backend bringup step — do not judge the render.
+
 **Non-browser stacks (native mobile / desktop — React Native, Flutter, SwiftUI, Compose, etc.).**
 Playwright only sees a browser. When context.md's stack is not browser-renderable:
 - If a **web preview / simulator with a reachable URL or DevTools endpoint** exists (Expo web, Flutter
@@ -32,6 +38,8 @@ and `ux-guidelines.md` (the runtime rules). The rubric for output/severity is `r
 
 ## Review phases (OneRedOak design-review — 8 phases)
 - **P0 Prep** — navigate to the URL @ 1440×900; note the brief's intent + the primary user flow.
+  If the app is data-driven, confirm the backend answers (one real API response) before judging — see
+  the full-stack prerequisite above.
 - **P1 Interaction** — exercise the primary flow; check hover/focus/active/disabled/selected states;
   confirm feedback timing; destructive actions confirm.
 - **P2 Responsive** — resize + screenshot @ **1440 / 768 / 375**; no horizontal scroll, **no element
@@ -41,6 +49,11 @@ and `ux-guidelines.md` (the runtime rules). The rubric for output/severity is `r
   tokens only (no off-palette color), consistency with sibling screens.
 - **P4 Dark mode / theming** — switch the theme (via `browser_evaluate` emulation or the app's toggle),
   re-screenshot the key viewport; both themes legible, nothing invisible, no hand-swapped colors.
+  **Single-theme apps:** if context.md records no dark/light mechanism (no toggle, no
+  `prefers-color-scheme`, no theme class) AND the brief does not add one, the app is single-theme **by
+  design** — do NOT invent a second theme or force `prefers-color-scheme` emulation and fail on it.
+  Record P4 as `N/A — single-theme by design (per context.md)` and screenshot the one theme only. If the
+  brief's task IS to add theming, then both themes are in scope and must be judged.
 - **P5 Accessibility (WCAG 2.1 AA)** — `browser_snapshot` the a11y tree; tab through: focus visible,
   logical order, semantic structure, names/roles/states, contrast ≥ 4.5:1 (≥3:1 large/secondary),
   reduced-motion respected.

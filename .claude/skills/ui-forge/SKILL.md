@@ -34,6 +34,14 @@ forcing a manual re-prompt loop that burns time and tokens. ui-forge fixes all t
 Use for any user-facing UI/UX change. Skip for pure backend/data/infra/algorithm work with no visible
 surface (though ui-forge *can* drive a backend change when the UI needs new data — Step 3).
 
+**Interactivity requirement.** Steps 0 (clarify/approve) and the new-design-system / cap escalations
+depend on `AskUserQuestion`. In a **non-interactive run** (cron, headless, a scripted dry-run) those
+gates cannot get an answer — do **not** guess past them and do **not** build. Run **plan-only**: execute
+Step 1 (context) + Step 2 (brief) to produce `brief.md`, then stop and emit the open questions +
+proposed direction for a human to approve later. Resume the build once answers exist. A dry-run that
+"checks the workflow" without building takes this same plan-only path — never mutate product code to
+test the pipeline.
+
 ## Orchestration model
 You (this skill, on Opus) are the **orchestrator**. You never write product code yourself — you
 dispatch subagents, pass them **file paths** (not pasted history), read their status returns, resolve
@@ -79,7 +87,10 @@ UI/UX request
 Conversation memory does not survive context compaction or a new session; the ledger does. **First
 action:** `cat .ui-forge/progress.md` (per `handshake-protocol.md` §6/§9). If it exists:
 - Read it plus `git log --oneline` for the named commit range; reconcile what the ledger says is done
-  against git.
+  against git. **If a ledger commit ref is absent from git** (branch rebased/squashed/reset, or the work
+  was on another branch), trust **git over the ledger** — do not assume that task is done on faith of a
+  dangling ref. Verify the change is actually present (diff or file check); if it isn't, treat that step
+  as incomplete and re-run it, and note the divergence to the user.
 - Tasks/rounds marked complete are **DONE** — do **not** re-ask already-answered clarifying questions,
   do **not** re-dispatch completed steps, do **not** rebuild. Also re-read `context.md` and `brief.md`
   if present (the approved direction and clarified intent live there — don't re-run Step 0 for them).
@@ -112,7 +123,17 @@ Dispatch `ui-strategist`. Using context.md + the reference knowledge base (`styl
 `.ui-forge/brief.md`: visual register + design dials, viz-first component choices, layout/motion,
 HAVE/NEED data contract, reuse notes, anti-pattern guards, out-of-scope. **If the project has a design
 system, the brief targets its tokens; if not, the brief establishes tokens.** If the strategist
-returns `BLOCKED` (still ambiguous) → back to **Step 0**.
+returns `BLOCKED` (still ambiguous) → back to **Step 0**. **Cap the Step-0↔Step-2 bounce at 2
+round-trips:** if the strategist blocks a third time, stop re-deriving — put its exact open question to
+the user directly (`AskUserQuestion`) and don't proceed until answered. A persistent block means the
+request itself is under-defined, not that the strategist needs another try.
+
+**New-design-system confirm (ordering fix).** The Step-0 direction approval happens *before* the
+strategist exists, so a design system it **establishes** cannot have been approved there. If the brief
+records `design system: ESTABLISH new` (wrote `.ui-forge/design-system.md`), **confirm the established
+token set with the user before Step 4** — a one-line confirm of the palette/type/spacing scale (Tier-A
+weight). Only obeying an existing mature system skips this. Do not build product code against an
+unconfirmed new design system.
 
 ### Step 3 — BACKEND INTEGRATION (backend-integrator, Sonnet) — only if brief has NEED fields
 Dispatch `backend-integrator`. It detects the backend stack, extends it **additively** (typed,
@@ -121,6 +142,17 @@ returns `BLOCKED` (data genuinely unavailable) → back to **Step 0** to re-clar
 implementer fabricate data.
 
 ### Step 4 — BUILD + TWO-STAGE REVIEW LOOP (subagent-driven)
+
+**Decompose first (multi-target changes).** If the brief covers **independent** targets (several
+screens/sections/components with no shared state or ordering dependency — e.g. "redesign the results
+page AND the settings page"), split into one build+review unit **per target** rather than one giant
+implementer pass + one review over everything. Benefits: each review stays scoped and cheap, a failure
+in one target doesn't re-open the others, and independent targets can be **dispatched in parallel** (fan
+out the implementers in a single message, then their Stage-1/Stage-2 loops). Keep targets that share a
+component or a token change together (they are not independent). Record each target as its own ledger
+line. If a target is too large for one implementer pass, that's a `BLOCKED: task too large` → split it
+again. For a single-target change, skip this and run the loop once.
+
 Read `references/review-rubric.md`. **Pre-flight:** scan `brief.md` once for internal contradictions
 or anything it mandates that the rubric would treat as a defect; batch those to the user as one
 question. Clean → proceed silently. Then loop (cap ~3 rounds), continuous execution — no check-ins
@@ -147,7 +179,12 @@ between rounds:
 4. After a clean round, append to `.ui-forge/progress.md`: `Task: complete (commits <base7>..<head7>,
    spec✅ visual✅)`.
 
-If Blockers remain after ~3 rounds → **stop and report** what couldn't be resolved.
+If Blockers remain after ~3 rounds → **stop and report** what couldn't be resolved. The build's commits
+(BASE..HEAD) are still in the tree — do **not** silently leave broken UI as if done. Present the user a
+clear choice with the exact refs: (a) keep the commits on this branch and open follow-ups for the
+remaining Blockers, or (b) revert to BASE (`git revert`/reset the range) and abandon. Never auto-revert
+without asking, and never mark the ledger task `complete` — record it `blocked (N Blockers, commits
+<base7>..<head7>)`.
 
 ### Step 4.5 — FINAL WHOLE-CHANGE REVIEW (Opus)
 Dispatch ONE final review on the **most capable model** over the whole change diff, using
@@ -179,7 +216,8 @@ Confirm each with evidence:
 - [ ] Clarified intent + approved direction matched; scope minimal
 - [ ] Compliant with the project design system (tokens/components), or the newly-established one
 - [ ] Stage-1: Spec ✅ + Task quality Approved; ⚠️ items resolved
-- [ ] Stage-2: screenshots **actually taken** @ desktop+tablet+mobile, light+dark
+- [ ] Stage-2: screenshots **actually taken** @ desktop+tablet+mobile; light+dark (or dark marked
+      `N/A — single-theme by design` when context.md records no theme mechanism and the brief adds none)
 - [ ] Step 4.5 final review = Ready / fixes applied
 - [ ] A11y pass + zero console errors (verified live)
 - [ ] Existing components/tokens reused; no duplication

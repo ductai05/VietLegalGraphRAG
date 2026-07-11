@@ -56,6 +56,12 @@ Work through `design-system-discovery.md` §1–§2 and record, under clear head
 2. **RUN command** — the single most important line for Stage-2 review:
    `RUN: <exact command> → <url:port>` (how to start the app locally). Derive from scripts/config; if
    you can't determine it, say `RUN: unknown — ask user`. Include any prerequisite (install, env).
+   **Full-stack apps:** if the frontend calls a backend (you found `fetch`/API base/proxy), the FE alone
+   is useless for the visual review — record the **complete bringup**: both the FE serve command AND the
+   backend start command (+ the API base URL the FE expects), e.g.
+   `RUN: backend=<cmd> → <api-url>  ;  frontend=<cmd> → <url:port>`. A static-file FE (served by nginx,
+   opened as `file://`, or via a dev server) still needs its API up — note that dependency explicitly so
+   the reviewer doesn't judge error/empty states.
 3. **Design system** — source of truth (file path, or "implicit/none"), token inventory (color roles,
    type scale, spacing, radius, elevation policy, motion, breakpoints), light/dark mechanism, existing
    compliance rules, and **maturity** (`mature`/`partial`/`none`). Point to the file; don't copy a huge

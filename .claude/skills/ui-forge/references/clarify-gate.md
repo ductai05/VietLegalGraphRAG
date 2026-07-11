@@ -62,6 +62,7 @@ manufacture choices the request already settled. When unsure between tiers, roun
 | **State** | empty/loading/error handling? | what shows before data arrives / when none / on failure? |
 | **Register shift** | does this change the product's look? | "make it playful" on a serious app — confirm intent |
 | **Constraints** | any hard limits? | timeline, no new deps, must match an existing screen, i18n? |
+| **Conflict** | are two goals mutually exclusive? | "minimal but show all metadata at once", "dense but airy", "playful yet formal" — surface the tension, ask which wins |
 
 ## Safe to assume (don't over-ask)
 - Anything already codified in the project's design system (colors, type, spacing, radius) — obey it.
@@ -70,10 +71,13 @@ manufacture choices the request already settled. When unsure between tiers, roun
   on** rather than blocking on a trivial choice.
 
 ## Anti-hallucination checks before leaving the gate
-All three must be true — else ask, don't proceed:
+All four must be true — else ask, don't proceed:
 1. Every noun in the request maps to a real screen/component/field you can point to.
 2. You know the data source for every value to be displayed (HAVE now, or backend-integrator will add it).
 3. You know which files will change and roughly the diff size, and a direction is approved.
+4. The goals are **mutually satisfiable** — no two requirements pull against each other (see the
+   *Conflict* taxonomy row). If they do, resolve the tension with the user here; don't pass a
+   contradiction to the strategist for the Step-4 preflight to catch late.
 
 ## How to ask well
 - Options over open questions: give 2–4 concrete choices, not "what do you want?".

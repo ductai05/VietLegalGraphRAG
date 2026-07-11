@@ -30,8 +30,11 @@ design system in context.md:
 - **Mature system** → obey its tokens/components; use the register only for open judgment calls (which
   viz, how much motion, emphasis). **Never invent a competing palette.**
 - **None / partial** → establish the minimum viable system per `design-system-discovery.md` §3,
-  consistent with the register, and record it to `.ui-forge/design-system.md`. Flag that this is a new
-  system so the orchestrator can confirm it in the direction approval.
+  consistent with the register, and record it to `.ui-forge/design-system.md`. In the brief, set
+  `design system: ESTABLISH new` and **flag `NEEDS_CONFIRM: design-system`** in your status — the
+  Step-0 direction approval ran before you existed and could not have blessed these tokens, so the
+  orchestrator must confirm the established palette/type/spacing with the user **before** the build
+  step. Never assume an established system is pre-approved.
 
 ### Step 3 — Viz-first information design
 Read `chart-catalog.md` + `ux-guidelines.md` (Priority 10 + 6). For **every** datum the request shows,
