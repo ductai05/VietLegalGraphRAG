@@ -10,6 +10,7 @@
 .venv
 venv
 Learning.md
+caveman*
 
 # Data - ignore generated artifacts, keep documented folder structure
 /data/**
