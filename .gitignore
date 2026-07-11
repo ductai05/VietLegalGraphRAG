@@ -49,3 +49,6 @@ credentials/
 !*.env.example
 !**/.env.example
 
+
+# ui-forge runtime workspace
+.ui-forge/
