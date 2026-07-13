@@ -23,7 +23,6 @@ Then in docker-compose or .env:
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -115,7 +114,7 @@ def export(
             )
         shutil.copy(str(candidates[0]), str(tokenizer_json_path))
 
-    print(f"Done. Files written:")
+    print("Done. Files written:")
     for f in sorted(output_dir.iterdir()):
         if f.is_file():
             print(f"  {f.name}: {f.stat().st_size / 1024 / 1024:.1f} MB")
