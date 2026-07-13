@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from verify_neo4j import (
+import pytest
+
+pytest.importorskip("neo4j")
+
+from verify_neo4j import (  # noqa: E402
     EXPECTED_LEGAL_RELATIONS,
     REQUIRED_LABELS,
     VerificationReport,

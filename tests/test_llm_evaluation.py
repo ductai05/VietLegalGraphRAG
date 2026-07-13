@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ftfy import fix_text
+import pytest
+
+pytest.importorskip("ftfy")
+
+from ftfy import fix_text  # noqa: E402
 
 from evaluate_llm import GroqKeyPool, build_context, parse_response, summarize
 

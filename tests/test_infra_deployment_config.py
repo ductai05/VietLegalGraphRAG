@@ -113,7 +113,7 @@ def test_backend_requirements_are_installable_and_include_runtime_clients() -> N
     assert "elasticsearch" in requirements
     assert "openai" in requirements
     assert "voyageai" in requirements
-    assert "torch" in requirements
+    assert "onnxruntime" in requirements
     assert "transformers" in requirements
     assert "pypdf" in requirements
     for line in requirements.splitlines():
@@ -122,12 +122,13 @@ def test_backend_requirements_are_installable_and_include_runtime_clients() -> N
         assert re.match(r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[0-9][A-Za-z0-9_.!+-]*$", line), line
 
 
-def test_backend_dockerfile_uses_cpu_torch_wheel() -> None:
+def test_backend_dockerfile_uses_onnx_runtime() -> None:
     dockerfile = read("src/backend/Dockerfile")
 
-    assert "https://download.pytorch.org/whl/cpu" in dockerfile
-    assert "grep -v '^torch==' /tmp/requirements.txt" in dockerfile
-    assert "pip install --no-cache-dir -r /tmp/requirements.txt" not in dockerfile
+    assert "ONNX Runtime" in dockerfile
+    assert "https://download.pytorch.org/whl/cpu" not in dockerfile
+    assert "pip install --no-cache-dir -r /tmp/requirements.txt" in dockerfile
+    assert "COPY onnx_model/ /app/onnx_model/" in dockerfile
 
 
 def test_production_env_uses_single_hybrid_elasticsearch_index() -> None:
