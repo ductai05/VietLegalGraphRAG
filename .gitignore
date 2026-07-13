@@ -30,6 +30,10 @@ venv/
 /app/.next/
 /app/dist/
 
+# Frontend (React/Vite) build artifacts
+/src/frontend/node_modules/
+/src/frontend/dist/
+
 # Kaggle temp files
 /kaggle/
 
