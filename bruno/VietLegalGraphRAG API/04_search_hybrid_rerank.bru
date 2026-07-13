@@ -1,0 +1,38 @@
+meta {
+  name: 04 Search Hybrid Rerank
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "dieu kien ket hon theo phap luat Viet Nam",
+    "retrieval_mode": "hybrid",
+    "top_k": 2,
+    "rerank": {
+      "enabled": true,
+      "model": "rerank-2.5",
+      "candidate_k": 4,
+      "batch_size": 2
+    },
+    "graph": {
+      "enabled": false,
+      "use_lightrag": false,
+      "max_hops": 0
+    },
+    "llm": {
+      "temperature": 0.2,
+      "max_context_chunks": 3
+    }
+  }
+}

@@ -41,6 +41,7 @@ venv/
 
 # Google Cloud Vision credentials (never commit service-account JSON)
 credentials/
+src/infra/hf-cache/
 /docs/superpowers
 # Ignore all env files
 *.env

@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 import functools
 
-from src.normalizer import fold_vietnamese, text_value
+try:
+    from src.normalizer import fold_vietnamese, text_value
+except ModuleNotFoundError:
+    from normalizer import fold_vietnamese, text_value
 
 _WORD_TOKENIZE = None
 

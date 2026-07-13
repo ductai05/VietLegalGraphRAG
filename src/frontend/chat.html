@@ -44,7 +44,7 @@
           </div>
         </dl>
         <div class="side-support">
-          <p>Stuck, or need a real human? Aurora can hand this matter off any time.</p>
+          <p>Stuck, or need a real human? Aurora can mark this matter for a demo handoff review.</p>
           <button class="button button-secondary button-small" type="button" data-handoff>Request Handoff</button>
         </div>
       </div>
@@ -89,6 +89,12 @@
         <button type="button" data-handoff>Talk to a human</button>
       </div>
 
+      <form class="ocr-form" id="ocr-form">
+        <label for="ocr-file">OCR file</label>
+        <input id="ocr-file" name="file" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+        <button class="button button-secondary button-small" type="submit">Extract Text</button>
+      </form>
+
       <form class="composer" id="chat-form">
         <label class="sr-only" for="chat-input">Message Aurora</label>
         <input id="chat-input" name="message" type="text" autocomplete="off" placeholder="Message Aurora">
@@ -97,6 +103,13 @@
     </section>
   </main>
 
+  <script>
+    window.AURORA_API_BASE = window.AURORA_API_BASE || (
+      ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://localhost:8000"
+        : "/api"
+    );
+  </script>
   <script src="app.js"></script>
 </body>
 </html>

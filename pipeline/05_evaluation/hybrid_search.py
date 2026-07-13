@@ -17,6 +17,7 @@ import numpy as np
 for _key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
     os.environ.pop(_key, None)
 
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PIPELINE_DIR = Path(__file__).resolve().parents[1]
 DENSE_SRC = PIPELINE_DIR / "03_embeddings" / "dense" / "src"
 SPARSE_SRC = PIPELINE_DIR / "03_embeddings" / "sparse" / "src"
@@ -30,6 +31,24 @@ from elasticsearch_common import build_elasticsearch_filter, resolve_num_candida
 from elastic_client import build_elasticsearch_client
 from tokenizer import tokenize_vi
 from rerank import DEFAULT_RERANKER_MODEL, BaseReranker, PassageLoader, create_reranker
+
+DEFAULT_HYBRID_QUERY = "thủ tục cấp giấy phép xây dựng"
+DEFAULT_RRF_K = 60
+
+
+def load_env_file(path: Path | None) -> None:
+    if path is None or not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key:
+                os.environ[key] = value
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -119,6 +138,60 @@ def summarize(details: list[dict[str, Any]], k_values: list[int], prefix: str = 
     return summary
 
 
+def fuse_ranked_hits(
+    dense_hits: Sequence[dict[str, Any]],
+    sparse_hits: Sequence[dict[str, Any]],
+    *,
+    candidate_k: int,
+    rrf_k: int = DEFAULT_RRF_K,
+) -> list[dict[str, Any]]:
+    rrf_scores: dict[str, float] = {}
+    merged_payloads: dict[str, dict[str, Any]] = {}
+    dense_scores: dict[str, float] = {}
+    sparse_scores: dict[str, float] = {}
+    retrieval_sources: dict[str, set[str]] = {}
+
+    def add_hit(hit: dict[str, Any], source: str) -> None:
+        chunk_id = str(hit["chunk_id"])
+        rank = int(hit["rank"])
+        if rank <= 0:
+            raise ValueError("RRF ranks must be 1-based positive integers")
+        score = float(hit.get("score") or 0.0)
+        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+        retrieval_sources.setdefault(chunk_id, set()).add(source)
+        if source == "dense":
+            dense_scores[chunk_id] = score
+        else:
+            sparse_scores[chunk_id] = score
+        if chunk_id not in merged_payloads:
+            merged_payloads[chunk_id] = dict(hit.get("payload") or {})
+        else:
+            merged_payloads[chunk_id].update(hit.get("payload") or {})
+
+    for hit in dense_hits:
+        add_hit(hit, "dense")
+    for hit in sparse_hits:
+        add_hit(hit, "sparse")
+
+    sorted_chunk_ids = sorted(rrf_scores.keys(), key=lambda item: rrf_scores[item], reverse=True)
+    candidates = []
+    for chunk_id in sorted_chunk_ids[:candidate_k]:
+        payload = merged_payloads[chunk_id]
+        candidates.append(
+            {
+                "chunk_id": chunk_id,
+                "score": rrf_scores[chunk_id],
+                "dense_score": dense_scores.get(chunk_id, 0.0),
+                "sparse_score": sparse_scores.get(chunk_id, 0.0),
+                "retrieval_sources": sorted(retrieval_sources.get(chunk_id, set())),
+                "payload": payload,
+                "citation": format_citation(payload),
+                "optional_expanded_context": None,
+            }
+        )
+    return candidates
+
+
 class HybridRetriever:
     def __init__(
         self,
@@ -202,7 +275,7 @@ class HybridRetriever:
                 dense_hits.append({
                     "chunk_id": str(chunk_id),
                     "score": float(hit.get("_score") or 0.0),
-                    "rank": idx,
+                    "rank": idx + 1,
                     "payload": payload
                 })
 
@@ -256,36 +329,24 @@ class HybridRetriever:
                 sparse_hits.append({
                     "chunk_id": str(chunk_id),
                     "score": float(hit.get("_score") or 0.0),
-                    "rank": idx,
+                    "rank": idx + 1,
                     "payload": payload
                 })
 
         # 3. Reciprocal Rank Fusion (RRF)
-        rrf_scores: dict[str, float] = {}
-        merged_payloads: dict[str, dict[str, Any]] = {}
-        dense_scores_dict: dict[str, float] = {}
-        sparse_scores_dict: dict[str, float] = {}
-
-        for hit in dense_hits:
-            chunk_id = hit["chunk_id"]
-            dense_scores_dict[chunk_id] = hit["score"]
-            rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + hit["rank"])
-            merged_payloads[chunk_id] = hit["payload"]
-
-        for hit in sparse_hits:
-            chunk_id = hit["chunk_id"]
-            sparse_scores_dict[chunk_id] = hit["score"]
-            rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + hit["rank"])
-            if chunk_id not in merged_payloads:
-                merged_payloads[chunk_id] = hit["payload"]
-            else:
-                merged_payloads[chunk_id].update(hit["payload"])
-
-        # Sort all candidates by RRF score descending
-        sorted_chunk_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+        candidates = fuse_ranked_hits(
+            dense_hits,
+            sparse_hits,
+            candidate_k=candidate_k,
+            rrf_k=rrf_k,
+        )
 
         # Hydrate missing metadata/chunk_text using mget from the sparse index
-        missing_ids = [cid for cid in sorted_chunk_ids[:candidate_k] if not merged_payloads[cid].get("chunk_text")]
+        missing_ids = [
+            hit["chunk_id"]
+            for hit in candidates
+            if not hit["payload"].get("chunk_text")
+        ]
         if missing_ids:
             try:
                 mget_res = self.client.mget(
@@ -296,36 +357,40 @@ class HybridRetriever:
                 for doc in mget_res.get("docs", []):
                     if doc.get("found"):
                         cid = doc["_id"]
-                        merged_payloads[cid].update(doc["_source"])
+                        for hit in candidates:
+                            if hit["chunk_id"] == cid:
+                                hit["payload"].update(doc["_source"])
+                                hit["citation"] = format_citation(hit["payload"])
+                                break
             except Exception as e:
                 logging.warning("Failed to hydrate missing chunk metadata via mget: %s", e)
-
-        candidates = []
-        for chunk_id in sorted_chunk_ids[:candidate_k]:
-            candidates.append({
-                "chunk_id": chunk_id,
-                "score": rrf_scores[chunk_id],  # Primary score
-                "dense_score": dense_scores_dict.get(chunk_id, 0.0),
-                "sparse_score": sparse_scores_dict.get(chunk_id, 0.0),
-                "payload": merged_payloads[chunk_id],
-                "citation": format_citation(merged_payloads[chunk_id]),
-                "optional_expanded_context": None,
-            })
 
         return candidates
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--env-file", type=Path, default=None)
+    pre_args, _ = pre_parser.parse_known_args(argv)
+    load_env_file(pre_args.env_file)
+
+    default_index = (
+        os.getenv("ELASTICSEARCH_ALIAS")
+        or os.getenv("ELASTICSEARCH_INDEX")
+        or COLLECTION_NAME
+    )
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True, help="Elasticsearch URL")
-    parser.add_argument("--api-key", default=None, help="Elasticsearch API key")
-    parser.add_argument("--username", default=None, help="Elasticsearch username")
-    parser.add_argument("--password", default=None, help="Elasticsearch password")
-    parser.add_argument("--dense-index", default=COLLECTION_NAME, help="Dense vector index name")
-    parser.add_argument("--sparse-index", default="vietlegal_chunks_sparse_current", help="Sparse index name")
+    parser.add_argument("--env-file", type=Path, default=pre_args.env_file)
+    parser.add_argument("--url", default=os.getenv("ELASTICSEARCH_URL") or os.getenv("ELASTIC_URL"), help="Elasticsearch URL")
+    parser.add_argument("--api-key", default=os.getenv("ELASTICSEARCH_API_KEY") or os.getenv("ELASTIC_API_KEY"), help="Elasticsearch API key")
+    parser.add_argument("--username", default=os.getenv("ELASTICSEARCH_USERNAME") or os.getenv("ELASTIC_USERNAME"), help="Elasticsearch username")
+    parser.add_argument("--password", default=os.getenv("ELASTICSEARCH_PASSWORD") or os.getenv("ELASTIC_PASSWORD"), help="Elasticsearch password")
+    parser.add_argument("--index", default=None, help="Single hybrid index/alias to use for both dense and sparse search")
+    parser.add_argument("--dense-index", default=None, help="Dense vector index name")
+    parser.add_argument("--sparse-index", default=None, help="Sparse text index name")
     
     # Modes
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group()
     group.add_argument("--query", help="Single query string to test search")
     group.add_argument("--gold", type=Path, help="Path to gold evaluation json file")
     
@@ -333,6 +398,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunks", type=Path, default=None, help="Path to chunks.parquet to hydrate full metadata")
     parser.add_argument("--candidate-k", type=int, default=100, help="RRF candidate pool size")
     parser.add_argument("--top-k", type=int, default=10, help="Final return top_k")
+    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K, help="RRF rank constant. Higher values soften rank differences.")
+    parser.add_argument("--elastic-num-candidates", type=int, default=None, help="Elasticsearch kNN num_candidates override")
     parser.add_argument("--k-values", type=int, nargs="+", default=[1, 3, 5, 10], help="List of k values for evaluation metrics")
     parser.add_argument("--rerank", action="store_true", help="Enable cross-encoder reranking")
     parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL, help="Hugging Face reranker model name")
@@ -340,8 +407,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "hybrid_eval_results.json", help="Path to save evaluation output results JSON")
-    
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.index:
+        args.dense_index = args.index
+        args.sparse_index = args.index
+    else:
+        args.dense_index = args.dense_index or default_index
+        args.sparse_index = args.sparse_index or default_index
+    if args.query is None and args.gold is None:
+        args.query = DEFAULT_HYBRID_QUERY
+    if not args.url:
+        raise ValueError("Missing Elasticsearch URL. Set ELASTICSEARCH_URL or pass --url.")
+    if not args.api_key and not (args.username and args.password):
+        raise ValueError(
+            "Missing Elasticsearch credentials. Set ELASTICSEARCH_API_KEY "
+            "or ELASTICSEARCH_USERNAME/ELASTICSEARCH_PASSWORD."
+        )
+    if args.candidate_k <= 0:
+        raise ValueError("--candidate-k must be positive")
+    if args.top_k <= 0:
+        raise ValueError("--top-k must be positive")
+    if args.rrf_k <= 0:
+        raise ValueError("--rrf-k must be positive")
+    if args.elastic_num_candidates is not None and args.elastic_num_candidates <= 0:
+        raise ValueError("--elastic-num-candidates must be positive")
+    if args.rerank and args.candidate_k <= args.top_k:
+        raise ValueError("--candidate-k must be greater than --top-k when --rerank is enabled")
+    if args.rerank_batch_size <= 0:
+        raise ValueError("--rerank-batch-size must be positive")
+    return args
 
 
 def convert_to_gold_jsonl(eval_file: Path, chunks_file: Path | None = None) -> Path:
@@ -383,6 +477,7 @@ def main() -> None:
         password=args.password,
         device=args.device,
         cache_dir=args.cache_dir,
+        elastic_num_candidates=args.elastic_num_candidates,
     )
 
     try:
@@ -391,7 +486,8 @@ def main() -> None:
             print(f"\nQuerying: {args.query}")
             candidates = retriever.hybrid_search(
                 args.query,
-                candidate_k=args.candidate_k
+                candidate_k=args.candidate_k,
+                rrf_k=args.rrf_k,
             )
             print(f"Retrieved {len(candidates)} candidates via RRF.")
             
@@ -439,7 +535,8 @@ def main() -> None:
                 candidates = retriever.hybrid_search(
                     row["query"],
                     filters=row.get("filters"),
-                    candidate_k=args.candidate_k
+                    candidate_k=args.candidate_k,
+                    rrf_k=args.rrf_k,
                 )
 
                 rrf_hits = candidates[:max(args.k_values)]
@@ -493,6 +590,16 @@ def main() -> None:
                 **summarize(details, args.k_values),
                 "rrf_metrics": summarize(details, args.k_values, prefix="rrf_"),
                 "rerank_enabled": args.rerank,
+                "reranker_model": args.reranker_model if args.rerank else None,
+                "rrf_strategy": {
+                    "dense_index": args.dense_index,
+                    "sparse_index": args.sparse_index,
+                    "candidate_k": args.candidate_k,
+                    "rrf_k": args.rrf_k,
+                    "elastic_num_candidates": args.elastic_num_candidates,
+                    "fusion": "RRF score = sum(1 / (rrf_k + 1-based rank)) over dense and sparse result lists",
+                    "rerank_input": "top candidate_k RRF candidates",
+                },
                 "details": details
             }
 
