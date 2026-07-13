@@ -169,23 +169,23 @@ def build_hybrid_index_definition(
         raise ValueError("number_of_replicas cannot be negative")
 
     properties: dict[str, Any] = {
-        field: keyword_mapping() for field in sorted(KEYWORD_FIELDS)
+        field_name: keyword_mapping() for field_name in sorted(KEYWORD_FIELDS)
     }
     properties["document_number_norm"] = {
         "type": "keyword",
         "normalizer": "lowercase_norm",
         "ignore_above": 8192,
     }
-    for field in TEXT_FIELDS:
-        properties[field] = standard_text_mapping()
-    for field in VI_TEXT_FIELDS:
-        properties[field] = vi_text_mapping()
-    for field in BOOLEAN_FIELDS:
-        properties[field] = {"type": "boolean"}
-    for field in INTEGER_FIELDS:
-        properties[field] = {"type": "integer"}
-    for field in DATE_FIELDS:
-        properties[field] = {"type": "date", "ignore_malformed": True}
+    for field_name in TEXT_FIELDS:
+        properties[field_name] = standard_text_mapping()
+    for field_name in VI_TEXT_FIELDS:
+        properties[field_name] = vi_text_mapping()
+    for field_name in BOOLEAN_FIELDS:
+        properties[field_name] = {"type": "boolean"}
+    for field_name in INTEGER_FIELDS:
+        properties[field_name] = {"type": "integer"}
+    for field_name in DATE_FIELDS:
+        properties[field_name] = {"type": "date", "ignore_malformed": True}
     properties["vector"] = {
         "type": "dense_vector",
         "dims": vector_dims,
@@ -280,24 +280,24 @@ def _normalize_sparse_source(
 ) -> dict[str, Any]:
     source: dict[str, Any] = {}
     truncated_fields: list[str] = []
-    for field in SOURCE_FIELDS:
-        value = json_ready(row.get(field))
+    for field_name in SOURCE_FIELDS:
+        value = json_ready(row.get(field_name))
         if value is None:
             continue
-        if field in BOOLEAN_FIELDS:
-            value = _coerce_bool(field, value)
-        elif field in INTEGER_FIELDS:
+        if field_name in BOOLEAN_FIELDS:
+            value = _coerce_bool(field_name, value)
+        elif field_name in INTEGER_FIELDS:
             value = int(value)
         elif (
             max_text_chars is not None
             and max_text_chars > 0
-            and field in TEXT_FIELDS | VI_TEXT_FIELDS
+            and field_name in TEXT_FIELDS | VI_TEXT_FIELDS
             and isinstance(value, str)
             and len(value) > max_text_chars
         ):
             value = value[:max_text_chars]
-            truncated_fields.append(field)
-        source[field] = value
+            truncated_fields.append(field_name)
+        source[field_name] = value
     if truncated_fields:
         source["ingest_truncated_fields"] = truncated_fields
     return source

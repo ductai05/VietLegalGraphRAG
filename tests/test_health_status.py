@@ -126,7 +126,7 @@ def test_health_exposes_embedding_and_dense_retrieval_when_configured(monkeypatc
             "reranker": "noop",
             "neo4j": "configured",
             "llm": "extractive",
-            "embedding": "voyage",
+            "embedding": "local-hf",
             "dense_retrieval": "configured",
             "runtime": "configured",
         }
@@ -135,15 +135,14 @@ def test_health_exposes_embedding_and_dense_retrieval_when_configured(monkeypatc
     payload = client.get("/health").json()
 
     assert payload["status"] == "ok"
-    assert payload["embedding"] == "voyage"
+    assert payload["embedding"] == "local-hf"
     assert payload["dense_retrieval"] == "configured"
     get_settings.cache_clear()
 
 
-def test_health_exposes_disabled_dense_when_not_configured(monkeypatch) -> None:
+def test_health_exposes_disabled_dense_when_startup_disables_it(monkeypatch) -> None:
     monkeypatch.setenv("RERANK_PROVIDER", "noop")
     monkeypatch.setenv("LLM_PROVIDER", "extractive")
-    monkeypatch.setenv("EMBEDDING_PROVIDER", "none")
     from config import get_settings
 
     get_settings.cache_clear()
@@ -177,7 +176,6 @@ def test_health_reports_disabled_dense_for_mapping_failures(
 ) -> None:
     monkeypatch.setenv("RERANK_PROVIDER", "noop")
     monkeypatch.setenv("LLM_PROVIDER", "extractive")
-    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
     from config import get_settings
 
     get_settings.cache_clear()

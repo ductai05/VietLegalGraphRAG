@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,6 +57,36 @@ def test_settings_reads_runtime_provider_environment(monkeypatch) -> None:
     assert settings.llm_base_url == "https://llm.example/v1"
     assert settings.llm_api_key == "llm-key"
     assert settings.llm_model == "legal-model"
+    assert settings.embedding_model == "darklethelong/vnlegal-lal"
+    assert settings.embedding_device == "auto"
+    assert settings.embedding_max_length == 1024
+
+
+def test_backend_imports_with_app_path_only() -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(BACKEND_APP)
+    for key in (
+        "ELASTICSEARCH_URL",
+        "ELASTICSEARCH_API_KEY",
+        "ELASTICSEARCH_USERNAME",
+        "ELASTICSEARCH_PASSWORD",
+        "VOYAGE_API_KEY",
+        "LLM_API_KEY",
+        "NEO4J_PASSWORD",
+    ):
+        env.pop(key, None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import main; print(main.app.title)"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "VietLegalGraphRAG API" in result.stdout
 
 
 def test_settings_dense_num_candidates_defaults(monkeypatch) -> None:

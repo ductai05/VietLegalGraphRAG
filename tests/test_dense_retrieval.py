@@ -13,6 +13,7 @@ for path in (BACKEND_APP, BACKEND_SERVICES):
 
 from contracts import RetrievalHit  # noqa: E402
 from elasticsearch_retriever import (  # noqa: E402
+    ElasticsearchGraphChunkFetcher,
     ElasticsearchDenseRetriever,
     ElasticsearchTextRetriever,
 )
@@ -144,6 +145,47 @@ def test_dense_and_sparse_hit_shapes_match() -> None:
     assert dense_hit.citation == sparse_hit.citation
     assert dense_hit.scores == {"dense": 1.5}
     assert sparse_hit.scores == {"bm25": 1.5}
+
+
+def test_graph_chunk_fetcher_returns_graph_answer_contexts() -> None:
+    client = Mock()
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {
+                    "_id": "chunk-related",
+                    "_score": 7.0,
+                    "_source": {
+                        "chunk_id": "chunk-related",
+                        "doc_id": "doc-related",
+                        "title": "Related Law",
+                        "document_number": "99/2026/QH",
+                        "chunk_text": "related legal text",
+                        "section_path": ["Dieu 9"],
+                    },
+                }
+            ]
+        }
+    }
+    fetcher = ElasticsearchGraphChunkFetcher(client, index="vietlegal_chunks")
+
+    contexts = fetcher(
+        "căn cứ của văn bản",
+        [{"doc_id": "doc-related", "relation": "CITES", "raw_label": "Căn cứ"}],
+    )
+
+    assert len(contexts) == 1
+    assert contexts[0].source == "graph"
+    assert contexts[0].chunk_id == "chunk-related"
+    assert contexts[0].doc_id == "doc-related"
+    assert contexts[0].relation == "CITES"
+    assert contexts[0].raw_label == "Căn cứ"
+
+    kwargs = client.search.call_args.kwargs
+    assert kwargs["index"] == "vietlegal_chunks"
+    assert kwargs["size"] == 1
+    assert kwargs["source_excludes"] == ["vector"]
+    assert {"term": {"doc_id": "doc-related"}} in kwargs["query"]["bool"]["filter"]
 
 
 # --- B4: RetrievalService wiring ---

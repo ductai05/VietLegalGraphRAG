@@ -62,11 +62,14 @@ class Settings:
     rerank_model: str
     rerank_model_allowlist: tuple[str, ...]
     voyage_api_key: str | None
-    embedding_provider: str
+    embedding_provider: str  # "hf" (PyTorch) or "onnx"
     embedding_model: str
-    embedding_api_key: str | None
-    embedding_base_url: str | None
+    embedding_device: str
+    embedding_cache_dir: str | None
+    embedding_max_length: int
     embedding_dims: int
+    embedding_onnx_model_path: str | None
+    embedding_onnx_tokenizer_path: str | None
     dense_num_candidates_factor: int
     dense_num_candidates_factor_invalid: bool
     dense_min_num_candidates: int
@@ -80,6 +83,7 @@ class Settings:
     ocr_provider: str
     ocr_max_file_mb: int
     ocr_max_file_bytes: int
+    ocr_max_pdf_pages: int
     ocr_allowed_mime_types: tuple[str, ...]
     ocr_language_hints: tuple[str, ...]
     ocr_max_file_mb_invalid: bool
@@ -118,13 +122,21 @@ def get_settings() -> Settings:
             ("rerank-2.5", "rerank-2.5-lite"),
         ),
         voyage_api_key=os.getenv("VOYAGE_API_KEY"),
-        # Dense retrieval embeddings. "none" (default) disables dense/kNN search.
-        embedding_provider=os.getenv("EMBEDDING_PROVIDER", "none"),
-        embedding_model=os.getenv("EMBEDDING_MODEL", "voyage-3.5"),
-        embedding_api_key=os.getenv("EMBEDDING_API_KEY") or os.getenv("VOYAGE_API_KEY"),
-        embedding_base_url=os.getenv("EMBEDDING_BASE_URL"),
-        # Expected query-vector dims; 0 = infer from model name when known.
+        # Embedding provider: "hf" (PyTorch, default) or "onnx" (onnxruntime, no torch).
+        embedding_provider=os.getenv("EMBEDDING_PROVIDER", "hf") or "hf",
+        # Dense retrieval uses the same local HF model used to embed the corpus.
+        embedding_model=(
+            os.getenv("EMBEDDING_MODEL", "darklethelong/vnlegal-lal")
+            or "darklethelong/vnlegal-lal"
+        ),
+        embedding_device=os.getenv("EMBEDDING_DEVICE", "auto") or "auto",
+        embedding_cache_dir=os.getenv("EMBEDDING_CACHE_DIR") or None,
+        embedding_max_length=_getenv_int("EMBEDDING_MAX_LENGTH", 1024),
+        # Expected query-vector dims; 0 = use the local model default.
         embedding_dims=_getenv_int("EMBEDDING_DIMS", 0),
+        # ONNX model paths (used when EMBEDDING_PROVIDER=onnx).
+        embedding_onnx_model_path=os.getenv("EMBEDDING_ONNX_MODEL_PATH") or None,
+        embedding_onnx_tokenizer_path=os.getenv("EMBEDDING_ONNX_TOKENIZER_PATH") or None,
         dense_num_candidates_factor=_factor,
         dense_num_candidates_factor_invalid=_factor_invalid,
         dense_min_num_candidates=_min,
@@ -139,6 +151,7 @@ def get_settings() -> Settings:
         ocr_provider=os.getenv("OCR_PROVIDER", "none"),
         ocr_max_file_mb=_ocr_max_mb,
         ocr_max_file_bytes=_ocr_max_mb * 1024 * 1024,
+        ocr_max_pdf_pages=_getenv_int("OCR_MAX_PDF_PAGES", 5),
         ocr_allowed_mime_types=_getenv_csv(
             "OCR_ALLOWED_MIME_TYPES",
             ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"),

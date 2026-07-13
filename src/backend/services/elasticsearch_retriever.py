@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from contracts import RetrievalHit
+from contracts import AnswerContext, RetrievalHit
 from retrieval_modes import RetrievalRequest
 
 
@@ -125,6 +125,66 @@ class ElasticsearchDenseRetriever:
             retrieval_hit_from_elasticsearch(rank, raw_hit, score_key="dense")
             for rank, raw_hit in enumerate(raw_hits, start=1)
         ]
+
+
+class ElasticsearchGraphChunkFetcher:
+    """Fetch one lexical chunk for each graph-neighbor document."""
+
+    def __init__(self, client: Any, index: str, per_doc_size: int = 1) -> None:
+        self.client = client
+        self.index = index
+        self.per_doc_size = per_doc_size
+
+    def __call__(
+        self,
+        query: str,
+        related_documents: list[dict[str, str]],
+    ) -> list[AnswerContext]:
+        contexts: list[AnswerContext] = []
+        seen_chunks: set[str] = set()
+        for related in related_documents:
+            doc_id = related.get("doc_id")
+            if not doc_id:
+                continue
+            response = self.client.search(
+                index=self.index,
+                size=self.per_doc_size,
+                query={
+                    "bool": {
+                        "must": [
+                            {
+                                "multi_match": {
+                                    "query": query,
+                                    "fields": TEXT_QUERY_FIELDS,
+                                    "type": "best_fields",
+                                    "operator": "or",
+                                }
+                            }
+                        ],
+                        "filter": [{"term": {"doc_id": doc_id}}],
+                    }
+                },
+                source_excludes=["vector"],
+            )
+            raw_hits = response.get("hits", {}).get("hits", [])
+            for raw_hit in raw_hits:
+                hit = retrieval_hit_from_elasticsearch(1, raw_hit)
+                if hit.chunk_id in seen_chunks:
+                    continue
+                seen_chunks.add(hit.chunk_id)
+                contexts.append(
+                    AnswerContext(
+                        source="graph",
+                        chunk_id=hit.chunk_id,
+                        doc_id=hit.doc_id,
+                        title=hit.title,
+                        text=hit.text,
+                        citation=hit.citation,
+                        relation=related.get("relation"),
+                        raw_label=related.get("raw_label"),
+                    )
+                )
+        return contexts
 
 
 def build_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:

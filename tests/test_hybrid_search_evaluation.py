@@ -1,13 +1,17 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 from pathlib import Path
 import sys
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 EVAL_DIR = ROOT / "pipeline" / "05_evaluation"
 if str(EVAL_DIR) not in sys.path:
     sys.path.insert(0, str(EVAL_DIR))
+
+pytest.importorskip("elasticsearch")
 
 from hybrid_search import (
     DEFAULT_HYBRID_QUERY,

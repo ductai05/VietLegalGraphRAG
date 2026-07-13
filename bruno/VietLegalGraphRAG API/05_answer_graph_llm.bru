@@ -1,0 +1,35 @@
+meta {
+  name: 05 Answer Graph LLM
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/answer
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "dieu kien ket hon theo phap luat Viet Nam",
+    "retrieval_mode": "sparse",
+    "top_k": 2,
+    "rerank": {
+      "enabled": false
+    },
+    "graph": {
+      "enabled": true,
+      "use_lightrag": true,
+      "max_hops": 1
+    },
+    "llm": {
+      "temperature": 0.2,
+      "max_context_chunks": 2
+    }
+  }
+}

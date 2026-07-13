@@ -75,7 +75,7 @@ Global handler → `{"error": <code>, "detail": <safe message>, "warnings": [...
 ## 6. Search and retrieval behavior
 
 - **Sparse**: current BM25 multi_match, unchanged fields/boosts.
-- **Dense**: query-time embedding via configured provider (`EMBEDDING_PROVIDER`: `voyage` | `openai-compatible` | `none`); ES `knn` query against the `vector` field of `vietlegal_chunks_hybrid_v1` (`k=candidate_k`, `num_candidates=4*candidate_k`, same filter clauses). Embedding model **must match** the pipeline model used at index time — recorded in index metadata; startup check compares dims and warns on mismatch.
+- **Dense**: query-time embedding via local Hugging Face `darklethelong/vnlegal-lal`; ES `knn` query against the `vector` field of `vietlegal_chunks_hybrid_v1` (`k=candidate_k`, `num_candidates=4*candidate_k`, same filter clauses). Embedding model **must match** the pipeline model used at index time; startup check compares dims and warns on mismatch.
 - **Hybrid**: dense + sparse each retrieve `candidate_k`, existing `FusionRetriever` RRF (k=60) merges to `candidate_k`, then rerank/truncate to `top_k`. When dense is unavailable: behave per §5.1.
 - Filters: unchanged (`term`/`terms`/`ranges`, `.keyword` for exact fields).
 
@@ -106,9 +106,10 @@ New env (names only; values never committed):
 
 | Var | Default | Purpose |
 |---|---|---|
-| `EMBEDDING_PROVIDER` | `none` | dense query embeddings |
-| `EMBEDDING_MODEL` | (provider-specific) | must match index-time model |
-| `EMBEDDING_API_KEY` | — | provider key |
+| `EMBEDDING_MODEL` | `darklethelong/vnlegal-lal` | must match index-time model |
+| `EMBEDDING_DEVICE` | `auto` | local HF device selection |
+| `EMBEDDING_CACHE_DIR` | `/app/.cache/huggingface` | local HF model cache |
+| `EMBEDDING_MAX_LENGTH` | `1024` | query truncation length |
 | `OCR_PROVIDER` | `google-vision` | future-proofing |
 | `OCR_MAX_FILE_MB` | `10` | upload cap |
 | `API_SHARED_SECRET` | — | optional nginx→backend header check |

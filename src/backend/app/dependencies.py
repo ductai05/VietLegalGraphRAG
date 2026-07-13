@@ -1,9 +1,17 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_SERVICES_DIR = _BACKEND_ROOT / "services"
+if str(_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVICES_DIR))
 
 from answer_service import ExtractiveAnswerService, OpenAICompatibleAnswerService
 from config import Settings, get_settings
@@ -11,9 +19,10 @@ from context_assembler import ContextAssembler
 from contracts import GraphContext, RetrievalHit
 from elasticsearch_retriever import (
     ElasticsearchDenseRetriever,
+    ElasticsearchGraphChunkFetcher,
     ElasticsearchTextRetriever,
 )
-from embedding_service import OpenAICompatibleEmbedder, VoyageEmbedder
+from embedding_service import LocalHFEmbedder, LocalONNXEmbedder
 from graph_retriever import GraphRetriever
 from lightrag_service import LightRAGService
 from rerank_service import NoopReranker, VoyageReranker
@@ -56,6 +65,17 @@ class NoopGraphRetriever:
         doc_id: str,
         relations: list[str] | None = None,
         depth: int = 1,
+    ) -> GraphContext:
+        return GraphContext(center=None, query_intent="general")
+
+    def get_version_chain(self, doc_id: str) -> list[dict[str, Any]]:
+        return []
+
+    def retrieve_chunk_context(
+        self,
+        doc_id: str,
+        retrieval_hits: list[dict[str, Any]],
+        max_hops: int,
     ) -> GraphContext:
         return GraphContext(center=None, query_intent="general")
 
@@ -167,39 +187,60 @@ def _build_embedder(
     status: dict[str, str],
 ) -> Any:
     provider = settings.embedding_provider.strip().lower()
-    if provider in {"", "none"}:
-        status["embedding"] = "disabled"
-        return None
-    if not settings.embedding_api_key:
-        warnings.append("embedding.not_configured")
-        status["embedding"] = "disabled"
-        return None
     dims = settings.embedding_dims or None
+
+    # ONNX path: no torch required.
+    if provider == "onnx":
+        return _build_onnx_embedder(settings, warnings, status, dims)
+
+    # Default: PyTorch/HuggingFace path.
+    return _build_hf_embedder(settings, warnings, status, dims)
+
+
+def _build_onnx_embedder(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+    dims: int | None,
+) -> Any:
+    model_path = settings.embedding_onnx_model_path
+    tokenizer_path = settings.embedding_onnx_tokenizer_path
+    if not model_path or not tokenizer_path:
+        warnings.append("embedding.onnx_path_missing")
+        status["embedding"] = "disabled"
+        return None
     try:
-        if provider == "voyage":
-            import voyageai
+        embedder: Any = LocalONNXEmbedder(
+            model_path=model_path,
+            tokenizer_path=tokenizer_path,
+            dims=dims,
+            max_length=settings.embedding_max_length,
+        )
+        status["embedding"] = "onnx"
+        return embedder
+    except Exception:
+        if not settings.runtime_fallback_enabled:
+            raise
+        warnings.append("embedding.init_failed")
+        status["embedding"] = "disabled"
+        return None
 
-            embedder: Any = VoyageEmbedder(
-                client=voyageai.Client(api_key=settings.embedding_api_key),
-                model=settings.embedding_model,
-                dims=dims,
-            )
-        elif provider == "openai-compatible":
-            from openai import OpenAI
 
-            kwargs: dict[str, Any] = {"api_key": settings.embedding_api_key}
-            if settings.embedding_base_url:
-                kwargs["base_url"] = settings.embedding_base_url
-            embedder = OpenAICompatibleEmbedder(
-                client=OpenAI(**kwargs),
-                model=settings.embedding_model,
-                dims=dims,
-            )
-        else:
-            warnings.append("embedding.unknown_provider")
-            status["embedding"] = "disabled"
-            return None
-        status["embedding"] = provider
+def _build_hf_embedder(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+    dims: int | None,
+) -> Any:
+    try:
+        embedder: Any = LocalHFEmbedder(
+            model=settings.embedding_model,
+            dims=dims,
+            device=settings.embedding_device,
+            cache_dir=settings.embedding_cache_dir,
+            max_length=settings.embedding_max_length,
+        )
+        status["embedding"] = "local-hf"
         return embedder
     except Exception:
         if not settings.runtime_fallback_enabled:
@@ -309,13 +350,47 @@ def _build_graph_retriever(
             auth=(settings.neo4j_user, settings.neo4j_password),
         )
         status["neo4j"] = "configured"
-        return GraphRetriever(driver, database=settings.neo4j_database)
+        return GraphRetriever(
+            driver,
+            database=settings.neo4j_database,
+            chunk_fetcher=_build_graph_chunk_fetcher(settings, warnings),
+        )
     except Exception:
         if not settings.runtime_fallback_enabled:
             raise
         warnings.append("neo4j.init_failed")
         status["neo4j"] = "disabled"
         return NoopGraphRetriever()
+
+
+def _build_graph_chunk_fetcher(
+    settings: Settings,
+    warnings: list[str],
+) -> Any:
+    if not _elasticsearch_is_configured(settings):
+        return None
+    try:
+        from elasticsearch import Elasticsearch
+
+        kwargs: dict[str, Any] = {
+            "request_timeout": settings.elasticsearch_request_timeout,
+            "verify_certs": settings.elasticsearch_verify_certs,
+        }
+        if settings.elasticsearch_api_key:
+            kwargs["api_key"] = settings.elasticsearch_api_key
+        elif settings.elasticsearch_username and settings.elasticsearch_password:
+            kwargs["basic_auth"] = (
+                settings.elasticsearch_username,
+                settings.elasticsearch_password,
+            )
+        client = Elasticsearch(settings.elasticsearch_url, **kwargs)
+        index = settings.elasticsearch_alias or settings.elasticsearch_index
+        return ElasticsearchGraphChunkFetcher(client, index=index)
+    except Exception:
+        if not settings.runtime_fallback_enabled:
+            raise
+        warnings.append("graph.chunk_fetcher_unavailable")
+        return None
 
 
 def _build_answer_service(
@@ -373,7 +448,7 @@ def _build_ocr_service(
         if settings.ocr_config_invalid:
             warnings.append("config.ocr_max_file_mb_invalid")
         try:
-            service = GoogleVisionOcrService()
+            service = GoogleVisionOcrService(language_hints=settings.ocr_language_hints)
             status["ocr"] = "google"
             return service
         except Exception:

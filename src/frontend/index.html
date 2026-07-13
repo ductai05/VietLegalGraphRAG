@@ -319,6 +319,13 @@
     <span>NEED HELP?</span>
   </a>
 
+  <script>
+    window.AURORA_API_BASE = window.AURORA_API_BASE || (
+      ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://localhost:8000"
+        : "/api"
+    );
+  </script>
   <script src="app.js"></script>
 </body>
 </html>
