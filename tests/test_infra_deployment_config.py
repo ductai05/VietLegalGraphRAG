@@ -52,8 +52,8 @@ def test_frontend_dockerfile_copies_only_public_assets() -> None:
     dockerfile = read("src/frontend/Dockerfile")
 
     assert "COPY src/frontend/ /usr/share/nginx/html/" not in dockerfile
-    for asset in ("*.html", "*.css", "*.js", "*.svg"):
-        assert asset in dockerfile
+    assert "/app/dist" in dockerfile
+    assert "npm run build" in dockerfile
 
 
 def test_deploy_workflow_rebuilds_all_app_services() -> None:

@@ -11,49 +11,51 @@ def read(path: str) -> str:
 
 
 def test_chat_frontend_posts_messages_to_backend_answer_api() -> None:
-    script = read("src/frontend/app.js")
+    api_js = read("src/frontend/src/lib/api.js")
+    chat_jsx = read("src/frontend/src/pages/Chat.jsx")
 
-    assert "function resolveApiBase" in script
-    assert "http://localhost:8000" in script
-    assert 'fetchWithTimeout(`${API_BASE}/answer`' in script
-    assert '"retrieval_mode": "hybrid"' in script
-    assert '"include_trace": true' in script
-    assert "payload.retrieval_trace" in script
-    assert "payload.citations" in script
-    assert "const replies =" not in script
+    assert "resolveApiBase" in api_js
+    assert "http://localhost:8000" in api_js
+    assert 'fetchWithTimeout(`${API_BASE}/answer`' in api_js
+    assert '"retrieval_mode": "hybrid"' in api_js
+    assert '"include_trace": true' in api_js
+    assert "payload.retrieval_trace" in chat_jsx
+    assert "payload.citations" in chat_jsx
+    assert "const replies =" not in chat_jsx
 
 
 def test_chat_frontend_uses_timeout_and_distinct_timeout_copy() -> None:
-    script = read("src/frontend/app.js")
+    api_js = read("src/frontend/src/lib/api.js")
+    chat_jsx = read("src/frontend/src/pages/Chat.jsx")
 
-    assert "AbortController" in script
-    assert "REQUEST_TIMEOUT_MS = 30000" in script
-    assert "request.timeout" in script
-    assert "The API request timed out" in script
+    assert "AbortController" in api_js
+    assert "REQUEST_TIMEOUT_MS = 30000" in api_js
+    assert "request.timeout" in api_js
+    assert "Yêu cầu đã hết thời gian chờ" in chat_jsx
 
 
 def test_handoff_copy_is_explicitly_demo_only() -> None:
-    script = read("src/frontend/app.js")
+    chat_jsx = read("src/frontend/src/pages/Chat.jsx")
 
-    assert "demo only" in script.lower()
-    assert "Someone will pick up the full conversation history" not in script
+    assert "demo" in chat_jsx.lower()
+    assert "Someone will pick up the full conversation history" not in chat_jsx
 
 
 def test_chat_frontend_has_ocr_upload_control_and_safe_rendering() -> None:
-    chat_html = read("src/frontend/chat.html")
-    script = read("src/frontend/app.js")
+    ocr_form = read("src/frontend/src/components/chat/OcrForm.jsx")
+    api_js = read("src/frontend/src/lib/api.js")
+    message_jsx = read("src/frontend/src/components/chat/Message.jsx")
 
-    assert 'id="ocr-form"' in chat_html
-    assert 'id="ocr-file"' in chat_html
-    assert 'fetchWithTimeout(`${API_BASE}/documents/ocr`' in script
-    assert "FormData" in script
-    assert "renderOcrPreview" in script
-    assert ".textContent" in script
-    assert "innerHTML = payload.text" not in script
+    assert 'id="ocr-form"' in ocr_form
+    assert 'id="ocr-file"' in ocr_form
+    assert 'fetchWithTimeout(`${API_BASE}/documents/ocr`' in api_js
+    assert "FormData" in api_js
+    assert "ocr-preview" in message_jsx
+    assert "renderOcrPreview" in message_jsx
+    assert "innerHTML =" not in message_jsx
 
 
 def test_pages_define_api_base_before_app_script() -> None:
-    for path in ("src/frontend/index.html", "src/frontend/chat.html"):
-        html = read(path)
-        assert "window.AURORA_API_BASE" in html
-        assert html.index("window.AURORA_API_BASE") < html.index('src="app.js"')
+    html = read("src/frontend/index.html")
+    assert "window.AURORA_API_BASE" in html
+    assert html.index("window.AURORA_API_BASE") < html.index('src="/src/main.jsx"')

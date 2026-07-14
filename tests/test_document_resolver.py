@@ -24,9 +24,12 @@ def _make_context(
     chunk_id: str | None = None,
     source: str = "retrieval",
     title: str = "Test Doc",
-    citation: str = "",
+    citation: str | None = None,
 ) -> Any:
     from contracts import AnswerContext
+
+    if citation is None:
+        citation = f"01/2026/QH | {title} | Điều 1 | chunk_id: chunk:{doc_id}"
 
     return AnswerContext(
         source=source,
@@ -34,7 +37,7 @@ def _make_context(
         doc_id=doc_id,
         title=title,
         text=f"Content of {doc_id}",
-        citation=citation or f"01/2026/QH | {title} | Điều 1 | chunk_id: chunk:{doc_id}",
+        citation=citation,
         effect_status=effect_status,
     )
 

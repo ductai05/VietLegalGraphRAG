@@ -125,6 +125,7 @@ class DocumentResolver:
         seen_doc_ids: set[str] = set()
 
         for ctx in contexts:
+            ctx_clean_id = self._clean_id(ctx.doc_id)
             if not self._is_expired(ctx):
                 # Document is still valid.
                 ctx.resolution = ResolutionInfo(
@@ -132,17 +133,21 @@ class DocumentResolver:
                     reason="Tài liệu còn hiệu lực",
                 ).to_dict()
                 resolved.append(ctx)
-                if ctx.doc_id:
-                    seen_doc_ids.add(ctx.doc_id)
+                if ctx_clean_id:
+                    seen_doc_ids.add(ctx_clean_id)
                 continue
 
             # Document is expired — check for replacement.
-            replacement_doc_id = replacement_map.get(ctx.doc_id)
+            replacement_doc_id = None
+            if ctx.doc_id:
+                replacement_doc_id = replacement_map.get(ctx.doc_id) or replacement_map.get(f"doc:{ctx.doc_id}")
 
-            if replacement_doc_id and replacement_doc_id not in seen_doc_ids:
+            clean_replacement_doc_id = self._clean_id(replacement_doc_id)
+
+            if replacement_doc_id:
                 # Keep the expired context with a warning annotation,
                 # AND inject the replacement context (if available from
-                # graph_context related_chunks).
+                # graph_context related_chunks and not already seen).
                 ctx.resolution = ResolutionInfo(
                     action="replaced",
                     reason=(
@@ -153,28 +158,33 @@ class DocumentResolver:
                     replacement_doc_id=replacement_doc_id,
                 ).to_dict()
                 resolved.append(ctx)
-                seen_doc_ids.add(ctx.doc_id)
+                if ctx_clean_id:
+                    seen_doc_ids.add(ctx_clean_id)
 
-                replacement_ctx = self._find_replacement_context(
-                    replacement_doc_id, graph_context,
-                )
-                if replacement_ctx is not None and replacement_ctx.doc_id not in seen_doc_ids:
-                    replacement_ctx.resolution = ResolutionInfo(
-                        action="kept",
-                        reason=(
-                            f"Tài liệu thay thế cho {ctx.doc_id} "
-                            f"(đã hết hiệu lực)"
-                        ),
-                        original_doc_id=ctx.doc_id,
-                    ).to_dict()
-                    resolved.append(replacement_ctx)
-                    seen_doc_ids.add(replacement_ctx.doc_id)
-                    result.resolutions.append(ResolutionInfo(
-                        action="replaced",
-                        reason=f"{ctx.doc_id} -> {replacement_doc_id}",
-                        original_doc_id=ctx.doc_id,
-                        replacement_doc_id=replacement_doc_id,
-                    ))
+                if clean_replacement_doc_id not in seen_doc_ids:
+                    replacement_ctx = self._find_replacement_context(
+                        replacement_doc_id, graph_context,
+                    )
+                    if replacement_ctx is not None:
+                        clean_rep_ctx_id = self._clean_id(replacement_ctx.doc_id)
+                        if clean_rep_ctx_id not in seen_doc_ids:
+                            replacement_ctx.resolution = ResolutionInfo(
+                                action="kept",
+                                reason=(
+                                    f"Tài liệu thay thế cho {ctx.doc_id} "
+                                    f"(đã hết hiệu lực)"
+                                ),
+                                original_doc_id=ctx.doc_id,
+                            ).to_dict()
+                            resolved.append(replacement_ctx)
+                            if clean_rep_ctx_id:
+                                seen_doc_ids.add(clean_rep_ctx_id)
+                            result.resolutions.append(ResolutionInfo(
+                                action="replaced",
+                                reason=f"{ctx.doc_id} -> {replacement_doc_id}",
+                                original_doc_id=ctx.doc_id,
+                                replacement_doc_id=replacement_doc_id,
+                            ))
             else:
                 # No replacement found — keep with warning.
                 ctx.resolution = ResolutionInfo(
@@ -183,8 +193,8 @@ class DocumentResolver:
                     original_doc_id=ctx.doc_id,
                 ).to_dict()
                 resolved.append(ctx)
-                if ctx.doc_id:
-                    seen_doc_ids.add(ctx.doc_id)
+                if ctx_clean_id:
+                    seen_doc_ids.add(ctx_clean_id)
                 result.warnings.append(
                     f"document.expired:{ctx.doc_id}"
                 )
@@ -274,6 +284,13 @@ class DocumentResolver:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _clean_id(id_str: str | None) -> str:
+        """Strip 'doc:' prefix if present."""
+        if not id_str:
+            return ""
+        return id_str[4:] if id_str.startswith("doc:") else id_str
+
+    @staticmethod
     def _is_expired(ctx: AnswerContext) -> bool:
         """Check if a context's source document is expired."""
         status = (ctx.effect_status or "").strip().casefold()
@@ -311,19 +328,24 @@ class DocumentResolver:
         if graph_context is None:
             return None
 
+        clean_rep_id = DocumentResolver._clean_id(replacement_doc_id)
+
         for chunk in graph_context.related_chunks:
-            if chunk.doc_id == replacement_doc_id:
+            clean_chunk_id = DocumentResolver._clean_id(chunk.doc_id)
+            if clean_chunk_id == clean_rep_id:
                 return chunk
 
         # If no chunk found, try to build a minimal context from graph nodes.
         for node in graph_context.nodes:
             node_doc_id = node.properties.get("doc_id", "")
             node_id = node.properties.get("id", "")
-            if node_doc_id == replacement_doc_id or node_id == f"doc:{replacement_doc_id}":
+            clean_node_doc_id = DocumentResolver._clean_id(node_doc_id)
+            clean_node_id = DocumentResolver._clean_id(node_id)
+            if clean_node_doc_id == clean_rep_id or clean_node_id == clean_rep_id:
                 return AnswerContext(
                     source="graph",
                     chunk_id=None,
-                    doc_id=replacement_doc_id,
+                    doc_id=clean_rep_id,
                     title=str(node.properties.get("title", "")),
                     text="",
                     citation=str(node.properties.get("document_number", "")),
