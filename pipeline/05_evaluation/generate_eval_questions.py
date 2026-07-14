@@ -272,21 +272,32 @@ def collect_chunks_for_docs(
 # PHASE 2: PROMPT CONSTRUCTION
 # ============================================================
 
-SYSTEM_PROMPT = """Bạn là một chuyên gia pháp luật Việt Nam. Nhiệm vụ của bạn là tạo câu hỏi trắc nghiệm (multiple-choice) chất lượng cao dựa trên đoạn văn bản pháp luật được cung cấp. Chúng tôi cung cấp nội dung của CẢ HAI VĂN BẢN có mối quan hệ pháp lý với nhau.
+SYSTEM_PROMPT = """Bạn là chuyên gia pháp luật Việt Nam. Nhiệm vụ: tạo câu hỏi trắc nghiệm chất lượng cao dựa trên các đoạn trích văn bản pháp luật. Chúng tôi cung cấp nội dung CỦA HAI VĂN BẢN có mối quan hệ pháp lý với nhau.
 
-YÊU CẦU QUAN TRỌNG:
-1. TÍNH ĐỘC LẬP & TỰ NHIÊN CỦA CÂU HỎI: Người đọc câu hỏi KHÔNG nhìn thấy đoạn text được cung cấp. TUYỆT ĐỐI KHÔNG dùng các từ như "Văn bản 1", "Văn bản 2", "Văn bản trên", "Đoạn trích", "Chunk" trong câu hỏi hay đáp án. Nếu cần thiết, hãy đưa trực tiếp tên hoặc số hiệu của văn bản vào câu hỏi (VD: "Theo Nghị định 163/2016/NĐ-CP...", "Theo Nghị quyết của HĐND tỉnh Thừa Thiên Huế...").
-2. HỎI NHƯ NGƯỜI DÙNG THỰC TẾ: Các câu hỏi kết hợp (multi-hop/cross_reference) phải mô phỏng tình huống người dùng thực tế đang tìm kiếm thông tin, KHÔNG đặt câu hỏi có các cụm từ gượng ép như "Kết hợp thông tin từ 2 văn bản", hoặc "Trong khi văn bản 1 nói A, văn bản 2 nói gì".
-3. KHÔNG SUY DIỄN NGOÀI VĂN BẢN (NO HALLUCINATION): Câu hỏi và đáp án phải dựa 100% vào nội dung văn bản cung cấp. Không tự ý suy luận ngày tháng, số liệu nếu văn bản không ghi rõ (VD: Nếu văn bản ghi "năm ngân sách 2022", đáp án phải dùng đúng thuật ngữ đó, không tự đổi thành "01 tháng 01 năm 2022").
-4. ĐỊNH DẠNG: Tạo đúng {n_questions} câu hỏi trắc nghiệm, mỗi câu có 4 lựa chọn (A, B, C, D) với DUY NHẤT 1 đáp án đúng. Các phương án sai (distractors) phải hợp lý, dễ nhầm lẫn nhưng chắc chắn sai dựa trên văn bản.
-5. ĐỘ KHÓ: Phân bố 1 câu dễ (easy), 1-2 câu trung bình (medium), 1 câu khó (hard).
-6. LOẠI CÂU HỎI: Đa dạng (factual, inference, cross_reference, multi_hop). Ưu tiên các câu hỏi mang tính suy luận thực tế. Viết hoàn toàn bằng tiếng Việt.
+YÊU CẦU BẮT BUỘC:
+1. CÂU HỎI ĐỘC LẬP & TỰ NHIÊN: Người đọc câu hỏi SẼ KHÔNG nhìn thấy đoạn trích. TUYỆT ĐỐI KHÔNG dùng cụm "Tài liệu 1", "Tài liệu 2", "Đoạn trích trên", "Excerpt", "Chunk" trong câu hỏi hay đáp án. Nếu cần, nhúng trực tiếp tên hoặc số hiệu văn bản vào câu hỏi (ví dụ: "Theo Nghị định 163/2016/NĐ-CP...").
+2. HỎI NHƯ NGƯỜI DÙNG THỰC: Câu hỏi multi_hop/cross_reference phải mô phỏng tình huống tra cứu thực tế, KHÔNG hỏi kiểu gượng ép như "Kết hợp thông tin từ 2 văn bản" hay "Trong khi văn bản 1 nói A, văn bản 2 nói gì".
+3. KHÔNG HALLUCINATION - QUY TẮC NGHIÊM NGẶT:
+   - Câu hỏi và đáp án phải 100% dựa trên văn bản được cung cấp.
+   - Nếu thông tin không xuất hiện rõ ràng trong các chunk, KHÔNG ĐƯỢC tạo câu hỏi về thông tin đó.
+   - KHÔNG suy diễn ngày tháng, con số nếu văn bản không nêu rõ.
+   - Trong phần reasoning, BẮT BUỘC trích dẫn nguyên văn đoạn text làm bằng chứng (đặt trong dấu ngoặc kép).
+   - Nếu không đủ thông tin để tạo {n_questions} câu hỏi chất lượng, hãy tạo ÍT HƠN thay vì bịa thêm.
+4. ĐỊNH DẠNG: Tạo tối đa {n_questions} câu hỏi trắc nghiệm, mỗi câu 4 phương án (A, B, C, D) với CHỈ 1 đáp án đúng. Các phương án sai (distractors) phải hợp lý, dễ nhầm lẫn nhưng chắc chắn sai dựa trên văn bản.
+5. ĐỘ KHÓ: Phân bổ 1 câu easy, 2 câu medium, 1 câu hard.
+6. LOẠI CÂU HỎI: Bắt buộc đa dạng, phân bổ cụ thể như sau:
+   - 1 câu factual (hỏi thông tin trực tiếp từ 1 văn bản)
+   - 1 câu cross_reference hoặc multi_hop (yêu cầu kết hợp thông tin từ cả 2 văn bản)
+   - 1 câu inference hoặc comparison (yêu cầu suy luận hoặc so sánh)
+   - 1 câu procedural hoặc loại khác phù hợp
 
-ĐỊNH DẠNG OUTPUT: Trả về CHÍNH XÁC một JSON array, không có text nào khác. Mỗi object có cấu trúc:
+LƯU Ý VỀ relevant_chunk_ids: Chỉ liệt kê ID của những chunk THỰC SỰ chứa thông tin trả lời câu hỏi. Không liệt kê tất cả chunks.
+
+ĐỊNH DẠNG OUTPUT: Trả về ĐÚNG một JSON array, không kèm text khác. Mỗi object có cấu trúc:
 ```json
 [
   {{
-    "question": "Câu hỏi...",
+    "question": "Câu hỏi bằng tiếng Việt...",
     "choices": {{
       "A": "Lựa chọn A",
       "B": "Lựa chọn B",
@@ -296,12 +307,12 @@ YÊU CẦU QUAN TRỌNG:
     "answer": "B",
     "difficulty": "medium",
     "question_type": "multi_hop",
-    "reasoning": "Giải thích ngắn gọn tại sao đáp án đúng",
-    "relevant_chunk_ids": ["chunk_id_1", "chunk_id_2"]
+    "reasoning": "Giải thích ngắn gọn kèm trích dẫn nguyên văn từ chunk: \"trích dẫn ở đây\"",
+    "relevant_chunk_ids": ["chunk_id_chứa_đáp_án"]
   }}
 ]
 ```
-Lưu ý: relevant_chunk_ids chứa các chunk liên quan nhất. question_type thuộc: factual, inference, procedural, comparison, multi_hop, cross_reference.
+Giá trị hợp lệ của question_type: factual, inference, procedural, comparison, multi_hop, cross_reference.
 """
 
 
@@ -319,26 +330,26 @@ def build_prompt(
     chunks_d2 = [c for c in chunks if c["doc_id"] == doc2["doc_id"]]
 
     prompt = (
-        f"=== VĂN BẢN 1 (Doc ID: {doc1['doc_id']}) ===\n"
-        f"Tên: {doc1['title']}\n"
-        f"Loại: {doc1['legal_type']}\n\n"
+        f"=== DOCUMENT 1 (Doc ID: {doc1['doc_id']}) ===\n"
+        f"Title: {doc1['title']}\n"
+        f"Type: {doc1['legal_type']}\n\n"
     )
     for i, c in enumerate(chunks_d1, 1):
         prompt += f"--- Chunk 1.{i} (ID: {c['chunk_id']}) ---\n{c['chunk_text']}\n\n"
 
-    prompt += f"=== MỐI QUAN HỆ PHÁP LÝ ===\nVăn bản 1 [{rel_type}] Văn bản 2\n\n"
+    prompt += f"=== LEGAL RELATIONSHIP ===\nDocument 1 [{rel_type}] Document 2\n\n"
 
     prompt += (
-        f"=== VĂN BẢN 2 (Doc ID: {doc2['doc_id']}) ===\n"
-        f"Tên: {doc2['title']}\n"
-        f"Loại: {doc2['legal_type']}\n\n"
+        f"=== DOCUMENT 2 (Doc ID: {doc2['doc_id']}) ===\n"
+        f"Title: {doc2['title']}\n"
+        f"Type: {doc2['legal_type']}\n\n"
     )
     for i, c in enumerate(chunks_d2, 1):
         prompt += f"--- Chunk 2.{i} (ID: {c['chunk_id']}) ---\n{c['chunk_text']}\n\n"
 
     prompt += (
-        f"Hãy tạo {n_questions} câu hỏi trắc nghiệm dựa trên nội dung 2 văn bản trên. "
-        f"Trả về JSON array như format đã yêu cầu."
+        f"Please create {n_questions} multiple-choice questions based on the content of the two documents above. "
+        f"Return a JSON array exactly as formatted in the system prompt. The questions must be in Vietnamese."
     )
     return prompt
 
@@ -461,6 +472,14 @@ def validate_question(q: Dict) -> bool:
         return False
 
     return True
+
+
+def _get_relevant_texts(q: Dict, chunks: List[Dict]) -> List[str]:
+    """Only include texts from chunks the model flagged as relevant."""
+    rel_ids = set(q.get("relevant_chunk_ids", []))
+    if rel_ids:
+        return [c["chunk_text"][:500] for c in chunks if c["chunk_id"] in rel_ids]
+    return [c["chunk_text"][:500] for c in chunks]
 
 
 # ============================================================
@@ -635,7 +654,7 @@ def run_generation(
                 "difficulty": q["difficulty"],
                 "evidence": {
                     "chunk_ids": q.get("relevant_chunk_ids", [c["chunk_id"] for c in chunks]),
-                    "chunk_texts": [c["chunk_text"][:500] for c in chunks],  # truncated
+                    "chunk_texts": _get_relevant_texts(q, chunks),
                     "doc_id": pair_id, # maintain compat with old scripts
                     "doc_ids": doc["doc_ids"], # NEW: Array of doc IDs for multi-hop eval
                     "doc_title": f"{doc['doc1']['title']} & {doc['doc2']['title']}",
