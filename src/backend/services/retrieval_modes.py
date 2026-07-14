@@ -41,6 +41,7 @@ MAX_CONTEXT_CHUNKS = 32
 @dataclass
 class RerankConfig:
     enabled: bool = True
+    provider: str | None = None
     model: str = "rerank-2.5"
     candidate_k: int = 50
     batch_size: int = 8

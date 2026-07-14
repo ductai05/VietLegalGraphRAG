@@ -40,8 +40,10 @@ def search(
     hits = runtime.retrieval_service.search(retrieval_request)
     
     if retrieval_request.rerank.enabled and not any("rerank" in hit.scores for hit in hits):
-        if "reranker.voyage_api_failed" not in runtime.warnings:
-            runtime.warnings.append("reranker.voyage_api_failed")
+        active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+        warn_key = f"reranker.{active_provider}_api_failed"
+        if warn_key not in runtime.warnings:
+            runtime.warnings.append(warn_key)
 
     return {
         "query": retrieval_request.query,
@@ -77,10 +79,12 @@ def answer(
         context_hits = payload.get("retrieval_context", [])
         rerank_succeeded = any("rerank" in hit.get("scores", {}) for hit in context_hits)
         if not rerank_succeeded:
-            if "reranker.voyage_api_failed" not in runtime.warnings:
-                runtime.warnings.append("reranker.voyage_api_failed")
+            active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+            warn_key = f"reranker.{active_provider}_api_failed"
+            if warn_key not in runtime.warnings:
+                runtime.warnings.append(warn_key)
             trace["reranked"] = False
-            trace["rerank_error"] = "voyage.api_failed"
+            trace["rerank_error"] = f"{active_provider}.api_failed"
 
     payload["warnings"] = runtime.warnings
     payload["latency_ms"] = _elapsed_ms(started)

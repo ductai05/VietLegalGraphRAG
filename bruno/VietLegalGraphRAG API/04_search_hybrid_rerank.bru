@@ -21,7 +21,8 @@ body:json {
     "top_k": 2,
     "rerank": {
       "enabled": true,
-      "model": "rerank-2.5",
+      "provider": "jina",
+      "model": "jina-reranker-v2-base-multilingual",
       "candidate_k": 4,
       "batch_size": 2
     },

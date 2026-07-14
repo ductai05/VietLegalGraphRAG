@@ -26,7 +26,7 @@ from elasticsearch_retriever import (
 from embedding_service import LocalHFEmbedder, LocalONNXEmbedder
 from graph_retriever import GraphRetriever
 from lightrag_service import LightRAGService
-from rerank_service import NoopReranker, VoyageReranker
+from rerank_service import NoopReranker, VoyageReranker, JinaReranker, RoutingReranker
 from retrieval_modes import RetrievalRequest
 from retrieval_service import RetrievalService
 
@@ -318,27 +318,36 @@ def _build_reranker(
     warnings: list[str],
     status: dict[str, str],
 ) -> Any:
-    if settings.rerank_provider.lower() != "voyage":
-        status["reranker"] = "noop"
-        return NoopReranker()
-    if not settings.voyage_api_key:
+    # Build Voyage Reranker if configured
+    voyage_reranker = NoopReranker()
+    if settings.voyage_api_key:
+        try:
+            import voyageai
+            voyage_reranker = VoyageReranker(
+                client=voyageai.Client(api_key=settings.voyage_api_key),
+                model=settings.rerank_model,
+            )
+        except Exception:
+            warnings.append("reranker.voyage_init_failed")
+    else:
         warnings.append("reranker.voyage_not_configured")
-        status["reranker"] = "noop"
-        return NoopReranker()
-    try:
-        import voyageai
 
-        status["reranker"] = "voyage"
-        return VoyageReranker(
-            client=voyageai.Client(api_key=settings.voyage_api_key),
+    # Build Jina Reranker if configured
+    jina_reranker = NoopReranker()
+    if settings.jina_api_key:
+        jina_reranker = JinaReranker(
+            api_key=settings.jina_api_key,
             model=settings.rerank_model,
         )
-    except Exception:
-        if not settings.runtime_fallback_enabled:
-            raise
-        warnings.append("reranker.init_failed")
-        status["reranker"] = "noop"
-        return NoopReranker()
+    else:
+        warnings.append("reranker.jina_not_configured")
+
+    status["reranker"] = settings.rerank_provider.lower()
+    return RoutingReranker(
+        voyage_reranker=voyage_reranker,
+        jina_reranker=jina_reranker,
+        default_provider=settings.rerank_provider,
+    )
 
 
 def _build_graph_retriever(

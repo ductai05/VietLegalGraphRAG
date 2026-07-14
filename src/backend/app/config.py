@@ -62,6 +62,7 @@ class Settings:
     rerank_model: str
     rerank_model_allowlist: tuple[str, ...]
     voyage_api_key: str | None
+    jina_api_key: str | None
     embedding_provider: str  # "hf" (PyTorch) or "onnx"
     embedding_model: str
     embedding_device: str
@@ -122,6 +123,7 @@ def get_settings() -> Settings:
             ("rerank-2.5", "rerank-2.5-lite"),
         ),
         voyage_api_key=os.getenv("VOYAGE_API_KEY"),
+        jina_api_key=os.getenv("JINA_API_KEY"),
         # Embedding provider: "hf" (PyTorch, default) or "onnx" (onnxruntime, no torch).
         embedding_provider=os.getenv("EMBEDDING_PROVIDER", "hf") or "hf",
         # Dense retrieval uses the same local HF model used to embed the corpus.

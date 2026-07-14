@@ -20,6 +20,7 @@ class OcrResponseModel(BaseModel):
 
 class RerankConfigModel(BaseModel):
     enabled: bool = True
+    provider: Literal["voyage", "jina", "noop"] | None = None
     model: str = "rerank-2.5"
     candidate_k: int = Field(default=50, gt=0, le=200)
     batch_size: int = Field(default=8, gt=0, le=64)

@@ -84,5 +84,6 @@ class RetrievalService:
                 request.top_k,
                 model=request.rerank.model,
                 timeout_ms=request.rerank.timeout_ms,
+                provider=request.rerank.provider,
             )
         return hits[:request.top_k]

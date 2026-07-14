@@ -70,3 +70,63 @@ def test_voyage_reranker_timeout_returns_original_order_quickly() -> None:
 
     assert [hit.chunk_id for hit in result] == ["a", "b"]
     assert elapsed < 0.15
+
+
+def test_jina_reranker_fallback_on_api_error(monkeypatch) -> None:
+    from rerank_service import JinaReranker
+
+    class MockResponse:
+        def raise_for_status(self):
+            raise Exception("API error")
+
+    def mock_post(*args, **kwargs):
+        return MockResponse()
+
+    import requests
+    monkeypatch.setattr(requests, "post", mock_post)
+
+    hits = [_hit("a"), _hit("b")]
+    reranker = JinaReranker(api_key="test-key", model="jina-reranker-v2-base-multilingual")
+
+    result = reranker.rerank("query", hits, top_k=2)
+    assert [hit.chunk_id for hit in result] == ["a", "b"]
+
+
+def test_routing_reranker_routes_correctly() -> None:
+    from rerank_service import RoutingReranker, NoopReranker
+
+    class DummyReranker:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.last_model = None
+
+        def rerank(self, query, hits, top_k, model=None, timeout_ms=None, provider=None):
+            self.last_model = model
+            # return reversed to distinguish
+            return list(reversed(hits))[:top_k]
+
+    voyage = DummyReranker("voyage")
+    jina = DummyReranker("jina")
+
+    router = RoutingReranker(
+        voyage_reranker=voyage,
+        jina_reranker=jina,
+        default_provider="voyage",
+    )
+
+    hits = [_hit("a"), _hit("b")]
+
+    # Test route to voyage
+    res1 = router.rerank("query", hits, top_k=2, provider="voyage", model="voyage-model")
+    assert [h.chunk_id for h in res1] == ["b", "a"]
+    assert voyage.last_model == "voyage-model"
+
+    # Test route to jina
+    res2 = router.rerank("query", hits, top_k=2, provider="jina", model="jina-model")
+    assert [h.chunk_id for h in res2] == ["b", "a"]
+    assert jina.last_model == "jina-model"
+
+    # Test voyage default model mapping on jina routing
+    router.rerank("query", hits, top_k=2, provider="jina", model="rerank-2.5")
+    assert jina.last_model == "jina-ranker-v2-base-multilingual" or jina.last_model == "jina-reranker-v2-base-multilingual"
+
