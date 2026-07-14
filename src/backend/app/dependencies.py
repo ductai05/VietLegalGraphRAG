@@ -17,6 +17,7 @@ from answer_service import ExtractiveAnswerService, OpenAICompatibleAnswerServic
 from config import Settings, get_settings
 from context_assembler import ContextAssembler
 from contracts import GraphContext, RetrievalHit
+from document_resolver import DocumentResolver
 from elasticsearch_retriever import (
     ElasticsearchDenseRetriever,
     ElasticsearchGraphChunkFetcher,
@@ -101,11 +102,18 @@ def get_runtime_services() -> RuntimeServices:
     retrieval_service = _build_retrieval_service(settings, warnings, status)
     graph_retriever = _build_graph_retriever(settings, warnings, status)
     answer_service = _build_answer_service(settings, warnings, status)
+
+    # Build the DocumentResolver with a version-chain callback backed by
+    # the graph retriever.  NoopGraphRetriever.get_version_chain returns []
+    # so the resolver gracefully degrades when Neo4j is unavailable.
+    version_chain_fn = getattr(graph_retriever, "get_version_chain", None)
+    document_resolver = DocumentResolver(version_chain_fn=version_chain_fn)
+
     lightrag_service = LightRAGService(
         retrieval_service=retrieval_service,
         graph_retriever=graph_retriever,
         answer_service=answer_service,
-        context_assembler=ContextAssembler(),
+        context_assembler=ContextAssembler(document_resolver=document_resolver),
     )
     status["runtime"] = "fallback" if "runtime.fallback" in warnings else "configured"
     return RuntimeServices(

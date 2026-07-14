@@ -34,7 +34,7 @@ MAX_TOP_K = 50
 MAX_CANDIDATE_K = 200
 MAX_BATCH_SIZE = 64
 MAX_TIMEOUT_MS = 120000
-MAX_GRAPH_HOPS = 2
+MAX_GRAPH_HOPS = 3
 MAX_CONTEXT_CHUNKS = 32
 
 
@@ -73,6 +73,7 @@ class GraphConfig:
     enabled: bool = True
     use_lightrag: bool = True
     max_hops: int = 1
+    auto_depth: bool = True
 
     def __post_init__(self) -> None:
         if not 0 <= self.max_hops <= MAX_GRAPH_HOPS:

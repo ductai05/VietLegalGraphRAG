@@ -154,8 +154,100 @@ def test_get_document_neighbors_max_hops_clamped_to_protocol_max() -> None:
     session.run.reset_mock()
     retriever.get_document_neighbors("doc-1", depth=2)
     query = session.run.call_args_list[1][0][0]
-    assert "rel*1..2" in query
+    assert "rels*1..2" in query
     assert "end.doc_id = $doc_id" not in query
+
+
+def test_resolve_depth_increases_for_amendment_intent() -> None:
+    from graph_retriever import GraphRetriever
+
+    driver = Mock()
+    retriever = GraphRetriever(driver)
+
+    # Amendment intent should bump depth from 1 to at least 2.
+    assert retriever._resolve_depth("amendment", 1) == 2
+    # If requested depth is already >= recommended, keep it.
+    assert retriever._resolve_depth("amendment", 3) == 3
+
+
+def test_resolve_depth_increases_for_repeal_intent() -> None:
+    from graph_retriever import GraphRetriever
+
+    driver = Mock()
+    retriever = GraphRetriever(driver)
+
+    assert retriever._resolve_depth("repeal", 1) == 2
+    assert retriever._resolve_depth("repeal", 3) == 3
+
+
+def test_resolve_depth_keeps_requested_for_general_intent() -> None:
+    from graph_retriever import GraphRetriever
+
+    driver = Mock()
+    retriever = GraphRetriever(driver)
+
+    assert retriever._resolve_depth("general", 1) == 1
+    assert retriever._resolve_depth("citation", 1) == 1
+    assert retriever._resolve_depth("guideline", 1) == 1
+
+
+def test_resolve_depth_clamps_to_max() -> None:
+    from graph_retriever import GraphRetriever, MAX_DEPTH
+
+    driver = Mock()
+    retriever = GraphRetriever(driver)
+
+    assert retriever._resolve_depth("amendment", 999) == MAX_DEPTH
+
+
+def test_retrieve_uses_auto_depth_when_enabled() -> None:
+    from graph_retriever import GraphRetriever
+
+    driver = Mock()
+    session = Mock()
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    session.run = Mock(return_value=[])
+    driver.session = Mock(return_value=session)
+
+    retriever = GraphRetriever(driver)
+
+    # "sửa đổi" triggers amendment intent -> auto_depth bumps to 2
+    retriever.retrieve(
+        "sửa đổi văn bản 01/2026/QH",
+        [{"doc_id": "doc-1"}],
+        max_hops=1,
+        auto_depth=True,
+    )
+
+    # The edge query should use multi-hop pattern (depth 2).
+    edge_query = session.run.call_args_list[1][0][0]
+    assert "rels*1..2" in edge_query
+
+
+def test_retrieve_respects_auto_depth_disabled() -> None:
+    from graph_retriever import GraphRetriever
+
+    driver = Mock()
+    session = Mock()
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    session.run = Mock(return_value=[])
+    driver.session = Mock(return_value=session)
+
+    retriever = GraphRetriever(driver)
+
+    # Even with amendment intent, auto_depth=False keeps requested depth.
+    retriever.retrieve(
+        "sửa đổi văn bản 01/2026/QH",
+        [{"doc_id": "doc-1"}],
+        max_hops=1,
+        auto_depth=False,
+    )
+
+    # The edge query should use single-hop (depth 1).
+    edge_query = session.run.call_args_list[1][0][0]
+    assert "rels*" not in edge_query
 
 
 def test_get_document_neighbors_relation_filter_parameterized() -> None:
