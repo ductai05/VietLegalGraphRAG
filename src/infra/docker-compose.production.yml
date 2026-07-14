@@ -57,7 +57,7 @@ services:
       - LLM_MODEL
       - FRONTEND_ORIGIN
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - /opt/vietlegal/credentials:/app/credentials:ro
       - /opt/vietlegal/hf-cache:/app/.cache/huggingface
