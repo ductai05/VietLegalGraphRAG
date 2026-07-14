@@ -31,7 +31,7 @@ def test_retrieval_service_passes_request_timeout_to_reranker() -> None:
         def __init__(self) -> None:
             self.timeout_ms = None
 
-        def rerank(self, query, hits, top_k, model=None, timeout_ms=None):
+        def rerank(self, query, hits, top_k, model=None, timeout_ms=None, provider=None):
             self.timeout_ms = timeout_ms
             return hits[:top_k]
 

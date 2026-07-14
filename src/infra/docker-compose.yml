@@ -80,6 +80,7 @@ services:
       - RERANK_PROVIDER
       - RERANK_MODEL
       - VOYAGE_API_KEY
+      - JINA_API_KEY
       - LLM_PROVIDER
       - LLM_BASE_URL
       - LLM_API_KEY

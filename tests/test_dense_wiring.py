@@ -39,6 +39,7 @@ def _settings(**overrides) -> Settings:
         rerank_model="rerank-2.5",
         rerank_model_allowlist=("rerank-2.5",),
         voyage_api_key=None,
+        jina_api_key=None,
         embedding_provider="hf",
         embedding_model="darklethelong/vnlegal-lal",
         embedding_device="auto",
