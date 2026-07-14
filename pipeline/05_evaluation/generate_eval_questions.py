@@ -274,13 +274,13 @@ def collect_chunks_for_docs(
 
 SYSTEM_PROMPT = """Bạn là một chuyên gia pháp luật Việt Nam. Nhiệm vụ của bạn là tạo câu hỏi trắc nghiệm (multiple-choice) chất lượng cao dựa trên đoạn văn bản pháp luật được cung cấp. Chúng tôi cung cấp nội dung của CẢ HAI VĂN BẢN có mối quan hệ pháp lý với nhau.
 
-YÊU CẦU:
-1. Tạo đúng {n_questions} câu hỏi trắc nghiệm, mỗi câu có 4 lựa chọn (A, B, C, D).
-2. Chỉ có DUY NHẤT 1 đáp án đúng cho mỗi câu.
-3. Câu hỏi phải trả lời được DỰA TRÊN nội dung chunks đã cho, KHÔNG dựa trên kiến thức bên ngoài.
-4. Phân bố các mức độ khó: 1 câu dễ (easy), 1-2 câu trung bình (medium), 1 câu khó (hard).
-5. Đa dạng loại câu hỏi: factual, inference, cross_reference (hỏi về quan hệ/dẫn chiếu giữa 2 văn bản), multi_hop (cần kết hợp thông tin cả 2 văn bản mới trả lời được). ƯU TIÊN tạo câu hỏi multi_hop/cross_reference.
-6. Viết hoàn toàn bằng tiếng Việt.
+YÊU CẦU QUAN TRỌNG:
+1. TÍNH ĐỘC LẬP & TỰ NHIÊN CỦA CÂU HỎI: Người đọc câu hỏi KHÔNG nhìn thấy đoạn text được cung cấp. TUYỆT ĐỐI KHÔNG dùng các từ như "Văn bản 1", "Văn bản 2", "Văn bản trên", "Đoạn trích", "Chunk" trong câu hỏi hay đáp án. Nếu cần thiết, hãy đưa trực tiếp tên hoặc số hiệu của văn bản vào câu hỏi (VD: "Theo Nghị định 163/2016/NĐ-CP...", "Theo Nghị quyết của HĐND tỉnh Thừa Thiên Huế...").
+2. HỎI NHƯ NGƯỜI DÙNG THỰC TẾ: Các câu hỏi kết hợp (multi-hop/cross_reference) phải mô phỏng tình huống người dùng thực tế đang tìm kiếm thông tin, KHÔNG đặt câu hỏi có các cụm từ gượng ép như "Kết hợp thông tin từ 2 văn bản", hoặc "Trong khi văn bản 1 nói A, văn bản 2 nói gì".
+3. KHÔNG SUY DIỄN NGOÀI VĂN BẢN (NO HALLUCINATION): Câu hỏi và đáp án phải dựa 100% vào nội dung văn bản cung cấp. Không tự ý suy luận ngày tháng, số liệu nếu văn bản không ghi rõ (VD: Nếu văn bản ghi "năm ngân sách 2022", đáp án phải dùng đúng thuật ngữ đó, không tự đổi thành "01 tháng 01 năm 2022").
+4. ĐỊNH DẠNG: Tạo đúng {n_questions} câu hỏi trắc nghiệm, mỗi câu có 4 lựa chọn (A, B, C, D) với DUY NHẤT 1 đáp án đúng. Các phương án sai (distractors) phải hợp lý, dễ nhầm lẫn nhưng chắc chắn sai dựa trên văn bản.
+5. ĐỘ KHÓ: Phân bố 1 câu dễ (easy), 1-2 câu trung bình (medium), 1 câu khó (hard).
+6. LOẠI CÂU HỎI: Đa dạng (factual, inference, cross_reference, multi_hop). Ưu tiên các câu hỏi mang tính suy luận thực tế. Viết hoàn toàn bằng tiếng Việt.
 
 ĐỊNH DẠNG OUTPUT: Trả về CHÍNH XÁC một JSON array, không có text nào khác. Mỗi object có cấu trúc:
 ```json
@@ -665,8 +665,11 @@ def run_generation(
 
 def run_pipeline(args):
     """Run the full pipeline."""
-    global CHUNKS_PATH, OUTPUT_FILE, OUTPUT_DIR, CHECKPOINT_FILE, SAMPLED_DATA_FILE
+    global CHUNKS_PATH, OUTPUT_FILE, OUTPUT_DIR, CHECKPOINT_FILE, SAMPLED_DATA_FILE, TARGET_QUESTIONS
     
+    if getattr(args, "debug", False):
+        TARGET_QUESTIONS = 16
+
     if hasattr(args, "chunk_file") and args.chunk_file:
         CHUNKS_PATH = Path(args.chunk_file)
     if hasattr(args, "output_file") and args.output_file:
@@ -692,13 +695,14 @@ def run_pipeline(args):
     # Print sampling summary
     type_dist = {}
     for d in sampled_docs:
-        lt = d["legal_type"]
-        type_dist[lt] = type_dist.get(lt, 0) + 1
+        for key in ("doc1", "doc2"):
+            lt = d[key]["legal_type"]
+            type_dist[lt] = type_dist.get(lt, 0) + 1
     logger.info("Legal type distribution: %s", json.dumps(type_dist, ensure_ascii=False))
 
     if args.dry_run:
         logger.info("\n=== DRY RUN MODE ===")
-        logger.info("Sampled %d documents, %d total chunks",
+        logger.info("Sampled %d document pairs, %d total chunks",
                     len(sampled_docs),
                     sum(len(v) for v in doc_chunks.values()))
         logger.info("Check sampled data at: %s", SAMPLED_DATA_FILE)
@@ -706,9 +710,11 @@ def run_pipeline(args):
         # Show a sample prompt
         if sampled_docs and doc_chunks:
             sample_doc = sampled_docs[0]
-            sample_chunks = doc_chunks[sample_doc["doc_id"]]
+            doc1_id = sample_doc["doc1"]["doc_id"]
+            doc2_id = sample_doc["doc2"]["doc_id"]
+            sample_chunks = doc_chunks.get(doc1_id, []) + doc_chunks.get(doc2_id, [])
             prompt = build_prompt(sample_doc, sample_chunks)
-            logger.info("\n--- SAMPLE PROMPT (doc_id=%d) ---\n%s\n---",
+            logger.info("\n--- SAMPLE PROMPT (doc_id=%s) ---\n%s\n---",
                        sample_doc["doc_id"], prompt[:2000])
         return
 
@@ -752,7 +758,7 @@ def run_pipeline(args):
         CHECKPOINT_FILE.unlink()
         logger.info("Checkpoint cleaned up.")
 
-    logger.info("\nDone! ✅")
+    logger.info("\nDone!")
 
 
 if __name__ == "__main__":
@@ -762,5 +768,6 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
     parser.add_argument("--chunk-file", type=str, default=str(CHUNKS_PATH), help="Path to chunks.parquet file")
     parser.add_argument("--output-file", type=str, default=str(OUTPUT_FILE), help="Path to output JSON file")
+    parser.add_argument("--debug", action="store_true", help="Debug mode: only generate 16 questions")
     args = parser.parse_args()
     run_pipeline(args)
