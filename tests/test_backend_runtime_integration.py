@@ -331,3 +331,59 @@ def test_openai_compatible_answer_service_returns_model_answer_and_citations() -
     assert request["model"] == "legal-model"
     assert request["temperature"] == 0.2
     assert "Noi dung phap ly" in request["messages"][-1]["content"]
+
+
+def test_openai_compatible_answer_service_includes_resolution_status_in_prompt() -> None:
+    from answer_service import OpenAICompatibleAnswerService
+    from contracts import AnswerContext
+
+    client = Mock()
+    client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="Answer.")
+            )
+        ]
+    )
+    service = OpenAICompatibleAnswerService(client=client, model="legal-model")
+
+    contexts = [
+        AnswerContext(
+            source="retrieval",
+            chunk_id="chunk-1",
+            doc_id="doc-old",
+            title="Old Doc",
+            text="Old rule",
+            citation="Old Doc | Article 1",
+            resolution={
+                "action": "replaced",
+                "reason": "Replaced by doc-new",
+                "replacement_doc_id": "doc-new",
+            },
+        ),
+        AnswerContext(
+            source="graph",
+            chunk_id="chunk-2",
+            doc_id="doc-new",
+            title="New Doc",
+            text="New rule",
+            citation="New Doc | Article 1",
+            resolution={
+                "action": "kept",
+                "reason": "Replacement for doc-old",
+            },
+        ),
+    ]
+
+    service.answer("Query", contexts, temperature=0.0)
+    request = client.chat.completions.create.call_args.kwargs
+
+    prompt_content = request["messages"][-1]["content"]
+    assert "TRẠNG THÁI: HẾT HIỆU LỰC - Thay thế bởi doc-new" in prompt_content
+    assert "Old rule" in prompt_content
+    assert "New rule" in prompt_content
+    # System instruction must include the custom warning guidelines
+    system_content = request["messages"][0]["content"]
+    assert "TRẠNG THÁI: HẾT HIỆU LỰC" in system_content
+    assert "quy định của tài liệu mới" in system_content
+

@@ -75,6 +75,7 @@ class LightRAGService:
                     request.query,
                     [hit.to_dict() for hit in retrieval_hits],
                     request.graph.max_hops,
+                    auto_depth=request.graph.auto_depth,
                 )
                 graph_payload = graph_context.to_dict()
             except Exception:
@@ -126,6 +127,16 @@ class LightRAGService:
             trace["lightrag_error"] = lightrag_error
         if answer_error:
             trace["answer_error"] = answer_error
+
+        # Include document resolution info in trace.
+        resolved = self.context_assembler.last_resolved
+        if resolved is not None:
+            if resolved.warnings:
+                trace["resolution_warnings"] = resolved.warnings
+            if resolved.resolutions:
+                trace["resolutions"] = [
+                    r.to_dict() for r in resolved.resolutions
+                ]
 
         return {
             "answer": answer_payload.get("answer", ""),

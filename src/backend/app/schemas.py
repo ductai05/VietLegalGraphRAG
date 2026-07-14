@@ -35,7 +35,8 @@ class LLMConfigModel(BaseModel):
 class GraphConfigModel(BaseModel):
     enabled: bool = True
     use_lightrag: bool = True
-    max_hops: int = Field(default=1, ge=0, le=2)
+    max_hops: int = Field(default=1, ge=0, le=3)
+    auto_depth: bool = True
 
 
 class SearchRequestModel(BaseModel):

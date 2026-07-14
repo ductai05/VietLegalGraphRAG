@@ -141,9 +141,13 @@ class GraphRetriever:
         query: str,
         retrieval_hits: list[dict[str, Any]],
         max_hops: int,
+        auto_depth: bool = True,
     ) -> GraphContext:
         detected = self.intent_detector.detect(query)
         intent = detected["intent"] or "general"
+        effective_depth = (
+            self._resolve_depth(intent, max_hops) if auto_depth else max_hops
+        )
         doc_ids = self._doc_ids_from_hits(
             retrieval_hits,
             document_number=detected.get("document_number"),
@@ -153,7 +157,7 @@ class GraphRetriever:
 
         fallback_context: GraphContext | None = None
         for doc_id in doc_ids:
-            context = self.get_document_neighbors(doc_id, depth=max_hops)
+            context = self.get_document_neighbors(doc_id, depth=effective_depth)
             context.query_intent = intent
             if fallback_context is None:
                 fallback_context = context
@@ -205,6 +209,23 @@ class GraphRetriever:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    # Intents that benefit from deeper graph traversal.  Amendment and
+    # repeal chains commonly reference intermediate documents.
+    _DEEP_INTENTS: dict[str, int] = {
+        "amendment": 2,
+        "repeal": 2,
+    }
+
+    def _resolve_depth(self, intent: str, requested_depth: int) -> int:
+        """Return the effective traversal depth for *intent*.
+
+        When the caller-requested depth is shallower than the recommended
+        minimum for an intent, the recommended value is used instead.
+        The result is still clamped to [1, MAX_DEPTH].
+        """
+        min_depth = self._DEEP_INTENTS.get(intent, 1)
+        return max(1, min(max(requested_depth, min_depth), MAX_DEPTH))
 
     def _filter_relations(self, relations: list[str] | None) -> list[str]:
         """Intersect caller-supplied relations with supported types."""
@@ -260,15 +281,16 @@ class GraphRetriever:
             )
         else:
             # Variable-length path, follows relationships up to `depth` hops.
-            # Paths that exceed 100 intermediate nodes are discarded to avoid
-            # unbounded traversals on highly-connected nodes.
+            # Inline relation type filtering via WHERE ALL on path rels
+            # reduces data transferred over BOLT compared to post-UNWIND
+            # filtering.  DISTINCT eliminates duplicate edges from cycles.
             query = """
-                MATCH path = (start:Document)-[rel*1..%d]-(end:Document)
+                MATCH path = (start:Document)-[rels*1..%d]-(end:Document)
                 WHERE (start.doc_id = $doc_id OR start.id = $node_id)
+                  AND ALL(r IN rels WHERE type(r) IN $relations)
                 WITH NODES(path) AS ns, RELS(path) AS rs
                 UNWIND RANGE(0, SIZE(ns) - 2) AS i
-                WITH ns[i] AS source, ns[i + 1] AS target, rs[i] AS rel
-                WHERE type(rel) IN $relations
+                WITH DISTINCT ns[i] AS source, ns[i + 1] AS target, rs[i] AS rel
                 RETURN source, target, type(rel) AS type,
                        rel.raw_label AS raw_label
                 LIMIT 100

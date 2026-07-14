@@ -17,6 +17,8 @@ class AnswerContext:
     citation: str
     relation: str | None = None
     raw_label: str | None = None
+    effect_status: str = ""
+    resolution: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -47,6 +49,7 @@ class RetrievalHit:
             title=self.title,
             text=self.text,
             citation=self.citation,
+            effect_status=self.effect_status,
         )
 
 
