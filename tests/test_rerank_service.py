@@ -93,7 +93,7 @@ def test_jina_reranker_fallback_on_api_error(monkeypatch) -> None:
 
 
 def test_routing_reranker_routes_correctly() -> None:
-    from rerank_service import RoutingReranker, NoopReranker
+    from rerank_service import RoutingReranker
 
     class DummyReranker:
         def __init__(self, name: str) -> None:
