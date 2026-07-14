@@ -95,6 +95,7 @@ services:
     volumes:
       - ./credentials:/app/credentials:ro
       - ./hf-cache:/app/.cache/huggingface
+      - ../../onnx_model:/app/onnx_model:ro
     healthcheck:
       test:
         [

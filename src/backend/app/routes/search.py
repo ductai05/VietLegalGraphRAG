@@ -39,8 +39,14 @@ def search(
     retrieval_request = RetrievalRequest(**request.model_dump())
     hits = runtime.retrieval_service.search(retrieval_request)
     
-    if retrieval_request.rerank.enabled and not any("rerank" in hit.scores for hit in hits):
+    runtime_info = dict(runtime.status)
+    if retrieval_request.rerank.enabled:
         active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+    else:
+        active_provider = "noop"
+    runtime_info["reranker"] = active_provider
+
+    if retrieval_request.rerank.enabled and not any("rerank" in hit.scores for hit in hits):
         warn_key = f"reranker.{active_provider}_api_failed"
         if warn_key not in runtime.warnings:
             runtime.warnings.append(warn_key)
@@ -52,7 +58,7 @@ def search(
         "latency_ms": _elapsed_ms(started),
         "results": [hit.to_dict() for hit in hits],
         "warnings": runtime.warnings,
-        "runtime": runtime.status,
+        "runtime": runtime_info,
     }
 
 
@@ -73,7 +79,14 @@ def answer(
     payload = runtime.lightrag_service.answer(retrieval_request)
     trace = payload.setdefault("retrieval_trace", {})
     trace["runtime"] = runtime.status.get("runtime", "unknown")
-    trace["services"] = runtime.status
+    
+    runtime_info = dict(runtime.status)
+    if retrieval_request.rerank.enabled:
+        active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+    else:
+        active_provider = "noop"
+    runtime_info["reranker"] = active_provider
+    trace["services"] = runtime_info
     
     if retrieval_request.rerank.enabled:
         context_hits = payload.get("retrieval_context", [])

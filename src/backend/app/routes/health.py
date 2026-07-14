@@ -23,11 +23,11 @@ def health(runtime: RuntimeServices = Depends(get_runtime_services)) -> dict[str
         and settings.llm_provider.lower() == "openai-compatible"
     ):
         degraded = True
-    if (
-        runtime.status.get("reranker") == "noop"
-        and settings.rerank_provider.lower() == "voyage"
-    ):
-        degraded = True
+    selected_reranker = settings.rerank_provider.lower()
+    if selected_reranker != "noop":
+        configured_rerankers = [r.strip().lower() for r in runtime.status.get("reranker", "").split(",")]
+        if selected_reranker not in configured_rerankers:
+            degraded = True
     if (
         runtime.status.get("ocr") == "disabled"
         and settings.ocr_provider.strip().lower() not in {"", "none"}
