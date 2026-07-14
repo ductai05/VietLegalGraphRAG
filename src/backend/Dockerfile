@@ -29,8 +29,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY src/backend/app /app/src/backend/app
 COPY src/backend/services /app/src/backend/services
 
-# ONNX model directory — pre-exported via scripts/export_vnlegal_onnx.py
-COPY onnx_model/ /app/onnx_model/
+
 
 ENV PYTHONPATH=/app/src/backend/services:/app/src/backend/app
 EXPOSE 8000

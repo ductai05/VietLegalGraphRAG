@@ -318,6 +318,8 @@ def _build_reranker(
     warnings: list[str],
     status: dict[str, str],
 ) -> Any:
+    configured_rerankers = []
+
     # Build Voyage Reranker if configured
     voyage_reranker = NoopReranker()
     if settings.voyage_api_key:
@@ -327,6 +329,7 @@ def _build_reranker(
                 client=voyageai.Client(api_key=settings.voyage_api_key),
                 model=settings.rerank_model,
             )
+            configured_rerankers.append("voyage")
         except Exception:
             warnings.append("reranker.voyage_init_failed")
     else:
@@ -339,10 +342,15 @@ def _build_reranker(
             api_key=settings.jina_api_key,
             model=settings.rerank_model,
         )
+        configured_rerankers.append("jina")
     else:
         warnings.append("reranker.jina_not_configured")
 
-    status["reranker"] = settings.rerank_provider.lower()
+    if configured_rerankers:
+        status["reranker"] = ", ".join(configured_rerankers)
+    else:
+        status["reranker"] = "noop"
+
     return RoutingReranker(
         voyage_reranker=voyage_reranker,
         jina_reranker=jina_reranker,
