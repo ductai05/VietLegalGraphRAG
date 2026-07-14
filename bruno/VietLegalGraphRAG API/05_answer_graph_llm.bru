@@ -16,11 +16,12 @@ headers {
 
 body:json {
   {
-    "query": "dieu kien ket hon theo phap luat Viet Nam",
-    "retrieval_mode": "sparse",
-    "top_k": 2,
+    "query": "điều kiện kết hôn theo pháp luật Việt Nam",
+    "retrieval_mode": "hybrid",
+    "top_k": 5,
     "rerank": {
-      "enabled": false
+      "enabled": true,
+      "model": "rerank-2.5"
     },
     "graph": {
       "enabled": true,
@@ -29,7 +30,7 @@ body:json {
     },
     "llm": {
       "temperature": 0.2,
-      "max_context_chunks": 2
+      "max_context_chunks": 5
     }
   }
 }

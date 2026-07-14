@@ -62,6 +62,7 @@ class LocalONNXEmbedder:
         self._tokenizer: Any = None
         self._model_path = Path(model_path)
         self._tokenizer_path = Path(tokenizer_path)
+        self._encoder: Any = None
 
     def _ensure_session(self) -> Any:
         if self._session is None:
@@ -93,11 +94,13 @@ class LocalONNXEmbedder:
         return [float(value) for value in embedding]
 
     def _ensure_encoder(self) -> "_ONNXEncoder":
-        return _ONNXEncoder(
-            model_path=self._model_path,
-            tokenizer_path=self._tokenizer_path,
-            max_length=self.max_length,
-        )
+        if self._encoder is None:
+            self._encoder = _ONNXEncoder(
+                model_path=self._model_path,
+                tokenizer_path=self._tokenizer_path,
+                max_length=self.max_length,
+            )
+        return self._encoder
 
 
 class _ONNXEncoder:
@@ -139,7 +142,7 @@ class _ONNXEncoder:
         hidden = outputs[0]
         # normalize (same post-processing as PyTorch encoder)
         seq_len = int(attention_mask.shape[1])
-        last_indices = seq_len - 1 - attention_mask.flip(dims=[1]).argmax(axis=1)
+        last_indices = seq_len - 1 - attention_mask[:, ::-1].argmax(axis=1)
         row_indices = list(range(len(texts)))
         embeddings = hidden[row_indices, last_indices]
         # L2 normalize
