@@ -78,10 +78,16 @@ def main():
             # Flatten all equivalent IDs for simple lookup
             flat_relevant_ids = list(set(item for g in groups for item in g))
 
+            # Extract doc IDs (fallback to single doc_id if doc_ids missing for compatibility)
+            relevant_doc_ids = q.get("evidence", {}).get("doc_ids", [])
+            if not relevant_doc_ids and "doc_id" in q.get("evidence", {}):
+                relevant_doc_ids = [q["evidence"]["doc_id"]]
+
             gold_row = {
                 "query": q["question"],
                 "relevant_chunk_ids": flat_relevant_ids,
                 "relevant_chunk_groups": groups,
+                "relevant_doc_ids": [str(d) for d in relevant_doc_ids], # Cast to string for matching in evaluate_graph
                 "group": q.get("question_type", "unknown")
             }
             f.write(json.dumps(gold_row, ensure_ascii=False) + "\n")

@@ -92,86 +92,80 @@ logger = logging.getLogger(__name__)
 # PHASE 1: SAMPLING
 # ============================================================
 
-def load_metadata() -> pl.DataFrame:
-    """Load metadata parquet using Polars."""
-    logger.info("Loading metadata from %s", META_PATH)
-    needed = ["id", "title", "legal_type", "effect_status", "issuing_authority"]
-    df = pl.scan_parquet(META_PATH, glob=False).select(needed).collect()
-    logger.info("Metadata loaded: %d documents", df.height)
-    return df
+def get_neo4j_driver():
+    try:
+        env_file = BASE_DIR / ".env"
+        if env_file.exists():
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        k, v = line.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+        from neo4j import GraphDatabase
+        uri = os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687")
+        user = os.environ.get("NEO4J_USER", "neo4j")
+        pwd = os.environ.get("NEO4J_PASSWORD", "password")
+        return GraphDatabase.driver(uri, auth=(user, pwd))
+    except ImportError:
+        logger.error("neo4j python package not installed.")
+        sys.exit(1)
 
 
-def stratified_sample_documents(
-    meta_df: pl.DataFrame,
-    num_docs: int,
-    seed: int,
-) -> List[Dict]:
+def sample_document_pairs_from_neo4j(num_pairs: int, seed: int) -> List[Dict]:
+    """Sample document pairs from Neo4j."""
+    logger.info("Connecting to Neo4j to sample document pairs...")
+    driver = get_neo4j_driver()
+    db = os.environ.get("NEO4J_DATABASE", "neo4j")
+    
+    query = """
+    MATCH (d1:Document)-[r:AMENDS|CITES|GUIDELINES]->(d2:Document)
+    WHERE (d1.effect_status IS NULL OR d1.effect_status CONTAINS 'Còn hiệu lực') 
+      AND (d2.effect_status IS NULL OR d2.effect_status CONTAINS 'Còn hiệu lực')
+    WITH d1, d2, r, rand() as rnd
+    ORDER BY rnd
+    LIMIT $limit
+    RETURN 
+        d1.id AS d1_id, d1.title AS d1_title, d1.legal_type AS d1_type, d1.issuing_authority AS d1_auth,
+        d2.id AS d2_id, d2.title AS d2_title, d2.legal_type AS d2_type, d2.issuing_authority AS d2_auth,
+        type(r) AS rel_type
     """
-    Stratified random sample of documents across legal_type categories.
-    Returns list of dicts with document info.
-    """
-    rng = random.Random(seed)
+    sampled_pairs = []
+    with driver.session(database=db) as session:
+        result = session.run(query, limit=num_pairs)
+        for record in result:
+            d1_id_str = record["d1_id"].replace("doc:", "")
+            d2_id_str = record["d2_id"].replace("doc:", "")
+            try:
+                d1_id = int(d1_id_str)
+                d2_id = int(d2_id_str)
+            except ValueError:
+                continue
+                
+            sampled_pairs.append({
+                "doc_id": f"{d1_id}_{d2_id}",
+                "doc_ids": [d1_id, d2_id],
+                "rel_type": record["rel_type"],
+                "doc1": {
+                    "doc_id": d1_id,
+                    "title": record["d1_title"] or "",
+                    "legal_type": record["d1_type"] or "Khác",
+                    "issuing_authority": record["d1_auth"] or "",
+                },
+                "doc2": {
+                    "doc_id": d2_id,
+                    "title": record["d2_title"] or "",
+                    "legal_type": record["d2_type"] or "Khác",
+                    "issuing_authority": record["d2_auth"] or "",
+                }
+            })
+            
+    driver.close()
+    logger.info("Sampled %d document pairs from Neo4j", len(sampled_pairs))
+    return sampled_pairs
 
-    # Filter by effect_status
-    active_df = meta_df.filter(
-        pl.col("effect_status").fill_null("").str.contains("Còn hiệu lực")
-    )
 
-    ids = active_df["id"].to_list()
-    titles = active_df["title"].to_list()
-    legal_types = active_df["legal_type"].to_list()
-    issuing_auths = active_df["issuing_authority"].to_list()
-
-    # Build per-type pools
-    type_pools: Dict[str, List[Dict]] = {}
-    for i in range(len(ids)):
-        lt = legal_types[i] or "Khác"
-        doc = {
-            "doc_id": ids[i],
-            "title": titles[i] or "",
-            "legal_type": lt,
-            "issuing_authority": issuing_auths[i] or "",
-        }
-        type_pools.setdefault(lt, []).append(doc)
-
-    logger.info(
-        "Document pools after filtering (Còn hiệu lực): %s",
-        {k: len(v) for k, v in sorted(type_pools.items(), key=lambda x: -len(x[1]))[:15]}
-    )
-
-    # Allocate slots across types
-    sampled = []
-    remaining = num_docs
-
-    # Priority types first
-    for lt in PRIORITY_LEGAL_TYPES:
-        pool = type_pools.get(lt, [])
-        if not pool:
-            continue
-        # Proportional allocation, at least 2 per type if available
-        share = max(2, int(num_docs * len(pool) / sum(len(v) for v in type_pools.values())))
-        share = min(share, remaining, len(pool))
-        chosen = rng.sample(pool, share)
-        sampled.extend(chosen)
-        remaining -= share
-        if remaining <= 0:
-            break
-
-    # Fill remaining from all pools
-    if remaining > 0:
-        all_remaining = []
-        sampled_ids = {d["doc_id"] for d in sampled}
-        for pool in type_pools.values():
-            for doc in pool:
-                if doc["doc_id"] not in sampled_ids:
-                    all_remaining.append(doc)
-        extra = rng.sample(all_remaining, min(remaining, len(all_remaining)))
-        sampled.extend(extra)
-
-    rng.shuffle(sampled)
-    logger.info("Sampled %d documents across %d legal types",
-                len(sampled), len({d["legal_type"] for d in sampled}))
-    return sampled
+# Stratified sample logic is replaced by neo4j pairing
 
 
 def collect_chunks_for_docs(
@@ -278,18 +272,17 @@ def collect_chunks_for_docs(
 # PHASE 2: PROMPT CONSTRUCTION
 # ============================================================
 
-SYSTEM_PROMPT = """Bạn là một chuyên gia pháp luật Việt Nam. Nhiệm vụ của bạn là tạo câu hỏi trắc nghiệm (multiple-choice) chất lượng cao dựa trên đoạn văn bản pháp luật được cung cấp.
+SYSTEM_PROMPT = """Bạn là một chuyên gia pháp luật Việt Nam. Nhiệm vụ của bạn là tạo câu hỏi trắc nghiệm (multiple-choice) chất lượng cao dựa trên đoạn văn bản pháp luật được cung cấp. Chúng tôi cung cấp nội dung của CẢ HAI VĂN BẢN có mối quan hệ pháp lý với nhau.
 
 YÊU CẦU:
 1. Tạo đúng {n_questions} câu hỏi trắc nghiệm, mỗi câu có 4 lựa chọn (A, B, C, D).
 2. Chỉ có DUY NHẤT 1 đáp án đúng cho mỗi câu.
 3. Câu hỏi phải trả lời được DỰA TRÊN nội dung chunks đã cho, KHÔNG dựa trên kiến thức bên ngoài.
 4. Phân bố các mức độ khó: 1 câu dễ (easy), 1-2 câu trung bình (medium), 1 câu khó (hard).
-5. Các đáp án sai (distractors) phải hợp lý, không quá rõ ràng là sai.
-6. Đa dạng loại câu hỏi: factual (hỏi sự kiện/thông tin), inference (suy luận), procedural (quy trình), comparison (so sánh).
-7. Viết hoàn toàn bằng tiếng Việt.
+5. Đa dạng loại câu hỏi: factual, inference, cross_reference (hỏi về quan hệ/dẫn chiếu giữa 2 văn bản), multi_hop (cần kết hợp thông tin cả 2 văn bản mới trả lời được). ƯU TIÊN tạo câu hỏi multi_hop/cross_reference.
+6. Viết hoàn toàn bằng tiếng Việt.
 
-ĐỊNH DẠNG OUTPUT: Trả về CHÍNH XÁC một JSON array, không có text nào khác trước hoặc sau JSON. Mỗi object trong array có cấu trúc:
+ĐỊNH DẠNG OUTPUT: Trả về CHÍNH XÁC một JSON array, không có text nào khác. Mỗi object có cấu trúc:
 ```json
 [
   {{
@@ -302,54 +295,49 @@ YÊU CẦU:
     }},
     "answer": "B",
     "difficulty": "medium",
-    "question_type": "factual",
+    "question_type": "multi_hop",
     "reasoning": "Giải thích ngắn gọn tại sao đáp án đúng",
-    "relevant_chunk_ids": ["chunk_id_1"]
+    "relevant_chunk_ids": ["chunk_id_1", "chunk_id_2"]
   }}
 ]
 ```
-
-Lưu ý:
-- "answer" chỉ chứa ký tự A, B, C, hoặc D.
-- "difficulty" là một trong: "easy", "medium", "hard".
-- "question_type" là một trong: "factual", "inference", "procedural", "comparison".
-- "relevant_chunk_ids" chứa chunk_id(s) liên quan nhất đến câu hỏi.
+Lưu ý: relevant_chunk_ids chứa các chunk liên quan nhất. question_type thuộc: factual, inference, procedural, comparison, multi_hop, cross_reference.
 """
 
 
 def build_prompt(
-    doc_info: Dict,
+    pair_info: Dict,
     chunks: List[Dict],
     n_questions: int = QUESTIONS_PER_CALL,
 ) -> str:
-    """Build the user prompt with document context."""
-    # Document header
-    header = (
-        f"=== THÔNG TIN VĂN BẢN ===\n"
-        f"Tên: {doc_info['title']}\n"
-        f"Loại: {doc_info['legal_type']}\n"
-        f"Cơ quan ban hành: {doc_info['issuing_authority']}\n"
-        f"Doc ID: {doc_info['doc_id']}\n"
-    )
+    """Build the user prompt with document pair context."""
+    doc1 = pair_info["doc1"]
+    doc2 = pair_info["doc2"]
+    rel_type = pair_info["rel_type"]
 
-    # Chunks
-    chunk_sections = []
-    for i, chunk in enumerate(chunks, 1):
-        section = chunk.get("section_path", [])
-        section_str = " > ".join(section) if section else "N/A"
-        chunk_sections.append(
-            f"--- Chunk {i} (ID: {chunk['chunk_id']}, Type: {chunk['chunk_type']}, "
-            f"Section: {section_str}) ---\n"
-            f"{chunk['chunk_text']}\n"
-        )
-
-    chunks_text = "\n".join(chunk_sections)
+    chunks_d1 = [c for c in chunks if c["doc_id"] == doc1["doc_id"]]
+    chunks_d2 = [c for c in chunks if c["doc_id"] == doc2["doc_id"]]
 
     prompt = (
-        f"{header}\n"
-        f"=== NỘI DUNG CÁC CHUNKS ===\n"
-        f"{chunks_text}\n"
-        f"Hãy tạo {n_questions} câu hỏi trắc nghiệm dựa trên nội dung trên. "
+        f"=== VĂN BẢN 1 (Doc ID: {doc1['doc_id']}) ===\n"
+        f"Tên: {doc1['title']}\n"
+        f"Loại: {doc1['legal_type']}\n\n"
+    )
+    for i, c in enumerate(chunks_d1, 1):
+        prompt += f"--- Chunk 1.{i} (ID: {c['chunk_id']}) ---\n{c['chunk_text']}\n\n"
+
+    prompt += f"=== MỐI QUAN HỆ PHÁP LÝ ===\nVăn bản 1 [{rel_type}] Văn bản 2\n\n"
+
+    prompt += (
+        f"=== VĂN BẢN 2 (Doc ID: {doc2['doc_id']}) ===\n"
+        f"Tên: {doc2['title']}\n"
+        f"Loại: {doc2['legal_type']}\n\n"
+    )
+    for i, c in enumerate(chunks_d2, 1):
+        prompt += f"--- Chunk 2.{i} (ID: {c['chunk_id']}) ---\n{c['chunk_text']}\n\n"
+
+    prompt += (
+        f"Hãy tạo {n_questions} câu hỏi trắc nghiệm dựa trên nội dung 2 văn bản trên. "
         f"Trả về JSON array như format đã yêu cầu."
     )
     return prompt
@@ -469,7 +457,7 @@ def validate_question(q: Dict) -> bool:
         return False
     if q["difficulty"] not in {"easy", "medium", "hard"}:
         return False
-    if q["question_type"] not in {"factual", "inference", "procedural", "comparison"}:
+    if q["question_type"] not in {"factual", "inference", "procedural", "comparison", "multi_hop", "cross_reference"}:
         return False
 
     return True
@@ -558,19 +546,24 @@ def deduplicate_questions(questions: List[Dict]) -> List[Dict]:
 # ============================================================
 
 def run_sampling(seed: int) -> Tuple[List[Dict], Dict[int, List[Dict]]]:
-    """Phase 1: Sample documents and collect chunks."""
-    meta_table = load_metadata()
-    sampled_docs = stratified_sample_documents(meta_table, NUM_DOCS_TO_SAMPLE, seed)
-    del meta_table  # free memory
+    """Phase 1: Sample document pairs and collect chunks."""
+    sampled_pairs = sample_document_pairs_from_neo4j(NUM_DOCS_TO_SAMPLE, seed)
 
-    doc_ids = [d["doc_id"] for d in sampled_docs]
-    doc_chunks = collect_chunks_for_docs(doc_ids, CHUNKS_PER_DOC, seed)
+    all_doc_ids = set()
+    for pair in sampled_pairs:
+        all_doc_ids.update(pair["doc_ids"])
 
-    # Remove docs without chunks
-    sampled_docs = [d for d in sampled_docs if d["doc_id"] in doc_chunks]
+    doc_chunks = collect_chunks_for_docs(list(all_doc_ids), CHUNKS_PER_DOC, seed)
 
-    save_sampled_data(sampled_docs, doc_chunks)
-    return sampled_docs, doc_chunks
+    valid_pairs = []
+    for pair in sampled_pairs:
+        d1_has = pair["doc1"]["doc_id"] in doc_chunks
+        d2_has = pair["doc2"]["doc_id"] in doc_chunks
+        if d1_has and d2_has:
+            valid_pairs.append(pair)
+
+    save_sampled_data(valid_pairs, doc_chunks)
+    return valid_pairs, doc_chunks
 
 
 def run_generation(
@@ -604,8 +597,10 @@ def run_generation(
             logger.info("Reached target of %d questions. Stopping.", TARGET_QUESTIONS)
             break
 
-        doc_id = doc["doc_id"]
-        chunks = doc_chunks.get(doc_id, [])
+        doc1_id = doc["doc1"]["doc_id"]
+        doc2_id = doc["doc2"]["doc_id"]
+        pair_id = doc["doc_id"]
+        chunks = doc_chunks.get(doc1_id, []) + doc_chunks.get(doc2_id, [])
         if not chunks:
             continue
 
@@ -613,9 +608,8 @@ def run_generation(
         remaining = TARGET_QUESTIONS - question_counter
         n_q = min(QUESTIONS_PER_CALL, remaining)
 
-        logger.info("[%d/%d] Generating %d questions for doc_id=%d (%s) with %d chunks...",
-                    idx + 1, len(docs_to_process), n_q, doc_id,
-                    doc["legal_type"], len(chunks))
+        logger.info("[%d/%d] Generating %d questions for pair %s with %d chunks...",
+                    idx + 1, len(docs_to_process), n_q, pair_id, len(chunks))
 
         # Build prompts
         system_prompt = SYSTEM_PROMPT.format(n_questions=n_q)
@@ -642,10 +636,11 @@ def run_generation(
                 "evidence": {
                     "chunk_ids": q.get("relevant_chunk_ids", [c["chunk_id"] for c in chunks]),
                     "chunk_texts": [c["chunk_text"][:500] for c in chunks],  # truncated
-                    "doc_id": doc_id,
-                    "doc_title": doc["title"],
-                    "legal_type": doc["legal_type"],
-                    "section_path": chunks[0].get("section_path", []),
+                    "doc_id": pair_id, # maintain compat with old scripts
+                    "doc_ids": doc["doc_ids"], # NEW: Array of doc IDs for multi-hop eval
+                    "doc_title": f"{doc['doc1']['title']} & {doc['doc2']['title']}",
+                    "legal_type": "Multi-doc",
+                    "section_path": chunks[0].get("section_path", []) if chunks else [],
                 },
                 "question_type": q["question_type"],
                 "reasoning": q["reasoning"],
@@ -657,7 +652,7 @@ def run_generation(
                     valid_count, question_counter, TARGET_QUESTIONS)
 
         # Update checkpoint every call
-        checkpoint["completed_doc_ids"].append(doc_id)
+        checkpoint["completed_doc_ids"].append(pair_id)
         checkpoint["questions"] = all_questions
         save_checkpoint(checkpoint)
 
@@ -670,6 +665,17 @@ def run_generation(
 
 def run_pipeline(args):
     """Run the full pipeline."""
+    global CHUNKS_PATH, OUTPUT_FILE, OUTPUT_DIR, CHECKPOINT_FILE, SAMPLED_DATA_FILE
+    
+    if hasattr(args, "chunk_file") and args.chunk_file:
+        CHUNKS_PATH = Path(args.chunk_file)
+    if hasattr(args, "output_file") and args.output_file:
+        OUTPUT_FILE = Path(args.output_file)
+        OUTPUT_DIR = OUTPUT_FILE.parent
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        CHECKPOINT_FILE = OUTPUT_DIR / "_checkpoint.json"
+        SAMPLED_DATA_FILE = OUTPUT_DIR / "_sampled_data.json"
+
     seed = args.seed
     logger.info("=" * 60)
     logger.info("RAG Evaluation Question Generator")
@@ -754,5 +760,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=SEED, help="Random seed for reproducibility")
     parser.add_argument("--dry-run", action="store_true", help="Only sample data, don't call API")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    parser.add_argument("--chunk-file", type=str, default=str(CHUNKS_PATH), help="Path to chunks.parquet file")
+    parser.add_argument("--output-file", type=str, default=str(OUTPUT_FILE), help="Path to output JSON file")
     args = parser.parse_args()
     run_pipeline(args)
