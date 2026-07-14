@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from contracts import AnswerContext, GraphContext, GraphEdge
+from contracts import AnswerContext, GraphContext
 
 # Effect-status values that indicate a document is no longer in force.
 # Values are case-folded for comparison.
