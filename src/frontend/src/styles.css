@@ -38,7 +38,7 @@ body {
   margin: 0;
   background: var(--pixel-bg);
   color: var(--body);
-  font-family: "Pixelify Sans", "Open Sans", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
   font-size: 18px;
   line-height: 1.6;
   letter-spacing: 0;
@@ -97,8 +97,8 @@ h1, h2, h3, h4, h5, h6, p {
 
 h1, h2, h3, h4, h5, h6 {
   color: var(--heading);
-  font-family: "Press Start 2P", "Pixelify Sans", sans-serif;
-  font-weight: 400;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   text-shadow: 3px 3px 0 var(--border-dark);
 }
 
@@ -107,11 +107,13 @@ h1 {
   font-size: 30px;
   line-height: 1.35;
   letter-spacing: -0.01em;
+  font-weight: 800;
 }
 
 h2 {
   font-size: 22px;
   line-height: 1.4;
+  font-weight: 800;
 }
 
 h3 {
@@ -183,7 +185,8 @@ button {
   border-radius: var(--pill-radius);
   background: var(--brand-softer);
   color: var(--brand-strong);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 10px;
   line-height: 1;
   letter-spacing: 0.02em;
@@ -222,7 +225,8 @@ button {
   align-items: center;
   gap: 12px;
   color: var(--heading);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 800;
   font-size: 14px;
   text-decoration: none;
   letter-spacing: 0;
@@ -258,7 +262,8 @@ button {
   border-radius: var(--pill-radius);
   background: transparent;
   color: var(--body);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 10px;
   text-decoration: none;
   transition: background-color 150ms steps(3), color 150ms steps(3), transform 150ms steps(3);
@@ -293,7 +298,8 @@ button {
   background: var(--panel-soft);
   color: var(--heading);
   box-shadow: 0 5px 0 0 var(--border-dark);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 12px;
   line-height: 1.4;
   text-decoration: none;
@@ -409,7 +415,8 @@ button {
 
 .engine-chip strong {
   color: var(--brand-strong);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 10px;
   letter-spacing: 0.02em;
 }
@@ -456,7 +463,8 @@ button {
   border-radius: var(--card-radius);
   background: var(--paper);
   color: var(--paper-ink);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 11px;
   line-height: 2;
   box-shadow: inset 0 0 0 3px #ffffff, 5px 5px 0 0 var(--border-dark);
@@ -523,7 +531,8 @@ button {
   border-radius: var(--card-radius);
   background: var(--panel-soft);
   color: var(--heading);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 9px;
   letter-spacing: 0.02em;
   box-shadow: 3px 3px 0 0 var(--border-dark);
@@ -607,7 +616,8 @@ button {
   padding: 4px 10px;
   border: 3px solid var(--border-dark);
   border-radius: var(--card-radius);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 9px;
   color: #05060f;
 }
@@ -674,7 +684,8 @@ button {
   border-radius: var(--card-radius);
   background: var(--brand);
   color: #00140c;
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 12px;
 }
 
@@ -707,7 +718,8 @@ button {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 11px;
   color: var(--heading);
 }
@@ -782,7 +794,8 @@ button {
   border-radius: var(--card-radius);
   background: var(--accent-yellow);
   color: #241f0a;
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 10px;
   text-decoration: none;
   box-shadow: 0 5px 0 0 var(--border-dark);
@@ -852,7 +865,8 @@ button {
 
 .sidebar-title {
   margin-bottom: 8px;
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 10px;
   color: var(--body-subtle);
   letter-spacing: 0.04em;
@@ -1084,7 +1098,8 @@ button {
   padding-top: 8px;
   border-top: 2px solid rgba(36, 31, 56, 0.18);
   color: #746a52;
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 8px;
   line-height: 1.6;
 }
@@ -1130,7 +1145,8 @@ button {
   border-radius: var(--card-radius);
   background: var(--panel-light);
   color: var(--heading);
-  font-family: "Press Start 2P", sans-serif;
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
   font-size: 9px;
   box-shadow: 3px 3px 0 0 var(--border-dark);
   transition: transform 100ms steps(2), box-shadow 100ms steps(2);
@@ -1146,6 +1162,39 @@ button {
 .prompt-row button:active {
   transform: translateY(3px);
   box-shadow: 0 0 0 0 var(--border-dark);
+}
+
+.ocr-form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px 16px;
+  color: var(--body);
+  font-size: 12px;
+}
+
+.ocr-form input {
+  min-width: 0;
+  padding: 10px;
+  border: 3px solid var(--border-dark);
+  border-radius: var(--card-radius);
+  background: var(--paper);
+}
+
+.ocr-preview {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 10px 0 0;
+  padding: 12px;
+  border: 3px solid var(--border-dark);
+  border-radius: var(--card-radius);
+  background: var(--pixel-bg-alt);
+  color: var(--heading);
+  font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  font-weight: 700;
+  font-size: 14px;
 }
 
 .composer {
@@ -1261,6 +1310,33 @@ button {
   30% { transform: translateY(-6px); opacity: 1; }
 }
 
+/* ---------- Justice scales (animated) ---------- */
+
+.justice-scales__beam {
+  transform-origin: 70px 40px;
+  animation: scales-beam-sway 3.6s ease-in-out infinite;
+}
+
+.justice-scales__pan-left {
+  transform-origin: 22px 40px;
+  animation: scales-pan-sway 3.6s ease-in-out infinite;
+}
+
+.justice-scales__pan-right {
+  transform-origin: 118px 40px;
+  animation: scales-pan-sway 3.6s ease-in-out infinite;
+}
+
+@keyframes scales-beam-sway {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(4deg); }
+}
+
+@keyframes scales-pan-sway {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-4deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
@@ -1309,6 +1385,10 @@ button {
   }
 
   .composer {
+    grid-template-columns: 1fr;
+  }
+
+  .ocr-form {
     grid-template-columns: 1fr;
   }
 

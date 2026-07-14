@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,6 +57,92 @@ def test_settings_reads_runtime_provider_environment(monkeypatch) -> None:
     assert settings.llm_base_url == "https://llm.example/v1"
     assert settings.llm_api_key == "llm-key"
     assert settings.llm_model == "legal-model"
+    assert settings.embedding_model == "darklethelong/vnlegal-lal"
+    assert settings.embedding_device == "auto"
+    assert settings.embedding_max_length == 1024
+
+
+def test_backend_imports_with_app_path_only() -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(BACKEND_APP)
+    for key in (
+        "ELASTICSEARCH_URL",
+        "ELASTICSEARCH_API_KEY",
+        "ELASTICSEARCH_USERNAME",
+        "ELASTICSEARCH_PASSWORD",
+        "VOYAGE_API_KEY",
+        "LLM_API_KEY",
+        "NEO4J_PASSWORD",
+    ):
+        env.pop(key, None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import main; print(main.app.title)"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "VietLegalGraphRAG API" in result.stdout
+
+
+def test_settings_dense_num_candidates_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("DENSE_NUM_CANDIDATES_FACTOR", raising=False)
+    monkeypatch.delenv("DENSE_MIN_NUM_CANDIDATES", raising=False)
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 4
+    assert settings.dense_min_num_candidates == 100
+
+
+def test_settings_dense_num_candidates_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("DENSE_NUM_CANDIDATES_FACTOR", "7")
+    monkeypatch.setenv("DENSE_MIN_NUM_CANDIDATES", "250")
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 7
+    assert settings.dense_min_num_candidates == 250
+
+
+def test_settings_dense_num_candidates_invalid_values_use_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("DENSE_NUM_CANDIDATES_FACTOR", "0")
+    monkeypatch.setenv("DENSE_MIN_NUM_CANDIDATES", "-5")
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 4
+    assert settings.dense_min_num_candidates == 100
+
+
+def test_settings_dense_num_candidates_malformed_values_use_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("DENSE_NUM_CANDIDATES_FACTOR", "many")
+    monkeypatch.setenv("DENSE_MIN_NUM_CANDIDATES", "lots")
+
+    reload_backend_modules()
+    from config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.dense_num_candidates_factor == 4
+    assert settings.dense_min_num_candidates == 100
 
 
 def test_answer_endpoint_uses_degraded_fallback_without_external_credentials(monkeypatch) -> None:
@@ -243,3 +331,59 @@ def test_openai_compatible_answer_service_returns_model_answer_and_citations() -
     assert request["model"] == "legal-model"
     assert request["temperature"] == 0.2
     assert "Noi dung phap ly" in request["messages"][-1]["content"]
+
+
+def test_openai_compatible_answer_service_includes_resolution_status_in_prompt() -> None:
+    from answer_service import OpenAICompatibleAnswerService
+    from contracts import AnswerContext
+
+    client = Mock()
+    client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="Answer.")
+            )
+        ]
+    )
+    service = OpenAICompatibleAnswerService(client=client, model="legal-model")
+
+    contexts = [
+        AnswerContext(
+            source="retrieval",
+            chunk_id="chunk-1",
+            doc_id="doc-old",
+            title="Old Doc",
+            text="Old rule",
+            citation="Old Doc | Article 1",
+            resolution={
+                "action": "replaced",
+                "reason": "Replaced by doc-new",
+                "replacement_doc_id": "doc-new",
+            },
+        ),
+        AnswerContext(
+            source="graph",
+            chunk_id="chunk-2",
+            doc_id="doc-new",
+            title="New Doc",
+            text="New rule",
+            citation="New Doc | Article 1",
+            resolution={
+                "action": "kept",
+                "reason": "Replacement for doc-old",
+            },
+        ),
+    ]
+
+    service.answer("Query", contexts, temperature=0.0)
+    request = client.chat.completions.create.call_args.kwargs
+
+    prompt_content = request["messages"][-1]["content"]
+    assert "TRẠNG THÁI: HẾT HIỆU LỰC - Thay thế bởi doc-new" in prompt_content
+    assert "Old rule" in prompt_content
+    assert "New rule" in prompt_content
+    # System instruction must include the custom warning guidelines
+    system_content = request["messages"][0]["content"]
+    assert "TRẠNG THÁI: HẾT HIỆU LỰC" in system_content
+    assert "quy định của tài liệu mới" in system_content
+

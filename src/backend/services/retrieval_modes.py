@@ -30,22 +30,31 @@ def resolve_execution_mode(
     return f"{retrieval_mode}_rerank"  # type: ignore[return-value]
 
 
+MAX_TOP_K = 50
+MAX_CANDIDATE_K = 200
+MAX_BATCH_SIZE = 64
+MAX_TIMEOUT_MS = 120000
+MAX_GRAPH_HOPS = 2
+MAX_CONTEXT_CHUNKS = 32
+
+
 @dataclass
 class RerankConfig:
     enabled: bool = True
-    model: str = "BAAI/bge-reranker-v2-m3"
+    provider: str | None = None
+    model: str = "rerank-2.5"
     candidate_k: int = 50
     batch_size: int = 8
     device: str = "auto"
     timeout_ms: int = 30000
 
     def __post_init__(self) -> None:
-        if self.candidate_k <= 0:
-            raise ValueError("rerank.candidate_k must be positive")
-        if self.batch_size <= 0:
-            raise ValueError("rerank.batch_size must be positive")
-        if self.timeout_ms <= 0:
-            raise ValueError("rerank.timeout_ms must be positive")
+        if not 0 < self.candidate_k <= MAX_CANDIDATE_K:
+            raise ValueError(f"rerank.candidate_k must be between 1 and {MAX_CANDIDATE_K}")
+        if not 0 < self.batch_size <= MAX_BATCH_SIZE:
+            raise ValueError(f"rerank.batch_size must be between 1 and {MAX_BATCH_SIZE}")
+        if not 0 < self.timeout_ms <= MAX_TIMEOUT_MS:
+            raise ValueError(f"rerank.timeout_ms must be between 1 and {MAX_TIMEOUT_MS}")
 
 
 @dataclass
@@ -56,8 +65,8 @@ class LLMConfig:
     def __post_init__(self) -> None:
         if not 0.0 <= self.temperature <= 1.0:
             raise ValueError("llm.temperature must be between 0.0 and 1.0")
-        if self.max_context_chunks <= 0:
-            raise ValueError("llm.max_context_chunks must be positive")
+        if not 0 < self.max_context_chunks <= MAX_CONTEXT_CHUNKS:
+            raise ValueError(f"llm.max_context_chunks must be between 1 and {MAX_CONTEXT_CHUNKS}")
 
 
 @dataclass
@@ -65,10 +74,11 @@ class GraphConfig:
     enabled: bool = True
     use_lightrag: bool = True
     max_hops: int = 1
+    auto_depth: bool = True
 
     def __post_init__(self) -> None:
-        if self.max_hops < 0:
-            raise ValueError("graph.max_hops must be non-negative")
+        if not 0 <= self.max_hops <= MAX_GRAPH_HOPS:
+            raise ValueError(f"graph.max_hops must be between 0 and {MAX_GRAPH_HOPS}")
 
 
 @dataclass
@@ -95,8 +105,8 @@ class RetrievalRequest:
             self.llm = LLMConfig(**self.llm)
         if isinstance(self.graph, dict):
             self.graph = GraphConfig(**self.graph)
-        if self.top_k <= 0:
-            raise ValueError("top_k must be positive")
+        if not 0 < self.top_k <= MAX_TOP_K:
+            raise ValueError(f"top_k must be between 1 and {MAX_TOP_K}")
         if self.rerank.enabled and self.rerank.candidate_k < self.top_k:
             raise ValueError("rerank.candidate_k must be greater than or equal to top_k")
 

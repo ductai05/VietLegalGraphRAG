@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-from verify_neo4j import (
+pytest.importorskip("neo4j")
+
+from verify_neo4j import (  # noqa: E402
     EXPECTED_LEGAL_RELATIONS,
     REQUIRED_LABELS,
     VerificationReport,

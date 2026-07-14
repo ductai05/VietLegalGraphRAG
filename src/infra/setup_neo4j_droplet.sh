@@ -198,9 +198,9 @@ docker run -d \
     -v "${CERT_DIR}:/certificates:ro" \
     -v "${IMPORT_DIR}:/import:ro" \
     -e NEO4J_AUTH="neo4j/${NEO4J_PASSWORD}" \
-    -e NEO4J_server_memory_heap_initial__size=1024m \
-    -e NEO4J_server_memory_heap_max__size=1024m \
-    -e NEO4J_server_memory_pagecache_size=1500m \
+    -e NEO4J_server_memory_heap_initial__size=2048m \
+    -e NEO4J_server_memory_heap_max__size=2048m \
+    -e NEO4J_server_memory_pagecache_size=2048m \
     -e NEO4J_server_bolt_enabled=true \
     -e NEO4J_server_bolt_tls__level=OPTIONAL \
     -e NEO4J_server_bolt_listen__address=0.0.0.0:7687 \

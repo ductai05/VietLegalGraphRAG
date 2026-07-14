@@ -9,6 +9,23 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 EVAL_DIR = Path(__file__).resolve().parent
+DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+DEFAULT_RRF_K = 60
+
+
+def load_env_file(path: Path | None) -> None:
+    if path is None or not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key:
+                os.environ[key] = value
 
 
 def decode_cloud_id(cloud_id: str) -> str:
@@ -29,20 +46,37 @@ def decode_cloud_id(cloud_id: str) -> str:
     raise ValueError("Invalid Elastic Cloud ID format")
 
 
-def parse_args():
+def parse_args(argv=None):
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--env-file", type=Path, default=None)
+    pre_args, _ = pre_parser.parse_known_args(argv)
+    load_env_file(pre_args.env_file)
+
     parser = argparse.ArgumentParser(description="Automate retrieval evaluation pipeline")
+    parser.add_argument("--env-file", type=Path, default=pre_args.env_file,
+                        help="Environment file with Elasticsearch credentials")
     parser.add_argument("--gold", type=Path, default=BASE_DIR / "output" / "eval_questions_gold.jsonl",
                         help="Path to gold standard evaluation file")
-    parser.add_argument("--url", default=os.environ.get("ELASTIC_URL", "http://127.0.0.1:9200"),
+    parser.add_argument("--url", default=os.environ.get("ELASTICSEARCH_URL") or os.environ.get("ELASTIC_URL") or "http://127.0.0.1:9200",
                         help="Elasticsearch connection URL")
     parser.add_argument("--elastic-cloud-id", default=os.environ.get("ELASTIC_CLOUD_ID"),
                         help="Elasticsearch Cloud ID")
-    parser.add_argument("--api-key", default=os.environ.get("ELASTIC_API_KEY"),
+    parser.add_argument("--api-key", default=os.environ.get("ELASTICSEARCH_API_KEY") or os.environ.get("ELASTIC_API_KEY"),
                         help="Elasticsearch API key")
-    parser.add_argument("--username", default=os.environ.get("ELASTIC_USERNAME"),
+    parser.add_argument("--username", default=os.environ.get("ELASTICSEARCH_USERNAME") or os.environ.get("ELASTIC_USERNAME"),
                         help="Elasticsearch username")
-    parser.add_argument("--password", default=os.environ.get("ELASTIC_PASSWORD"),
+    parser.add_argument("--password", default=os.environ.get("ELASTICSEARCH_PASSWORD") or os.environ.get("ELASTIC_PASSWORD"),
                         help="Elasticsearch password")
+    parser.add_argument("--index", default=os.environ.get("ELASTICSEARCH_ALIAS") or os.environ.get("ELASTICSEARCH_INDEX"),
+                        help="Hybrid Elasticsearch index or alias for dense and sparse search")
+    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K,
+                        help="RRF rank constant used by hybrid_search.py")
+    parser.add_argument("--elastic-num-candidates", type=int, default=None,
+                        help="Elasticsearch kNN num_candidates override for hybrid dense search")
+    parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL,
+                        help="Hugging Face reranker model name")
+    parser.add_argument("--rerank-batch-size", type=int, default=8,
+                        help="Reranker batch size")
     parser.add_argument("--chunks", type=Path, default=None,
                         help="Path to chunks parquet dataset for metadata hydration")
     parser.add_argument("--device", default=None,
@@ -51,7 +85,7 @@ def parse_args():
                         help="Limit the number of evaluation samples")
     parser.add_argument("--output-dir", type=Path, default=BASE_DIR / "output",
                         help="Directory to save evaluation reports and plots")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def run_command(cmd, desc):
@@ -140,6 +174,10 @@ def main():
             dense_cmd.extend(["--chunks", str(args.chunks)])
         if args.device:
             dense_cmd.extend(["--device", args.device])
+        if args.index:
+            dense_cmd.extend(["--elastic-index", args.index])
+        if args.elastic_num_candidates:
+            dense_cmd.extend(["--elastic-num-candidates", str(args.elastic_num_candidates)])
         run_command(dense_cmd, "Dense Retrieval Evaluation")
 
         # 2. Run Sparse Evaluation
@@ -158,6 +196,8 @@ def main():
             sparse_cmd.extend(["--password", args.password])
         if args.chunks:
             sparse_cmd.extend(["--chunks", str(args.chunks)])
+        if args.index:
+            sparse_cmd.extend(["--index", args.index])
         run_command(sparse_cmd, "Sparse Retrieval Evaluation")
 
         # 3. Run Hybrid + Reranker Evaluations for K = 10, 20, 30, 40, 50
@@ -170,9 +210,18 @@ def main():
                 "--gold", str(eval_gold_path),
                 "--url", args.url,
                 "--candidate-k", str(k_val),
+                "--rrf-k", str(args.rrf_k),
+                "--reranker-model", args.reranker_model,
+                "--rerank-batch-size", str(args.rerank_batch_size),
                 "--rerank",
                 "--output", str(out_file)
             ]
+            if args.env_file:
+                hybrid_cmd.extend(["--env-file", str(args.env_file)])
+            if args.index:
+                hybrid_cmd.extend(["--index", args.index])
+            if args.elastic_num_candidates:
+                hybrid_cmd.extend(["--elastic-num-candidates", str(args.elastic_num_candidates)])
             if args.api_key:
                 hybrid_cmd.extend(["--api-key", args.api_key])
             if args.username:

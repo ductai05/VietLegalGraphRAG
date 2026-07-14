@@ -21,6 +21,17 @@ services:
       - ELASTICSEARCH_API_KEY
       - ELASTICSEARCH_INDEX
       - ELASTICSEARCH_ALIAS
+      - EMBEDDING_PROVIDER
+      - EMBEDDING_MODEL
+      - EMBEDDING_DEVICE
+      - EMBEDDING_CACHE_DIR
+      - EMBEDDING_MAX_LENGTH
+      - EMBEDDING_DIMS
+      - EMBEDDING_ONNX_MODEL_PATH
+      - EMBEDDING_ONNX_TOKENIZER_PATH
+      - HF_HUB_DISABLE_SYMLINKS_WARNING
+      - DENSE_NUM_CANDIDATES_FACTOR
+      - DENSE_MIN_NUM_CANDIDATES
       - NEO4J_URI=${NEO4J_URI:-bolt://vietlegal-neo4j:7687}
       - NEO4J_USER=${NEO4J_USER:-neo4j}
       - NEO4J_PASSWORD
@@ -31,18 +42,26 @@ services:
       - GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
       - GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL
       - GOOGLE_SERVICE_ACCOUNT_CLIENT_ID
+      - OCR_PROVIDER
+      - OCR_MAX_FILE_MB
+      - OCR_MAX_PDF_PAGES
+      - OCR_ALLOWED_MIME_TYPES
+      - OCR_LANGUAGE_HINTS
       - RERANK_PROVIDER
       - RERANK_MODEL
       - VOYAGE_API_KEY
+      - JINA_API_KEY
       - LLM_PROVIDER
       - LLM_BASE_URL
       - LLM_API_KEY
       - LLM_MODEL
       - FRONTEND_ORIGIN
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:
       - /opt/vietlegal/credentials:/app/credentials:ro
+      - /opt/vietlegal/hf-cache:/app/.cache/huggingface
+      - /opt/vietlegal/onnx_model:/app/onnx_model:ro
     networks:
       - vietlegal_net
     restart: unless-stopped

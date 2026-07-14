@@ -10,6 +10,7 @@
 .venv
 venv
 Learning.md
+caveman*
 
 # Data - ignore generated artifacts, keep documented folder structure
 /data/**
@@ -29,6 +30,10 @@ venv/
 /app/.next/
 /app/dist/
 
+# Frontend (React/Vite) build artifacts
+/src/frontend/node_modules/
+/src/frontend/dist/
+
 # Kaggle temp files
 /kaggle/
 
@@ -37,9 +42,11 @@ venv/
 !/output/llm_evaluation_complete/
 !/output/llm_evaluation_complete/audit.json
 !/output/llm_evaluation_complete/summary.json
+.playwright-mcp/
 
 # Google Cloud Vision credentials (never commit service-account JSON)
 credentials/
+src/infra/hf-cache/
 /docs/superpowers
 # Ignore all env files
 *.env
@@ -49,3 +56,6 @@ credentials/
 !*.env.example
 !**/.env.example
 
+
+# ui-forge runtime workspace
+.ui-forge/

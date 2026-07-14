@@ -56,6 +56,25 @@ neo4j+ssc://<DROPLET_IP>:7687
 https://<DROPLET_IP>:7473
 ```
 
+For Google Vision OCR, prefer a JSON service account file:
+
+```dotenv
+OCR_PROVIDER=google
+GOOGLE_APPLICATION_CREDENTIALS=/opt/vietlegal/credentials/google-service-account.json
+```
+
+If a local `.env` still contains legacy inline `GOOGLE_SERVICE_ACCOUNT_*`
+fields, materialize them once into an ignored JSON file and scrub the inline
+fields:
+
+```bash
+python src/infra/scripts/materialize_google_credentials.py \
+  --env-file .env \
+  --output credentials/google-service-account.json
+```
+
+The script prints only the output path and does not print secret values.
+
 ## Elasticsearch Hybrid Import
 
 Use `scripts/import_elasticsearch_hybrid.py` when pipeline artifacts are ready.
@@ -149,6 +168,7 @@ The deploy workflow:
 - compares changed paths
 - rebuilds backend only when backend or shared app config changed
 - rebuilds frontend only when frontend or shared app config changed
+- waits for backend `/health` after backend updates
 - never restarts Neo4j
 
 Manual app deploy:
@@ -165,3 +185,23 @@ docker compose --env-file /opt/vietlegal/env/production.env -f src/infra/docker-
 `docker-compose.yml` is still API-only for local development. It expects
 Elasticsearch, Neo4j, Google Vision, reranker, and LLM providers to be supplied
 through environment variables.
+
+The backend Dockerfile installs PyTorch from the CPU-only PyTorch wheel index:
+
+```text
+https://download.pytorch.org/whl/cpu
+```
+
+This avoids pulling CUDA and cuDNN wheels on CPU droplets. The image is still
+large because local dense retrieval uses Torch and Transformers.
+
+Local verification commands:
+
+```powershell
+conda run -n ml_env python -m ruff check src/backend/app src/backend/services src/infra/scripts tests
+conda run -n ml_env python -m pytest tests -q --tb=short
+docker compose -f src/infra/docker-compose.yml config --quiet
+docker compose -f src/infra/docker-compose.production.yml config --quiet
+docker build -f src/backend/Dockerfile -t vietlegal-backend:local .
+docker build -f src/frontend/Dockerfile -t vietlegal-frontend:local .
+```
