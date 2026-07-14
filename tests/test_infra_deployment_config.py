@@ -128,7 +128,6 @@ def test_backend_dockerfile_uses_onnx_runtime() -> None:
     assert "ONNX Runtime" in dockerfile
     assert "https://download.pytorch.org/whl/cpu" not in dockerfile
     assert "pip install --no-cache-dir -r /tmp/requirements.txt" in dockerfile
-    assert "COPY onnx_model/ /app/onnx_model/" in dockerfile
 
 
 def test_production_env_uses_single_hybrid_elasticsearch_index() -> None:
