@@ -9,14 +9,14 @@ export default function Header() {
 
   return (
     <header className="site-header" data-header>
-      <Link className="brand" to="/" aria-label="Aurora home">
+      <Link className="brand" to="/" aria-label="Trang chủ Aurora">
         <img src="/aurora-sprite.svg" alt="" width="40" height="40" />
         <span>Aurora</span>
       </Link>
       <button
         className="icon-button menu-toggle"
         type="button"
-        aria-label="Open navigation"
+        aria-label="Mở menu điều hướng"
         aria-expanded={open}
         aria-controls="site-navigation"
         data-menu-toggle
@@ -35,12 +35,12 @@ export default function Header() {
           }
         }}
       >
-        <a href="#platform">Platform</a>
-        <a href="#engine">Engine</a>
-        <a href="#workflow">Workflow</a>
-        <a href="#trust">Trust</a>
+        <a href="#platform">Nền tảng</a>
+        <a href="#engine">Công nghệ</a>
+        <a href="#workflow">Quy trình</a>
+        <a href="#trust">Tin cậy</a>
         <Link className="button button-tertiary button-small" to="/chat">
-          Open Chat
+          Mở Chat
         </Link>
       </nav>
     </header>

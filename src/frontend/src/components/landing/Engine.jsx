@@ -3,7 +3,7 @@ import Reveal from "../Reveal.jsx";
 // SVG animations use SMIL (<animate>, <animateMotion>) copied verbatim from the
 // original markup; embedded as raw HTML to preserve every attribute exactly.
 const VECTOR_SVG = `
-<svg class="rag-visual" viewBox="0 0 220 150" role="img" aria-label="Animated diagram of dense vector search finding nearest neighbors in embedding space">
+<svg class="rag-visual" viewBox="0 0 220 150" role="img" aria-label="Sơ đồ động minh họa tìm kiếm vector dày đặc, xác định các lân cận gần nhất trong không gian embedding">
   <circle cx="30" cy="40" r="3" fill="var(--body-subtle)" opacity="0.5"/>
   <circle cx="55" cy="95" r="3" fill="var(--body-subtle)" opacity="0.5"/>
   <circle cx="100" cy="115" r="3" fill="var(--body-subtle)" opacity="0.5"/>
@@ -37,7 +37,7 @@ const VECTOR_SVG = `
 </svg>`;
 
 const KEYWORD_SVG = `
-<svg class="rag-visual" viewBox="0 0 220 150" role="img" aria-label="Animated diagram of a scan line sweeping across text and highlighting matched keywords">
+<svg class="rag-visual" viewBox="0 0 220 150" role="img" aria-label="Sơ đồ động minh họa vệt quét chạy qua văn bản và làm nổi bật các từ khóa trùng khớp">
   <rect x="10" y="20" width="30" height="10" rx="2" fill="var(--body-subtle)" opacity="0.35"/>
   <rect x="46" y="20" width="40" height="10" rx="2" fill="var(--body-subtle)" opacity="0.35"/>
   <rect x="92" y="20" width="24" height="10" rx="2" fill="var(--body-subtle)" opacity="0.35"/>
@@ -69,7 +69,7 @@ const KEYWORD_SVG = `
 </svg>`;
 
 const GRAPH_SVG = `
-<svg class="rag-visual" viewBox="0 0 220 150" role="img" aria-label="Animated diagram of a knowledge graph with pulses traveling between connected entities">
+<svg class="rag-visual" viewBox="0 0 220 150" role="img" aria-label="Sơ đồ động minh họa đồ thị tri thức với các xung tín hiệu di chuyển giữa các thực thể liên kết">
   <path id="edge1" d="M100 80 L40 40" stroke="var(--panel-light)" stroke-width="2" opacity="0.7"/>
   <path id="edge2" d="M100 80 L110 25" stroke="var(--panel-light)" stroke-width="2" opacity="0.7"/>
   <path id="edge3" d="M100 80 L180 45" stroke="var(--panel-light)" stroke-width="2" opacity="0.7"/>
@@ -114,26 +114,26 @@ const MOVES = [
   {
     delay: 0,
     tagClass: "move-tag--vector",
-    tag: "Move 1",
-    title: "Dense Vector Search",
+    tag: "Bước 1",
+    title: "Tìm kiếm Vector Dày đặc",
     svg: VECTOR_SVG,
-    body: "Query and passages meet in embedding space — Aurora pulls the semantically closest chunks, not just the ones that share words."
+    body: "Câu hỏi và đoạn văn bản gặp nhau trong không gian embedding — Aurora chọn ra các đoạn gần nghĩa nhất, chứ không chỉ đơn thuần trùng từ."
   },
   {
     delay: 1,
     tagClass: "move-tag--keyword",
-    tag: "Move 2",
-    title: "Keyword Matching",
+    tag: "Bước 2",
+    title: "Đối sánh Từ khóa",
     svg: KEYWORD_SVG,
-    body: "Exact terms still count. Statute numbers, defined terms, and dates get matched literally so nothing precise slips through."
+    body: "Thuật ngữ chính xác vẫn quan trọng. Số hiệu điều luật, thuật ngữ định nghĩa và ngày tháng được đối chiếu nguyên văn để không bỏ sót chi tiết nào."
   },
   {
     delay: 2,
     tagClass: "move-tag--graph",
-    tag: "Move 3",
-    title: "LightRAG Graph Traversal",
+    tag: "Bước 3",
+    title: "Duyệt đồ thị LightRAG",
     svg: GRAPH_SVG,
-    body: "Entities and relationships form a case graph — parties, clauses, dates — so Aurora can hop context instead of guessing it."
+    body: "Thực thể và mối quan hệ tạo thành đồ thị vụ việc — các bên, điều khoản, mốc thời gian — nhờ đó Aurora nối tiếp mạch ngữ cảnh thay vì phải suy đoán."
   }
 ];
 
@@ -142,11 +142,11 @@ export default function Engine() {
     <section className="section" id="engine">
       <div className="container">
         <Reveal className="section-header">
-          <p className="eyebrow">The Engine</p>
-          <h2>VietLegalGraphRAG — three moves, one answer.</h2>
+          <p className="eyebrow">Công nghệ</p>
+          <h2>VietLegalGraphRAG — ba bước, một câu trả lời.</h2>
           <p className="lead">
-            Every question triggers three retrieval moves at once. Aurora blends their results
-            before a single word is drafted.
+            Mỗi câu hỏi kích hoạt đồng thời ba bước truy xuất. Aurora kết hợp kết quả của cả ba
+            trước khi soạn bất kỳ câu chữ nào.
           </p>
         </Reveal>
         <div className="rag-grid">

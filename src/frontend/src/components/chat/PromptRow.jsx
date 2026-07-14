@@ -1,12 +1,12 @@
 const PROMPTS = [
-  { prompt: "Summarize my issue for an attorney.", label: "Summarize issue" },
-  { prompt: "What documents should I collect?", label: "Document list" },
-  { prompt: "What deadlines might matter?", label: "Deadline scan" }
+  { prompt: "Tôi muốn biết quyền lợi của người lao động khi bị chấm dứt hợp đồng.", label: "Quyền lợi lao động" },
+  { prompt: "Thủ tục đăng ký kinh doanh hộ cá thể cần những gì?", label: "Đăng ký kinh doanh" },
+  { prompt: "Hợp đồng thuê nhà cần lưu ý những điều khoản nào?", label: "Hợp đồng thuê nhà" }
 ];
 
 export default function PromptRow({ onPrompt, onHandoff }) {
   return (
-    <div className="prompt-row" aria-label="Suggested prompts">
+    <div className="prompt-row" aria-label="Gợi ý câu hỏi">
       {PROMPTS.map((item) => (
         <button
           type="button"
@@ -18,7 +18,7 @@ export default function PromptRow({ onPrompt, onHandoff }) {
         </button>
       ))}
       <button type="button" data-handoff onClick={onHandoff}>
-        Talk to a human
+        Trao đổi với người thật
       </button>
     </div>
   );

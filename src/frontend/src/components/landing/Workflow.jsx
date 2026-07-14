@@ -1,9 +1,9 @@
 import Reveal from "../Reveal.jsx";
 
 const STEPS = [
-  { n: "01", title: "Qualify", body: "Identify jurisdiction, party role, timeline, and urgency." },
-  { n: "02", title: "Analyze", body: "Separate facts from assumptions and surface likely legal issues." },
-  { n: "03", title: "Prepare", body: "Create a concise summary, document checklist, and attorney handoff." }
+  { n: "01", title: "Xác định", body: "Xác định thẩm quyền, vai trò các bên, mốc thời gian và mức độ khẩn cấp." },
+  { n: "02", title: "Phân tích", body: "Tách bạch tình tiết đã xác nhận với giả định, làm rõ các vấn đề pháp lý có khả năng phát sinh." },
+  { n: "03", title: "Chuẩn bị", body: "Soạn bản tóm tắt ngắn gọn, danh mục hồ sơ cần thiết và bàn giao cho luật sư." }
 ];
 
 export default function Workflow() {
@@ -11,14 +11,14 @@ export default function Workflow() {
     <section className="section" id="workflow">
       <div className="container split">
         <Reveal className="section-header">
-          <p className="eyebrow">Workflow</p>
-          <h2>From first message to matter-ready summary.</h2>
+          <p className="eyebrow">Quy trình</p>
+          <h2>Từ tin nhắn đầu tiên đến bản tóm tắt sẵn sàng bàn giao.</h2>
           <p className="lead">
-            The assistant asks only for facts that change the legal analysis, then packages the
-            conversation for counsel.
+            Trợ lý chỉ hỏi những tình tiết thực sự ảnh hưởng đến phân tích pháp lý, sau đó
+            đóng gói cuộc trò chuyện để chuyển cho luật sư.
           </p>
         </Reveal>
-        <Reveal className="timeline" delay={1} aria-label="Aurora workflow">
+        <Reveal className="timeline" delay={1} aria-label="Quy trình làm việc của Aurora">
           {STEPS.map((step) => (
             <div className="timeline-item" key={step.n}>
               <span>{step.n}</span>

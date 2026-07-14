@@ -2,9 +2,9 @@ import Reveal from "../Reveal.jsx";
 import { useReveal } from "../../hooks/useReveal.js";
 
 const STATS = [
-  { fill: "100%", label: "UPTIME", metric: "24/7", caption: "Matter intake availability, day or night." },
-  { fill: "100%", label: "REVIEW", metric: "100%", caption: "Every answer is attorney review compatible." },
-  { fill: "0%", label: "LEAKAGE", metric: "0", caption: "Zero decorative data leaks — empty bar is the goal.", danger: true }
+  { fill: "100%", label: "THỜI GIAN HOẠT ĐỘNG", metric: "24/7", caption: "Sẵn sàng tiếp nhận vụ việc mọi lúc, ngày hay đêm." },
+  { fill: "100%", label: "RÀ SOÁT", metric: "100%", caption: "Mọi câu trả lời đều tương thích với quy trình rà soát của luật sư." },
+  { fill: "0%", label: "RÒ RỈ DỮ LIỆU", metric: "0", caption: "Không rò rỉ dữ liệu — thanh trống chính là mục tiêu.", danger: true }
 ];
 
 // Stat rows animate their fill bar on scroll via their own observer
@@ -35,11 +35,11 @@ export default function Trust() {
     <section className="section" id="trust">
       <div className="container">
         <Reveal className="section-header">
-          <p className="eyebrow">Trust</p>
-          <h2>Status screen: designed for legal boundaries.</h2>
+          <p className="eyebrow">Tin cậy</p>
+          <h2>Bảng trạng thái: thiết kế để tôn trọng ranh giới pháp lý.</h2>
           <p className="lead">
-            Aurora is built around cautious language, source awareness, human review, and clear
-            disclaimers where professional judgment belongs.
+            Aurora được xây dựng với ngôn từ thận trọng, ý thức về nguồn trích dẫn, rà soát bởi
+            con người và lời cảnh báo rõ ràng ở những chỗ cần đến nhận định chuyên môn.
           </p>
         </Reveal>
         <Reveal className="trust-band" delay={1}>

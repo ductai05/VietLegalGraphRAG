@@ -18,7 +18,7 @@ export default function OcrForm({ onSubmit }) {
 
   return (
     <form className="ocr-form" id="ocr-form" onSubmit={handleSubmit}>
-      <label htmlFor="ocr-file">OCR file</label>
+      <label htmlFor="ocr-file">Tệp OCR</label>
       <input
         id="ocr-file"
         name="file"
@@ -27,7 +27,7 @@ export default function OcrForm({ onSubmit }) {
         ref={fileRef}
       />
       <button className="button button-secondary button-small" type="submit">
-        Extract Text
+        Trích xuất văn bản
       </button>
     </form>
   );

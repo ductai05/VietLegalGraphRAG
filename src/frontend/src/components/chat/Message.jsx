@@ -5,7 +5,7 @@ function CitationList({ citations }) {
   return (
     <ol className="citation-list">
       {citations.slice(0, 4).map((citation, index) => {
-        const title = citation.title || citation.doc_id || citation.chunk_id || "Source";
+        const title = citation.title || citation.doc_id || citation.chunk_id || "Nguồn";
         const detail = citation.citation || citation.chunk_id || citation.doc_id || "";
         return <li key={index}>{detail ? `${title}: ${detail}` : title}</li>;
       })}
@@ -14,9 +14,9 @@ function CitationList({ citations }) {
 }
 
 function TraceLine({ trace }) {
-  const mode = trace.execution_mode || trace.retrieval_mode || "unknown";
-  const runtime = trace.runtime || "unknown";
-  return <p className="trace-line">{`trace ${mode} | ${runtime}`}</p>;
+  const mode = trace.execution_mode || trace.retrieval_mode || "không xác định";
+  const runtime = trace.runtime || "không xác định";
+  return <p className="trace-line">{`vết xử lý ${mode} | ${runtime}`}</p>;
 }
 
 export default function Message({ msg }) {
@@ -28,15 +28,15 @@ export default function Message({ msg }) {
       {isAssistant && <img src="/aurora-sprite.svg" alt="" width="40" height="40" />}
       <div className="bubble">
         {msg.typing ? (
-          <span className="typing-dots" aria-label="Aurora is thinking">
+          <span className="typing-dots" aria-label="Aurora đang xử lý">
             <span></span>
             <span></span>
             <span></span>
           </span>
         ) : msg.kind === "ocr" ? (
           <>
-            <p>OCR extracted text preview</p>
-            <pre className="ocr-preview">{msg.ocrText || "No text was extracted."}</pre>
+            <p>Xem trước văn bản trích xuất OCR</p>
+            <pre className="ocr-preview">{msg.ocrText || "Không trích xuất được văn bản nào."}</pre>
           </>
         ) : (
           <>

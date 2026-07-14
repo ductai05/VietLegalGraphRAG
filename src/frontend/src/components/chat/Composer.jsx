@@ -11,17 +11,17 @@ export default function Composer({ onSend }) {
 
   return (
     <form className="composer" id="chat-form" onSubmit={handleSubmit}>
-      <label className="sr-only" htmlFor="chat-input">Message Aurora</label>
+      <label className="sr-only" htmlFor="chat-input">Nhắn tin cho Aurora</label>
       <input
         id="chat-input"
         name="message"
         type="text"
         autoComplete="off"
-        placeholder="Message Aurora"
+        placeholder="Nhắn tin cho Aurora"
         value={value}
         onChange={(event) => setValue(event.target.value)}
       />
-      <button className="button button-brand" type="submit">Send ►</button>
+      <button className="button button-brand" type="submit">Gửi ►</button>
     </form>
   );
 }

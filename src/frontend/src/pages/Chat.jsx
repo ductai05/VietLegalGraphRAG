@@ -7,17 +7,17 @@ const SEED_MESSAGES = [
   {
     id: "seed-1",
     role: "assistant",
-    text: "I can help structure your legal question for review. What happened, where did it happen, and what deadline are you worried about?"
+    text: "Tôi có thể giúp bạn trình bày vấn đề pháp lý một cách rõ ràng để luật sư xem xét. Chuyện gì đã xảy ra, xảy ra ở đâu, và bạn đang lo ngại về thời hạn nào?"
   },
   {
     id: "seed-2",
     role: "user",
-    text: "I received a contract termination notice and need to know what to do next."
+    text: "Tôi vừa nhận được thông báo chấm dứt hợp đồng và cần biết bước tiếp theo phải làm gì."
   },
   {
     id: "seed-3",
     role: "assistant",
-    text: "Please share the governing law clause, notice date, effective termination date, and any cure period language. I will separate confirmed facts from questions for counsel."
+    text: "Vui lòng cung cấp điều khoản luật áp dụng, ngày ra thông báo, ngày chấm dứt hợp đồng có hiệu lực, và các điều khoản về thời hạn khắc phục (nếu có). Tôi sẽ tách riêng các sự kiện đã xác nhận và các câu hỏi cần luật sư giải đáp."
   }
 ];
 
@@ -55,7 +55,7 @@ export default function Chat() {
         removeMessage(typingId);
         addMessage({
           role: "assistant",
-          text: payload.answer || "Backend returned an empty answer.",
+          text: payload.answer || "Máy chủ trả về câu trả lời trống.",
           citations: payload.citations,
           trace: payload.retrieval_trace
         });
@@ -63,8 +63,8 @@ export default function Chat() {
         removeMessage(typingId);
         const message =
           error.message === "request.timeout"
-            ? "The API request timed out. Please try again with a shorter question."
-            : "Backend is unavailable. Please try again after the API service is running.";
+            ? "Yêu cầu đã hết thời gian chờ. Vui lòng thử lại với câu hỏi ngắn hơn."
+            : "Hệ thống hiện không khả dụng. Vui lòng thử lại sau khi dịch vụ API hoạt động trở lại.";
         addMessage({
           role: "assistant",
           text: message,
@@ -77,7 +77,7 @@ export default function Chat() {
   );
 
   const requestHandoff = useCallback(() => {
-    addMessage({ role: "user", text: "Please connect me with a human attorney." });
+    addMessage({ role: "user", text: "Vui lòng kết nối tôi với một luật sư thật." });
     const typingId = addMessage({ role: "assistant", typing: true });
 
     window.setTimeout(() => {
@@ -85,14 +85,14 @@ export default function Chat() {
       addMessage({
         role: "assistant",
         text:
-          "This handoff is demo only. In production, this action must call a reviewed attorney workflow before any human follow-up is promised."
+          "Đây chỉ là tính năng demo cho việc chuyển tiếp. Trong môi trường thực tế, thao tác này cần gọi đến quy trình xét duyệt của luật sư trước khi cam kết bất kỳ hỗ trợ trực tiếp nào từ con người."
       });
     }, 650);
   }, [addMessage, removeMessage]);
 
   const submitOcr = useCallback(
     async (file) => {
-      addMessage({ role: "user", text: `Upload OCR file: ${file.name}` });
+      addMessage({ role: "user", text: `Tải lên tệp OCR: ${file.name}` });
       const typingId = addMessage({ role: "assistant", typing: true });
 
       try {
@@ -103,8 +103,8 @@ export default function Chat() {
         removeMessage(typingId);
         const message =
           error.message === "request.timeout"
-            ? "The API request timed out while processing OCR."
-            : "OCR is unavailable or rejected this file.";
+            ? "Yêu cầu xử lý OCR đã hết thời gian chờ."
+            : "Chức năng OCR hiện không khả dụng hoặc đã từ chối tệp này.";
         addMessage({ role: "assistant", text: message });
         console.error(error);
       }
@@ -113,7 +113,7 @@ export default function Chat() {
   );
 
   return (
-    <main className="chat-shell" aria-label="Aurora legal chatbot">
+    <main className="chat-shell" aria-label="Trợ lý pháp lý Aurora">
       <ChatSidebar onHandoff={requestHandoff} />
       <Conversation
         messages={messages}

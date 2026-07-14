@@ -6,7 +6,7 @@ import Composer from "./Composer.jsx";
 
 export default function Conversation({ messages, onSend, onPrompt, onHandoff, onOcr }) {
   return (
-    <section className="conversation" aria-label="Conversation">
+    <section className="conversation" aria-label="Cuộc hội thoại">
       <header className="conversation-header">
         <div className="agent-title">
           <img src="/aurora-sprite.svg" alt="" width="48" height="48" />
@@ -14,10 +14,10 @@ export default function Conversation({ messages, onSend, onPrompt, onHandoff, on
             <h1>
               Aurora <span style={{ color: "var(--accent-yellow)" }}>Lv.99</span>
             </h1>
-            <p>Legal intake assistant · VietLegalGraphRAG</p>
+            <p>Trợ lý tiếp nhận vụ việc pháp lý · VietLegalGraphRAG</p>
           </div>
         </div>
-        <Link className="button button-tertiary button-small" to="/">Landing</Link>
+        <Link className="button button-tertiary button-small" to="/">Trang chủ</Link>
       </header>
 
       <MessageList messages={messages} />
