@@ -119,9 +119,11 @@ def sample_document_pairs_from_neo4j(num_pairs: int, seed: int) -> List[Dict]:
     db = os.environ.get("NEO4J_DATABASE", "neo4j")
     
     query = """
-    MATCH (d1:Document)-[r:AMENDS|CITES|GUIDELINES]->(d2:Document)
+    MATCH (d1:Document)-[r:AMENDS|GUIDELINES]->(d2:Document)
     WHERE (d1.effect_status IS NULL OR d1.effect_status CONTAINS 'Còn hiệu lực') 
       AND (d2.effect_status IS NULL OR d2.effect_status CONTAINS 'Còn hiệu lực')
+      AND d1.issuance_date >= '2020-01-01'
+      AND d2.issuance_date >= '2020-01-01'
     WITH d1, d2, r, rand() as rnd
     ORDER BY rnd
     LIMIT $limit
