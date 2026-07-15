@@ -16,11 +16,12 @@ OUTPUT = ROOT / "output"
 REPORT_DIR = OUTPUT / "report_artifacts"
 
 MODELS = (
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "qwen/qwen3-32b",
+    "groq/llama-3.3-70b-versatile",
+    "groq/llama-3.1-8b-instant",
+    "groq/qwen/qwen3-32b",
+    "groq/qwen/qwen3.6-27b",
 )
-COMPLETE_RESPONSES = OUTPUT / "llm_evaluation_complete" / "responses.jsonl"
+COMPLETE_RESPONSES = OUTPUT / "llm_evaluation" / "responses.jsonl"
 
 RETRIEVAL_RUNS = {
     "Dense": OUTPUT / "elasticsearch_dense_eval.json",
@@ -109,6 +110,26 @@ def summarize_llm() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                                 if not row["retrieval_hit"]
                             ]
                         ),
+                        "refusal_rate": mean(
+                            [
+                                1.0 if row.get("predicted_answer") == "E" else 0.0
+                                for row in rows
+                            ]
+                        ),
+                        "refusal_when_retrieval_miss": mean(
+                            [
+                                1.0 if row.get("predicted_answer") == "E" else 0.0
+                                for row in rows
+                                if not row["retrieval_hit"]
+                            ]
+                        ),
+                        "hallucination_when_retrieval_miss": mean(
+                            [
+                                1.0 if row.get("predicted_answer") in {"A", "B", "C", "D"} and not row["correct"] else 0.0
+                                for row in rows
+                                if not row["retrieval_hit"]
+                            ]
+                        ),
                     }
                 )
             by_type = {}
@@ -146,15 +167,21 @@ def summarize_retrieval() -> list[dict[str, Any]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if name == "Hybrid (RRF)":
             metrics = payload["rrf_metrics"]
+            recall = metrics["rrf_recall@10"]
+            mrr = metrics["rrf_mrr@10"]
+            ndcg = metrics["rrf_ndcg@10"]
         else:
             metrics = payload
+            recall = metrics["recall@10"]
+            mrr = metrics["mrr@10"]
+            ndcg = metrics["ndcg@10"]
         rows.append(
             {
                 "setup": name,
                 "questions": payload["queries"],
-                "recall@10": metrics["recall@10"],
-                "mrr@10": metrics["mrr@10"],
-                "ndcg@10": metrics["ndcg@10"],
+                "recall@10": recall,
+                "mrr@10": mrr,
+                "ndcg@10": ndcg,
             }
         )
     return rows
@@ -192,7 +219,7 @@ def plot_retrieval(rows: list[dict[str, Any]]) -> None:
 
 def plot_llm(summary: dict[str, Any]) -> None:
     models = list(summary)
-    short = ["Llama 3.1 8B", "Llama 3.3 70B", "Qwen3 32B"]
+    short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
     width = 0.25
     no_rag = [summary[model]["no_rag"]["accuracy"] for model in models]
@@ -216,14 +243,120 @@ def plot_llm(summary: dict[str, Any]) -> None:
     ax.bar_label(second, fmt="%.3f", fontsize=9)
     ax.bar_label(third, fmt="%.3f", fontsize=9)
     ax.set_xticks(list(x), short)
-    ax.set_ylim(0, 1)
+    ax.set_ylim(0, 1.3)
     ax.set_ylabel("MCQ accuracy")
     ax.set_title("LLM answer accuracy")
-    ax.legend()
+    ax.legend(loc='upper center', ncol=3)
     fig.tight_layout()
     fig.savefig(REPORT_DIR / "llm_accuracy.png", dpi=180)
     plt.close(fig)
 
+
+def plot_llm_refusal(summary: dict[str, Any]) -> None:
+    models = list(summary)
+    short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
+    x = range(len(models))
+    width = 0.25
+    
+    # We only plot for hybrid_rerank for now
+    refusal = [summary.get(model, {}).get("hybrid_rerank", {}).get("refusal_rate", 0.0) for model in models]
+    refusal_miss = [summary.get(model, {}).get("hybrid_rerank", {}).get("refusal_when_retrieval_miss", 0.0) for model in models]
+    hallucination_miss = [summary.get(model, {}).get("hybrid_rerank", {}).get("hallucination_when_retrieval_miss", 0.0) for model in models]
+    
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    first = ax.bar([value - width for value in x], refusal, width, label="Overall Refusal", color="silver")
+    second = ax.bar(list(x), refusal_miss, width, label="Refusal on Miss (Good)", color="mediumseagreen")
+    third = ax.bar([value + width for value in x], hallucination_miss, width, label="Hallucination on Miss (Bad)", color="crimson")
+    
+    ax.bar_label(first, fmt="%.3f", fontsize=9)
+    ax.bar_label(second, fmt="%.3f", fontsize=9)
+    ax.bar_label(third, fmt="%.3f", fontsize=9)
+    
+    ax.set_xticks(list(x), short)
+    ax.set_ylim(0, 1.3)
+    ax.set_ylabel("Rate")
+    ax.set_title("LLM Refusal & Hallucination Metrics (Hybrid Rerank)")
+    ax.legend(loc='upper center', ncol=3)
+    fig.tight_layout()
+    fig.savefig(REPORT_DIR / "llm_refusal.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_llm_valid_json(summary: dict[str, Any]) -> None:
+    models = list(summary)
+    short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
+    x = range(len(models))
+    width = 0.25
+    no_rag = [summary[model].get("no_rag", {}).get("valid_json_rate", 0.0) for model in models]
+    rag = [summary[model].get("hybrid_rerank", {}).get("valid_json_rate", 0.0) for model in models]
+    graph = [summary[model].get("hybrid_graph", {}).get("valid_json_rate", 0.0) for model in models]
+    
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG")
+    second = ax.bar(list(x), rag, width, label="Hybrid + Rerank")
+    third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG")
+    
+    ax.bar_label(first, fmt="%.3f", fontsize=9)
+    ax.bar_label(second, fmt="%.3f", fontsize=9)
+    ax.bar_label(third, fmt="%.3f", fontsize=9)
+    ax.set_xticks(list(x), short)
+    ax.set_ylim(0, 1.3)
+    ax.set_ylabel("Valid JSON Rate")
+    ax.set_title("LLM Valid JSON Formatting Rate")
+    ax.legend(loc='upper center', ncol=3)
+    fig.tight_layout()
+    fig.savefig(REPORT_DIR / "llm_valid_json.png", dpi=180)
+    plt.close(fig)
+
+def plot_llm_latency(summary: dict[str, Any]) -> None:
+    models = list(summary)
+    short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
+    x = range(len(models))
+    width = 0.25
+    no_rag = [summary[model].get("no_rag", {}).get("mean_latency_seconds", 0.0) for model in models]
+    rag = [summary[model].get("hybrid_rerank", {}).get("mean_latency_seconds", 0.0) for model in models]
+    graph = [summary[model].get("hybrid_graph", {}).get("mean_latency_seconds", 0.0) for model in models]
+    
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG")
+    second = ax.bar(list(x), rag, width, label="Hybrid + Rerank")
+    third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG")
+    
+    ax.bar_label(first, fmt="%.2f", fontsize=9)
+    ax.bar_label(second, fmt="%.2f", fontsize=9)
+    ax.bar_label(third, fmt="%.2f", fontsize=9)
+    ax.set_xticks(list(x), short)
+    max_y = max(max(no_rag), max(rag), max(graph)) if any(no_rag + rag + graph) else 1.0
+    ax.set_ylim(0, max_y * 1.3)
+    ax.set_ylabel("Latency (seconds)")
+    ax.set_title("LLM Mean Latency per Question")
+    ax.legend(loc='upper center', ncol=3)
+    fig.tight_layout()
+    fig.savefig(REPORT_DIR / "llm_latency.png", dpi=180)
+    plt.close(fig)
+
+def plot_llm_citation(summary: dict[str, Any]) -> None:
+    models = list(summary)
+    short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
+    x = range(len(models))
+    width = 0.35
+    citation_validity = [summary.get(model, {}).get("hybrid_rerank", {}).get("citation_validity", 0.0) for model in models]
+    gold_citation = [summary.get(model, {}).get("hybrid_rerank", {}).get("gold_citation_rate", 0.0) for model in models]
+    
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    first = ax.bar([value - width/2 for value in x], citation_validity, width, label="Citation Validity (Valid chunk IDs)")
+    second = ax.bar([value + width/2 for value in x], gold_citation, width, label="Gold Citation Rate (Actually cited Gold)")
+    
+    ax.bar_label(first, fmt="%.3f", fontsize=9)
+    ax.bar_label(second, fmt="%.3f", fontsize=9)
+    ax.set_xticks(list(x), short)
+    ax.set_ylim(0, 1.3)
+    ax.set_ylabel("Rate")
+    ax.set_title("LLM Citation Quality (Hybrid Rerank)")
+    ax.legend(loc='upper center', ncol=2)
+    fig.tight_layout()
+    fig.savefig(REPORT_DIR / "llm_citation.png", dpi=180)
+    plt.close(fig)
 
 def main() -> None:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -269,6 +402,10 @@ def main() -> None:
     )
     plot_retrieval(retrieval_rows)
     plot_llm(llm_summary)
+    plot_llm_refusal(llm_summary)
+    plot_llm_valid_json(llm_summary)
+    plot_llm_latency(llm_summary)
+    plot_llm_citation(llm_summary)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 

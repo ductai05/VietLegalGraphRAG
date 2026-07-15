@@ -25,14 +25,79 @@ from groq import (
     Groq,
     RateLimitError,
 )
+import httpx
+
+
+class _SimpleNamespace:
+    """Attribute-accessible dict wrapper for API response parsing."""
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                setattr(self, key, _SimpleNamespace(**value))
+            elif isinstance(value, list):
+                setattr(self, key, [
+                    _SimpleNamespace(**item) if isinstance(item, dict) else item
+                    for item in value
+                ])
+            else:
+                setattr(self, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+class HttpxLLMClient:
+    """Thin OpenAI-compatible client using httpx directly.
+
+    Avoids both Groq SDK (wrong path) and OpenAI SDK (injects
+    enable_thinking) issues when calling third-party endpoints.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, timeout: float = 90) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._http = httpx.Client(timeout=timeout)
+        self.chat = self  # duck-type: client.chat.completions.create()
+        self.completions = self
+
+    def create(self, **kwargs: Any) -> _SimpleNamespace:
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self._base_url}/chat/completions"
+        resp = self._http.post(url, json=kwargs, headers=headers)
+        if resp.status_code == 429:
+            exc = RateLimitError.__new__(RateLimitError)
+            exc.response = resp
+            exc.status_code = 429
+            raise exc
+        if resp.status_code != 200:
+            exc = APIStatusError.__new__(APIStatusError)
+            exc.response = resp
+            exc.status_code = resp.status_code
+            exc.message = resp.text
+            raise exc
+        # Response may have streaming suffix "data: [DONE]".
+        # Parse only the first JSON object from the body.
+        raw = resp.text.strip()
+        # Find end of the first JSON object by trying incremental parse.
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # Strip trailing non-JSON lines (e.g. "data: [DONE]")
+            first_line = raw.split("\n")[0].strip()
+            data = json.loads(first_line)
+        return _SimpleNamespace(**data)
 
 DEFAULT_MODELS = (
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "qwen/qwen3-32b",
+    "groq/llama-3.3-70b-versatile",
+    "groq/llama-3.1-8b-instant",
+    "groq/qwen/qwen3-32b",
+    "groq/qwen/qwen3.6-27b",
 )
 DEFAULT_SETUPS = ("no_rag", "hybrid_rerank", "hybrid_graph")
-ANSWER_RE = re.compile(r"\b([ABCD])\b", re.IGNORECASE)
+ANSWER_RE = re.compile(r"\b([ABCDE])\b", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,7 +120,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-hops", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-context-chars", type=int, default=4_000)
-    parser.add_argument("--max-completion-tokens", type=int, default=192)
+    parser.add_argument("--max-completion-tokens", type=int, default=512)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--max-retries", type=int, default=30)
@@ -189,13 +254,20 @@ class GroqKeyPool:
     def active_name(self) -> str:
         return self.keys[self.index][0]
 
-    def client(self) -> Groq:
+    def client(self) -> Groq | HttpxLLMClient:
         name, key = self.keys[self.index]
         if name not in self.clients:
             values = {**dotenv_values(self.env_file), **os.environ}
             base_url = values.get("LLM_BASE_URL")
             if base_url and name == "LLM_API_KEY":
-                self.clients[name] = Groq(api_key=key, base_url=base_url, max_retries=0, timeout=90)
+                # Use httpx directly for non-Groq endpoints.
+                # Groq SDK hardcodes wrong path; OpenAI SDK injects
+                # enable_thinking which Groq rejects.
+                self.clients[name] = HttpxLLMClient(
+                    api_key=key,
+                    base_url=base_url,
+                    timeout=90,
+                )
             else:
                 self.clients[name] = Groq(api_key=key, max_retries=0, timeout=90)
         return self.clients[name]
@@ -307,8 +379,11 @@ def hydrate_graph_contexts(
 ) -> dict[str, list[str]]:
     """Perform graph expansion for each question and hydrate the neighbor chunks."""
     backend_path = str(Path(__file__).resolve().parent.parent.parent / "src" / "backend")
+    services_path = str(Path(__file__).resolve().parent.parent.parent / "src" / "backend" / "services")
     if backend_path not in sys.path:
         sys.path.append(backend_path)
+    if services_path not in sys.path:
+        sys.path.append(services_path)
     try:
         from services.graph_retriever import GraphRetriever
         from services.elasticsearch_retriever import ElasticsearchGraphChunkFetcher
@@ -430,13 +505,17 @@ def build_prompt(
     context: str = "",
     valid_chunk_ids: list[str] | None = None,
 ) -> str:
+    choices_str = choices_text(question)
+    if setup != "no_rag":
+        choices_str += "\nE. Không đủ thông tin trong tài liệu tham khảo"
+        
     common = (
         "Trả lời câu hỏi trắc nghiệm pháp luật Việt Nam dưới đây. "
-        "Chỉ chọn một đáp án A, B, C hoặc D. "
+        f"Chỉ chọn một đáp án {'A, B, C, D hoặc E' if setup != 'no_rag' else 'A, B, C hoặc D'}. "
         "Không giải thích dài dòng. Trả về đúng một JSON object có dạng "
         '{"answer":"A","cited_chunk_ids":[]}.\n\n'
         f"Câu hỏi: {question['question']}\n"
-        f"{choices_text(question)}"
+        f"{choices_str}"
     )
     if setup == "no_rag":
         return (
@@ -448,22 +527,52 @@ def build_prompt(
         common
         + "\n\nChỉ dựa trên các nguồn truy xuất bên dưới. "
         "cited_chunk_ids phải chứa chunk_id của nguồn trực tiếp hỗ trợ đáp án, "
-        "và chỉ được dùng ID trong danh sách cho phép. Nếu nguồn không đủ, vẫn "
-        "chọn đáp án hợp lý nhất.\n"
+        "và chỉ được dùng ID trong danh sách cho phép.\n"
+        "Nếu các nguồn truy xuất KHÔNG chứa đủ thông tin để trả lời câu hỏi, bạn BẮT BUỘC phải chọn đáp án E thay vì cố đoán.\n\n"
         f"Chunk ID cho phép: {allowed}\n\nNguồn truy xuất:\n{context}"
     )
 
 
 def parse_response(content: str) -> tuple[str | None, list[str], bool]:
     text = (content or "").strip()
+
+    # Remove <think>...</think> block if present
+    # We use re.sub with re.DOTALL to match across newlines
+    # If the response was truncated and missing </think>, we try to remove everything after <think>
+    if "<think>" in text:
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        if "<think>" in text:  # Unclosed tag
+            text = text.split("<think>")[0].strip()
+
+    json_str = text
+    json_match = re.search(r'```(?:json)?(.*?)```', text, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1).strip()
+    else:
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end >= start:
+            json_str = text[start:end+1]
+
     try:
-        payload = json.loads(text)
+        payload = json.loads(json_str)
         answer = str(payload.get("answer", "")).strip().upper()
         citations = payload.get("cited_chunk_ids") or []
-        if answer in {"A", "B", "C", "D"} and isinstance(citations, list):
+        if answer in {"A", "B", "C", "D", "E"} and isinstance(citations, list):
             return answer, [str(value) for value in citations], True
     except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+        # try to find a valid JSON object within the text using regex
+        json_objs = re.findall(r'\{[^{}]*\"answer\"\s*:[^{}]*\}', text)
+        if json_objs:
+            try:
+                payload = json.loads(json_objs[-1])
+                answer = str(payload.get("answer", "")).strip().upper()
+                citations = payload.get("cited_chunk_ids") or []
+                if answer in {"A", "B", "C", "D", "E"} and isinstance(citations, list):
+                    return answer, [str(value) for value in citations], True
+            except Exception:
+                pass
+
     match = ANSWER_RE.search(text)
     return (match.group(1).upper() if match else None), [], False
 
@@ -482,37 +591,40 @@ def request_completion(
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "max_completion_tokens": max_completion_tokens,
-        "response_format": {"type": "json_object"},
         "seed": seed,
     }
-    if model == "qwen/qwen3-32b":
-        kwargs["reasoning_effort"] = "none"
-        kwargs["reasoning_format"] = "hidden"
+    if "qwen3.6-27b" in model.lower():
+        kwargs["max_completion_tokens"] = max(max_completion_tokens, 4096)
+    # Groq's Qwen3 thinking models reject response_format:json_object
+    # and reasoning_format/reasoning_effort. Use plain text and parse.
+    if "qwen3" not in model.lower():
+        kwargs["response_format"] = {"type": "json_object"}
     json_fallback_used = False
     for attempt in range(max_retries + 1):
         try:
             key_name = key_pool.active_name
             response = key_pool.client().chat.completions.create(**kwargs)
             return response, attempt, key_name
-        except (RateLimitError, APIConnectionError, APITimeoutError, APIStatusError) as exc:
+        except (RateLimitError, APIConnectionError, APITimeoutError, APIStatusError, httpx.HTTPError) as exc:
             if attempt >= max_retries:
                 raise
+            status_code = getattr(exc, "status_code", None)
             if (
-                isinstance(exc, APIStatusError)
-                and exc.status_code == 400
+                isinstance(exc, (APIStatusError, httpx.HTTPStatusError))
+                and status_code == 400
                 and "json_validate_failed" in str(exc)
                 and not json_fallback_used
             ):
                 logging.warning(
-                    "Groq JSON mode failed for %s; retrying once in plain text mode",
+                    "JSON mode failed for %s; retrying once in plain text mode",
                     model,
                 )
                 kwargs.pop("response_format", None)
                 json_fallback_used = True
                 continue
-            if isinstance(exc, APIStatusError) and 400 <= exc.status_code < 500:
-                if exc.status_code == 401:
-                    logging.warning("Disabling rejected Groq key variable %s", key_pool.active_name)
+            if isinstance(exc, (APIStatusError, httpx.HTTPStatusError)) and status_code is not None and 400 <= status_code < 500:
+                if status_code == 401:
+                    logging.warning("Disabling rejected API key variable %s", key_pool.active_name)
                     key_pool.disable_active()
                     next_name, wait = key_pool.rotate()
                     logging.warning("Rotated to %s after authentication failure", next_name)
@@ -520,10 +632,10 @@ def request_completion(
                         time.sleep(wait)
                     continue
                 if not isinstance(exc, RateLimitError):
-                    raise
+                    logging.warning("APIError status %s for %s, retrying anyway...", status_code, model)
             if (
-                isinstance(exc, APIStatusError)
-                and exc.status_code == 413
+                isinstance(exc, (APIStatusError, httpx.HTTPStatusError))
+                and status_code == 413
                 and "Request too large" in str(exc)
             ):
                 raise
@@ -548,7 +660,7 @@ def request_completion(
             else:
                 delay += random.random()
                 logging.warning(
-                    "Groq request failed for %s (attempt %d/%d); retrying in %.1fs",
+                    "LLM request failed for %s (attempt %d/%d); retrying in %.1fs",
                     model,
                     attempt + 1,
                     max_retries,
@@ -662,6 +774,26 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
                             if not row["retrieval_hit"]
                         ]
                     ),
+                    "refusal_rate": safe_mean(
+                        [
+                            1.0 if row.get("predicted_answer") == "E" else 0.0
+                            for row in subset
+                        ]
+                    ),
+                    "refusal_when_retrieval_miss": safe_mean(
+                        [
+                            1.0 if row.get("predicted_answer") == "E" else 0.0
+                            for row in subset
+                            if not row["retrieval_hit"]
+                        ]
+                    ),
+                    "hallucination_when_retrieval_miss": safe_mean(
+                        [
+                            1.0 if row.get("predicted_answer") in {"A", "B", "C", "D"} and not row["correct"] else 0.0
+                            for row in subset
+                            if not row["retrieval_hit"]
+                        ]
+                    ),
                 }
             )
         results.setdefault(model, {})[setup] = item
@@ -693,8 +825,6 @@ def main() -> None:
         selected = selected[: args.limit]
         
     models_to_run = args.models
-    if "LLM_MODEL" in os.environ and args.models == list(DEFAULT_MODELS):
-        models_to_run = [os.environ["LLM_MODEL"]]
 
     es_url = os.environ.get("ELASTICSEARCH_URL")
     if es_url:
@@ -745,8 +875,9 @@ def main() -> None:
     context_rows: dict[tuple[str, str], dict[str, Any]] = {}
     for question in questions:
         row = retrieval.get(normalize_query(question["question"]))
-        if row is None:
-            raise RuntimeError(f"No retrieval result for {question['question_id']}")
+        if not row:
+            logging.warning(f"No retrieval result for {question['question_id']}. Skipping.")
+            continue
         for setup in args.setups:
             if setup == "no_rag":
                 continue
@@ -773,7 +904,9 @@ def main() -> None:
             for setup in args.setups:
                 if setup == "no_rag":
                     continue
-                row_data = context_rows[(setup, question["question_id"])]
+                row_data = context_rows.get((setup, question["question_id"]))
+                if not row_data:
+                    continue
                 handle.write(json.dumps({"setup": setup, **row_data}, ensure_ascii=False) + "\n")
     logging.info("Wrote hydrated contexts to %s", contexts_path)
     if args.hydrate_only:
@@ -795,7 +928,9 @@ def main() -> None:
                     context_str = ""
                     included_ids_list = []
                 else:
-                    context_row = context_rows[(setup, question["question_id"])]
+                    context_row = context_rows.get((setup, question["question_id"]))
+                    if not context_row:
+                        continue
                     context_str = context_row["context"]
                     included_ids_list = context_row["included_chunk_ids"]
 
