@@ -268,6 +268,7 @@ def main():
             "--dense", str(dense_output),
             "--sparse", str(sparse_output),
             "--hybrid", str(rerank_outputs[50]),  # Pass one rerank output to extract baseline hybrid RRF metrics
+            "--graph", str(graph_output),
             "--output-dir", str(args.output_dir)
         ]
         for k_val, out_file in rerank_outputs.items():

@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument("--rerank-k30", type=Path, help="Path to rerank K=30 eval results JSON")
     parser.add_argument("--rerank-k40", type=Path, help="Path to rerank K=40 eval results JSON")
     parser.add_argument("--rerank-k50", type=Path, help="Path to rerank K=50 eval results JSON")
+    parser.add_argument("--graph", type=Path, help="Path to graph eval results JSON")
     parser.add_argument("--output-dir", type=Path, default=BASE_DIR / "output", help="Directory to save the output charts")
     return parser.parse_args()
 
@@ -36,6 +37,9 @@ def extract_metrics(report: dict, prefix: str = "", is_hybrid_file: bool = False
     """
     recall, mrr, ndcg = {}, {}, {}
     target_dict = report
+    if "summary" in report:
+        target_dict = report["summary"]
+        
     if use_rrf and "rrf_metrics" in report:
         target_dict = report["rrf_metrics"]
         prefix = "rrf_"
@@ -62,6 +66,8 @@ def plot_metric_chart(title, k_values, data_dict, labels, output_path):
     
     for i, label in enumerate(labels):
         values = data_dict[label]
+        if not values:
+            continue
         y_vals = [values.get(k, 0) for k in k_values]
         marker = markers[i % len(markers)]
         ax.plot(k_values, y_vals, marker=marker, linewidth=2, label=label)
@@ -178,6 +184,13 @@ def main():
         r, m, n = rerank_configs[best_k]
         configs.append((f"Dense + Sparse + Reranker (K={best_k})", r, m, n))
         print(f"Selected K={best_k} as the best reranker candidate pool size (avg score: {best_avg:.4f})")
+
+    if args.graph and args.graph.exists():
+        with open(args.graph, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            r_hop1, m_hop1, n_hop1 = extract_metrics(data, prefix="hop1_")
+            if r_hop1:
+                configs.append(("Hybrid + KG", r_hop1, m_hop1, n_hop1))
 
     if not configs:
         print("No valid evaluation data found.")

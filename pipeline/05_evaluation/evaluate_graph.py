@@ -59,6 +59,8 @@ def parse_args():
                         help="Neo4j database name.")
     parser.add_argument("--top-k", type=int, default=10,
                         help="Number of initial top chunks to consider for graph expansion.")
+    parser.add_argument("--k-values", type=int, nargs="+", default=[1, 3, 5, 10],
+                        help="k values to evaluate hit rate and recall.")
     parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "graph_eval_results.json",
                         help="Path to save evaluation results.")
     parser.add_argument("--env-file", type=Path, default=BASE_DIR / ".env",
@@ -106,61 +108,54 @@ def main():
         if not relevant_doc_ids:
             continue
             
-        top_chunk_ids = row.get("top_chunk_ids", [])[:args.top_k]
-        if not top_chunk_ids and "final_ordered_results" in row:
-            top_chunk_ids = [res["chunk_id"] for res in row["final_ordered_results"]][:args.top_k]
+        query_result = {"query": query}
+        
+        for k in args.k_values:
+            top_chunk_ids = row.get("top_chunk_ids", [])[:k]
+            if not top_chunk_ids and "final_ordered_results" in row:
+                top_chunk_ids = [res["chunk_id"] for res in row["final_ordered_results"]][:k]
+                
+            base_doc_ids = {get_doc_id_from_chunk(driver, args.neo4j_database, c) for c in top_chunk_ids}
             
-        base_doc_ids = {get_doc_id_from_chunk(driver, args.neo4j_database, c) for c in top_chunk_ids}
-        
-        base_hit = any(doc_id in relevant_doc_ids for doc_id in base_doc_ids)
-        base_recall = len(base_doc_ids.intersection(relevant_doc_ids)) / len(relevant_doc_ids)
-        
-        def explore_graph(depth: int) -> set:
-            expanded_docs = set()
-            for doc_id in base_doc_ids:
-                context = retriever.get_document_neighbors(doc_id, depth=depth)
-                if context and hasattr(context, "nodes") and context.nodes:
-                    for node in context.nodes:
-                        node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
-                        if not node_doc_id and hasattr(node, "id") and node.id and str(node.id).startswith("doc:"):
-                            node_doc_id = str(node.id).split(":", 1)[1]
-                        if node_doc_id:
-                            expanded_docs.add(node_doc_id)
-            return expanded_docs
+            base_hit = any(doc_id in relevant_doc_ids for doc_id in base_doc_ids)
+            base_recall = len(base_doc_ids.intersection(relevant_doc_ids)) / len(relevant_doc_ids) if relevant_doc_ids else 0.0
             
-        hop1_docs = explore_graph(1)
-        hop2_docs = explore_graph(2)
-        
-        combined_hop1 = base_doc_ids.union(hop1_docs)
-        combined_hop2 = base_doc_ids.union(hop2_docs)
-        
-        hop1_hit = any(doc_id in relevant_doc_ids for doc_id in combined_hop1)
-        hop2_hit = any(doc_id in relevant_doc_ids for doc_id in combined_hop2)
-        
-        hop1_recall = len(combined_hop1.intersection(relevant_doc_ids)) / len(relevant_doc_ids)
-        hop2_recall = len(combined_hop2.intersection(relevant_doc_ids)) / len(relevant_doc_ids)
-        
-        hop1_rescue = int(not base_hit and hop1_hit)
-        hop2_rescue = int(not base_hit and hop2_hit)
-        
-        hop1_new = hop1_docs - base_doc_ids
-        hop2_new = hop2_docs - base_doc_ids
-        hop1_noise = len(hop1_new - relevant_doc_ids) / max(1, len(base_doc_ids))
-        hop2_noise = len(hop2_new - relevant_doc_ids) / max(1, len(base_doc_ids))
-        
-        results.append({
-            "query": query,
-            "base_hit": int(base_hit),
-            "base_recall": base_recall,
-            "hop1_hit": int(hop1_hit),
-            "hop1_recall": hop1_recall,
-            "hop1_rescue": hop1_rescue,
-            "hop1_noise": hop1_noise,
-            "hop2_hit": int(hop2_hit),
-            "hop2_recall": hop2_recall,
-            "hop2_rescue": hop2_rescue,
-            "hop2_noise": hop2_noise,
-        })
+            def explore_graph(depth: int, seed_docs: set) -> set:
+                expanded_docs = set()
+                for doc_id in seed_docs:
+                    context = retriever.get_document_neighbors(doc_id, depth=depth)
+                    if context and hasattr(context, "nodes") and context.nodes:
+                        for node in context.nodes:
+                            node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
+                            if not node_doc_id and hasattr(node, "id") and node.id and str(node.id).startswith("doc:"):
+                                node_doc_id = str(node.id).split(":", 1)[1]
+                            if node_doc_id:
+                                expanded_docs.add(node_doc_id)
+                return expanded_docs
+                
+            hop1_docs = explore_graph(1, base_doc_ids)
+            
+            combined_hop1 = base_doc_ids.union(hop1_docs)
+            
+            hop1_hit = any(doc_id in relevant_doc_ids for doc_id in combined_hop1)
+            
+            hop1_recall = len(combined_hop1.intersection(relevant_doc_ids)) / len(relevant_doc_ids) if relevant_doc_ids else 0.0
+            
+            hop1_rescue = int(not base_hit and hop1_hit)
+            
+            hop1_new = hop1_docs - base_doc_ids
+            hop1_noise = len(hop1_new - relevant_doc_ids) / max(1, len(base_doc_ids))
+            
+            query_result.update({
+                f"base_hit@{k}": int(base_hit),
+                f"base_recall@{k}": base_recall,
+                f"hop1_hit@{k}": int(hop1_hit),
+                f"hop1_recall@{k}": hop1_recall,
+                f"hop1_rescue@{k}": hop1_rescue,
+                f"hop1_noise@{k}": hop1_noise,
+            })
+            
+        results.append(query_result)
         
         if (idx + 1) % 10 == 0:
             print(f"Processed {idx + 1}/{len(details)} queries...")
@@ -171,27 +166,26 @@ def main():
         return
         
     num_queries = len(results)
-    summary = {
-        "queries": num_queries,
-        "base_hit_rate": sum(r["base_hit"] for r in results) / num_queries,
-        "base_recall": sum(r["base_recall"] for r in results) / num_queries,
-        "hop1_hit_rate": sum(r["hop1_hit"] for r in results) / num_queries,
-        "hop1_recall": sum(r["hop1_recall"] for r in results) / num_queries,
-        "hop1_rescue_rate": sum(r["hop1_rescue"] for r in results) / num_queries,
-        "hop1_noise_avg": sum(r["hop1_noise"] for r in results) / num_queries,
-        "hop2_hit_rate": sum(r["hop2_hit"] for r in results) / num_queries,
-        "hop2_recall": sum(r["hop2_recall"] for r in results) / num_queries,
-        "hop2_rescue_rate": sum(r["hop2_rescue"] for r in results) / num_queries,
-        "hop2_noise_avg": sum(r["hop2_noise"] for r in results) / num_queries,
-    }
+    summary = {"queries": num_queries}
+    for k in args.k_values:
+        summary.update({
+            f"base_hit_rate@{k}": sum(r[f"base_hit@{k}"] for r in results) / num_queries,
+            f"base_recall@{k}": sum(r[f"base_recall@{k}"] for r in results) / num_queries,
+            f"hop1_hit_rate@{k}": sum(r[f"hop1_hit@{k}"] for r in results) / num_queries,
+            f"hop1_recall@{k}": sum(r[f"hop1_recall@{k}"] for r in results) / num_queries,
+            f"hop1_rescue_rate@{k}": sum(r[f"hop1_rescue@{k}"] for r in results) / num_queries,
+            f"hop1_noise_avg@{k}": sum(r[f"hop1_noise@{k}"] for r in results) / num_queries,
+        })
     
-    print("\n--- Ablation Table (Base vs 1-Hop vs 2-Hop) ---")
-    print(f"{'Metric':<20} | {'Base':<10} | {'1-Hop':<10} | {'2-Hop':<10}")
-    print("-" * 57)
-    print(f"{'Hit Rate':<20} | {summary['base_hit_rate']:<10.4f} | {summary['hop1_hit_rate']:<10.4f} | {summary['hop2_hit_rate']:<10.4f}")
-    print(f"{'Recall':<20} | {summary['base_recall']:<10.4f} | {summary['hop1_recall']:<10.4f} | {summary['hop2_recall']:<10.4f}")
-    print(f"{'Rescue Rate':<20} | {'-':<10} | {summary['hop1_rescue_rate']:<10.4f} | {summary['hop2_rescue_rate']:<10.4f}")
-    print(f"{'Noise Avg':<20} | {'-':<10} | {summary['hop1_noise_avg']:<10.4f} | {summary['hop2_noise_avg']:<10.4f}")
+    tk = args.top_k if args.top_k in args.k_values else args.k_values[-1]
+    
+    print(f"\n--- Ablation Table (Base vs Hybrid + KG) at K={tk} ---")
+    print(f"{'Metric':<20} | {'Base':<10} | {'Hybrid + KG':<10}")
+    print("-" * 45)
+    print(f"{'Hit Rate':<20} | {summary[f'base_hit_rate@{tk}']:<10.4f} | {summary[f'hop1_hit_rate@{tk}']:<10.4f}")
+    print(f"{'Recall':<20} | {summary[f'base_recall@{tk}']:<10.4f} | {summary[f'hop1_recall@{tk}']:<10.4f}")
+    print(f"{'Rescue Rate':<20} | {'-':<10} | {summary[f'hop1_rescue_rate@{tk}']:<10.4f}")
+    print(f"{'Noise Avg':<20} | {'-':<10} | {summary[f'hop1_noise_avg@{tk}']:<10.4f}")
     
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
