@@ -36,7 +36,7 @@ def load_jsonl(path: Path) -> list[dict]:
 
 def get_doc_id_from_chunk(driver, database: str, chunk_id: str) -> str:
     """Extract doc_id from chunk_id by querying Neo4j."""
-    query = "MATCH (c:Chunk {chunk_id: $cid}) RETURN c.doc_id AS doc_id"
+    query = "MATCH (c:Article {chunk_id: $cid}) RETURN c.doc_id AS doc_id"
     with driver.session(database=database) as session:
         record = session.run(query, cid=chunk_id).single()
         if record and record["doc_id"]:
