@@ -91,6 +91,7 @@ class RetrievalRequest:
     llm: LLMConfig | dict[str, Any] = field(default_factory=LLMConfig)
     graph: GraphConfig | dict[str, Any] = field(default_factory=GraphConfig)
     include_trace: bool = True
+    stream: bool = False
 
     def __post_init__(self) -> None:
         if not self.query.strip():

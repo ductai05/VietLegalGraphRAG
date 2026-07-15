@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+import json
 
 from config import get_settings
 from dependencies import RuntimeServices, get_runtime_services
@@ -62,11 +65,11 @@ def search(
     }
 
 
-@router.post("/answer")
+@router.post("/answer", response_model=None)
 def answer(
     request: SearchRequestModel,
     runtime: RuntimeServices = Depends(get_runtime_services),
-) -> dict:
+) -> Any:
     """Return answer, citations, retrieval context, graph context, and trace.
 
     The ``include_trace`` request field is reserved for forward compatibility
@@ -76,6 +79,53 @@ def answer(
     _ensure_rerank_model_allowed(request)
     started = time.perf_counter()
     retrieval_request = RetrievalRequest(**request.model_dump())
+
+    if request.stream:
+        def event_generator():
+            generator = runtime.lightrag_service.answer_stream(retrieval_request)
+            for chunk in generator:
+                if chunk["type"] == "metadata":
+                    trace = chunk["retrieval_trace"]
+                    trace["runtime"] = runtime.status.get("runtime", "unknown")
+                    
+                    runtime_info = dict(runtime.status)
+                    if retrieval_request.rerank.enabled:
+                        active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+                    else:
+                        active_provider = "noop"
+                    runtime_info["reranker"] = active_provider
+                    trace["services"] = runtime_info
+                    
+                    if retrieval_request.rerank.enabled:
+                        context_hits = chunk.get("retrieval_context", [])
+                        rerank_succeeded = any("rerank" in hit.get("scores", {}) for hit in context_hits)
+                        if not rerank_succeeded:
+                            active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+                            warn_key = f"reranker.{active_provider}_api_failed"
+                            if warn_key not in runtime.warnings:
+                                runtime.warnings.append(warn_key)
+                            trace["reranked"] = False
+                            trace["rerank_error"] = f"{active_provider}.api_failed"
+                    
+                    chunk["warnings"] = runtime.warnings
+                elif chunk["type"] == "done":
+                    # Update done trace with services info
+                    trace = chunk["retrieval_trace"]
+                    trace["runtime"] = runtime.status.get("runtime", "unknown")
+                    
+                    runtime_info = dict(runtime.status)
+                    if retrieval_request.rerank.enabled:
+                        active_provider = (retrieval_request.rerank.provider or get_settings().rerank_provider).lower()
+                    else:
+                        active_provider = "noop"
+                    runtime_info["reranker"] = active_provider
+                    trace["services"] = runtime_info
+                    chunk["warnings"] = runtime.warnings
+
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
     payload = runtime.lightrag_service.answer(retrieval_request)
     trace = payload.setdefault("retrieval_trace", {})
     trace["runtime"] = runtime.status.get("runtime", "unknown")

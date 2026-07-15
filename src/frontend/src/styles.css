@@ -1453,3 +1453,70 @@ button {
     align-items: center;
   }
 }
+
+/* Accordion for thinking/reasoning trace */
+.thinking-accordion {
+  border: 3px solid var(--border-dark);
+  border-radius: var(--card-radius);
+  background: #e8e3d3;
+  margin-bottom: 12px;
+  overflow: hidden;
+  box-shadow: 2px 2px 0 0 var(--border-dark);
+  font-size: 13.5px;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #dfdac9;
+  cursor: pointer;
+  user-select: none;
+  font-weight: bold;
+}
+
+.thinking-accordion[open] .thinking-header {
+  border-bottom: 3px solid var(--border-dark);
+}
+
+.thinking-title {
+  color: var(--paper-ink);
+}
+
+.thinking-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #999380;
+  border: 1.5px solid var(--border-dark);
+}
+
+.thinking-status-dot.pulsing {
+  background: #ff5f6d;
+  animation: dot-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes dot-pulse {
+  from {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  to {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+.thinking-content {
+  padding: 10px 12px;
+  color: #49435c;
+  font-style: italic;
+  font-family: monospace;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  background: #ebe6d6;
+  max-height: 250px;
+  overflow-y: auto;
+}

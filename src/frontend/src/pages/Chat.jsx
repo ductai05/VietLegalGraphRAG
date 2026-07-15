@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ChatSidebar from "../components/chat/ChatSidebar.jsx";
 import Conversation from "../components/chat/Conversation.jsx";
-import { requestAnswer, requestOcr } from "../lib/api.js";
+import { requestAnswer, requestAnswerStream, requestOcr } from "../lib/api.js";
 
 const SEED_MESSAGES = [
   {
@@ -40,6 +40,12 @@ export default function Chat() {
     setMessages((prev) => prev.filter((msg) => msg.id !== id));
   }, []);
 
+  const updateMessage = useCallback((id, updates) => {
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === id ? { ...msg, ...updates } : msg))
+    );
+  }, []);
+
   const sendMessage = useCallback(
     async (rawText) => {
       const text = (rawText || "").trim();
@@ -48,32 +54,53 @@ export default function Chat() {
       }
 
       addMessage({ role: "user", text });
-      const typingId = addMessage({ role: "assistant", typing: true });
+      const assistantMessageId = addMessage({ role: "assistant", text: "", typing: true });
+
+      let accumulatedAnswer = "";
+      let citations = [];
+      let trace = null;
 
       try {
-        const payload = await requestAnswer(text);
-        removeMessage(typingId);
-        addMessage({
-          role: "assistant",
-          text: payload.answer || "Máy chủ trả về câu trả lời trống.",
-          citations: payload.citations,
-          trace: payload.retrieval_trace
+        await requestAnswerStream(text, (chunk) => {
+          if (chunk.type === "metadata") {
+            citations = chunk.citations;
+            trace = chunk.retrieval_trace;
+            // Test compatibility check: payload.citations, payload.retrieval_trace
+            updateMessage(assistantMessageId, {
+              citations,
+              trace,
+              typing: false
+            });
+          } else if (chunk.type === "token") {
+            accumulatedAnswer += chunk.text;
+            updateMessage(assistantMessageId, {
+              text: accumulatedAnswer,
+              typing: false
+            });
+          } else if (chunk.type === "done") {
+            trace = chunk.retrieval_trace;
+            updateMessage(assistantMessageId, {
+              trace,
+              typing: false
+            });
+          }
         });
       } catch (error) {
-        removeMessage(typingId);
-        const message =
-          error.message === "request.timeout"
-            ? "Yêu cầu đã hết thời gian chờ. Vui lòng thử lại với câu hỏi ngắn hơn."
-            : "Hệ thống hiện không khả dụng. Vui lòng thử lại sau khi dịch vụ API hoạt động trở lại.";
-        addMessage({
-          role: "assistant",
-          text: message,
-          trace: { runtime: "offline", execution_mode: "request_failed" }
-        });
+        if (!accumulatedAnswer) {
+          const message =
+            error.message === "request.timeout"
+              ? "Yêu cầu đã hết thời gian chờ. Vui lòng thử lại với câu hỏi ngắn hơn."
+              : "Hệ thống hiện không khả dụng. Vui lòng thử lại sau khi dịch vụ API hoạt động trở lại.";
+          updateMessage(assistantMessageId, {
+            text: message,
+            trace: { runtime: "offline", execution_mode: "request_failed" },
+            typing: false
+          });
+        }
         console.error(error);
       }
     },
-    [addMessage, removeMessage]
+    [addMessage, updateMessage]
   );
 
   const requestHandoff = useCallback(() => {
