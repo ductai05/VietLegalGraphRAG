@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: vietlegal-rag
+Version: 1.0.0
+Summary: Vietnamese Legal RAG package for Open WebUI integration
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: neo4j>=5.0.0
+Requires-Dist: elasticsearch>=8.0.0
+Requires-Dist: voyageai>=0.4.1
+Requires-Dist: onnxruntime>=1.16.0
+Requires-Dist: google-cloud-vision>=3.15.0
+Requires-Dist: python-dotenv>=1.0.0
+
+# VietLegal RAG Package
+
+This directory contains the core services for the VietLegal RAG system, packaged as an installable library for integration with Open WebUI.

@@ -54,7 +54,11 @@ VietLegalGraphRAG/
 │
 ├── docs/                              # Tài liệu, báo cáo (LaTeX, PDF)
 │
-├── app/                               # Web Application source
+├── src/                               # Mã nguồn ứng dụng
+│   ├── open-webui/                    #   Giao diện Open WebUI (đã tích hợp)
+│   ├── vietlegal_rag/                 #   Gói dịch vụ RAG & đồ thị tri thức
+│   ├── backend/                       #   (Deprecated) Backend FastAPI cũ
+│   └── infra/                         #   Docker Compose cấu hình triển khai
 │
 ├── data/                              # Dữ liệu dự án
 │   ├── raw/                           #   Dữ liệu gốc (tải từ HuggingFace)
@@ -64,6 +68,7 @@ VietLegalGraphRAG/
 ├── LICENSE
 └── README.md
 ```
+
 
 ## 🎯 MVP Runtime Scope
 
@@ -110,3 +115,28 @@ python download_data.py
 ```
 
 Dữ liệu sẽ được tải vào `data/raw/vietnamese-legal-documents/`.
+
+### 🚀 Khởi chạy ứng dụng Web (Open WebUI)
+
+Ứng dụng web chạy qua Docker Compose giúp tự động build giao diện Open WebUI tích hợp với các dịch vụ RAG thông qua gói `vietlegal_rag`.
+
+1. **Cấu hình biến môi trường**:
+   Sao chép file cấu hình mẫu và điền thông tin thực tế:
+   ```bash
+   cp src/infra/.env.example src/infra/.env
+   ```
+   Đảm bảo cấu hình các khóa `ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY`, `NEO4J_URI`, `NEO4J_PASSWORD`, `LLM_API_KEY`,... cùng với thông tin đăng nhập Admin của Open WebUI (`WEBUI_ADMIN_EMAIL`, `WEBUI_ADMIN_PASSWORD`).
+
+2. **Chạy qua Docker Compose**:
+   ```bash
+   # Chạy môi trường Local Development (Port 8080)
+   docker compose --env-file src/infra/.env -f src/infra/docker-compose.yml up --build
+
+   # Chạy môi trường Production (Port 80 hoặc FRONTEND_PORT cấu hình)
+   docker compose --env-file src/infra/.env -f src/infra/docker-compose.production.yml up --build -d
+   ```
+
+3. **Truy cập giao diện**:
+   - Mở trình duyệt truy cập `http://localhost:8080`.
+   - Đăng nhập bằng tài khoản admin cấu hình trong `.env` (`admin@vietlegal.local` / `VietLegalAdmin2026!`).
+   - Ở thanh chọn mô hình chat, chọn **VietLegal RAG** để bắt đầu hội thoại tra cứu luật với đầy đủ trích dẫn và đồ thị.

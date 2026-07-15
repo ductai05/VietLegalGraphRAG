@@ -1,0 +1,43 @@
+# Stage 1: Build SvelteKit frontend
+FROM node:22-alpine AS frontend-build
+WORKDIR /app
+COPY src/open-webui/package.json src/open-webui/package-lock.json ./
+RUN npm ci --force
+COPY src/open-webui/ ./
+RUN npm run build
+
+# Stage 2: Python backend + VietLegal RAG package
+FROM python:3.11-slim-bookworm AS runtime
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git build-essential gcc g++ jq libffi-dev libssl-dev pandoc ffmpeg libsm6 libxext6 zstd && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Open WebUI backend dependencies
+COPY src/open-webui/backend/requirements.txt ./requirements-webui.txt
+RUN pip install --no-cache-dir -r requirements-webui.txt
+
+# Install VietLegal RAG package
+COPY src/vietlegal_rag/ /app/vietlegal_rag/
+RUN pip install --no-cache-dir /app/vietlegal_rag/
+
+# Copy Open WebUI backend files
+COPY src/open-webui/backend/ /app/backend/
+
+# Copy built frontend files and other package metadata
+COPY --from=frontend-build /app/build /app/build
+COPY --from=frontend-build /app/CHANGELOG.md /app/CHANGELOG.md
+COPY --from=frontend-build /app/package.json /app/package.json
+
+# Copy custom entrypoint and initialization scripts
+COPY src/infra/scripts/init_pipe.py /app/init_pipe.py
+COPY src/infra/scripts/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 8080
+ENV PORT=8080
+ENV ENV=prod
+
+ENTRYPOINT ["/app/entrypoint.sh"]

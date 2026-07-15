@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vietlegal-rag"
+version = "1.0.0"
+description = "Vietnamese Legal RAG package for Open WebUI integration"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "neo4j>=5.0.0",
+    "elasticsearch>=8.0.0",
+    "voyageai>=0.4.1",
+    "onnxruntime>=1.16.0",
+    "google-cloud-vision>=3.15.0",
+    "python-dotenv>=1.0.0"
+]
