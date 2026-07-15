@@ -48,6 +48,7 @@ class SearchRequestModel(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     graph: GraphConfigModel = Field(default_factory=GraphConfigModel)
     llm: LLMConfigModel = Field(default_factory=LLMConfigModel)
+    stream: bool = False
     include_trace: bool = Field(
         default=True,
         description=(

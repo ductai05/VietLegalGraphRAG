@@ -77,6 +77,67 @@ export async function requestAnswer(text) {
   return response.json();
 }
 
+export async function requestAnswerStream(text, onChunk) {
+  const response = await fetchWithTimeout(`${API_BASE}/answer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      "query": text,
+      "retrieval_mode": "hybrid",
+      "top_k": 5,
+      "filters": {},
+      "include_trace": true,
+      "rerank": {
+        "enabled": true,
+        "model": "rerank-2.5",
+        "candidate_k": 20,
+        "batch_size": 8,
+        "device": "auto",
+        "timeout_ms": 30000
+      },
+      "graph": {
+        "enabled": true,
+        "use_lightrag": true,
+        "max_hops": 1
+      },
+      "llm": {
+        "temperature": 0.2,
+        "max_context_chunks": 8
+      },
+      "stream": true
+    })
+  });
+
+  await ensureOk(response);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // Keep partial line in buffer
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("data: ")) {
+        const jsonStr = trimmed.slice(6);
+        try {
+          const parsed = JSON.parse(jsonStr);
+          onChunk(parsed);
+        } catch (e) {
+          console.error("Error parsing stream line:", e);
+        }
+      }
+    }
+  }
+}
+
 export async function requestOcr(file) {
   const formData = new FormData();
   formData.append("file", file);

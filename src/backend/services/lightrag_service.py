@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, Generator
 
 from answer_service import ExtractiveAnswerService
 from context_assembler import ContextAssembler
@@ -143,6 +143,129 @@ class LightRAGService:
             "citations": answer_payload.get("citations", []),
             "retrieval_context": [hit.to_dict() for hit in retrieval_hits],
             "graph_context": graph_payload,
+            "retrieval_trace": trace,
+        }
+
+    def answer_stream(
+        self,
+        request: RetrievalRequest,
+    ) -> Generator[dict[str, Any], None, None]:
+        started = time.perf_counter()
+        retrieval_hits = self.retrieval_service.search(request)
+        retrieval_done = time.perf_counter()
+        graph_context: GraphContext | None = None
+        graph_payload: dict[str, Any] = {}
+        graph_runtime_enabled = bool(getattr(self.graph_retriever, "enabled", True))
+        lightrag_enabled = bool(
+            request.graph.enabled
+            and request.graph.use_lightrag
+            and graph_runtime_enabled
+        )
+        lightrag_error = None
+
+        if lightrag_enabled:
+            try:
+                graph_context = self.graph_retriever.retrieve(
+                    request.query,
+                    [hit.to_dict() for hit in retrieval_hits],
+                    request.graph.max_hops,
+                    auto_depth=request.graph.auto_depth,
+                )
+                graph_payload = graph_context.to_dict()
+            except Exception:
+                lightrag_enabled = False
+                lightrag_error = "graph.retrieval_failed"
+        graph_done = time.perf_counter()
+
+        contexts = self.context_assembler.merge(retrieval_hits, graph_context)
+        contexts = self._limit_contexts(
+            contexts,
+            graph_context,
+            request.llm.max_context_chunks,
+        )
+        graph_chunks_used = sum(1 for context in contexts if context.source == "graph")
+
+        trace = {
+            "retrieval_mode": request.retrieval_mode,
+            "execution_mode": request.execution_mode,
+            "reranked": request.rerank.enabled,
+            "temperature": request.llm.temperature,
+            "graph_enabled": request.graph.enabled,
+            "lightrag_enabled": lightrag_enabled,
+            "retrieval_hits": len(retrieval_hits),
+            "graph_hits": len(graph_context.related_chunks) if graph_context else 0,
+            "graph_chunks_used": graph_chunks_used,
+            "latency_ms": {
+                "retrieval": round((retrieval_done - started) * 1000, 3),
+                "graph": round((graph_done - retrieval_done) * 1000, 3),
+            },
+        }
+        if lightrag_error:
+            trace["lightrag_error"] = lightrag_error
+
+        # Include document resolution info in trace.
+        resolved = self.context_assembler.last_resolved
+        if resolved is not None:
+            if resolved.warnings:
+                trace["resolution_warnings"] = resolved.warnings
+            if resolved.resolutions:
+                trace["resolutions"] = [
+                    r.to_dict() for r in resolved.resolutions
+                ]
+
+        citations = [
+            {
+                "chunk_id": context.chunk_id,
+                "doc_id": context.doc_id,
+                "title": context.title,
+                "citation": context.citation,
+            }
+            for context in contexts
+        ]
+
+        yield {
+            "type": "metadata",
+            "citations": citations,
+            "retrieval_context": [hit.to_dict() for hit in retrieval_hits],
+            "graph_context": graph_payload,
+            "retrieval_trace": trace,
+        }
+
+        answer_error = None
+        try:
+            generator = self.answer_service.answer_stream(
+                request.query,
+                contexts,
+                request.llm.temperature,
+            )
+            for token in generator:
+                yield {
+                    "type": "token",
+                    "text": token,
+                }
+        except Exception:
+            answer_error = "llm.answer_failed"
+            try:
+                extractive_payload = ExtractiveAnswerService().answer(
+                    request.query,
+                    contexts,
+                    request.llm.temperature,
+                )
+                yield {
+                    "type": "token",
+                    "text": extractive_payload.get("answer", ""),
+                }
+            except Exception:
+                pass
+
+        answer_done = time.perf_counter()
+        trace["latency_ms"]["answer"] = round((answer_done - graph_done) * 1000, 3)
+        trace["latency_ms"]["total"] = round((answer_done - started) * 1000, 3)
+        if answer_error:
+            trace["answer_error"] = answer_error
+
+        yield {
+            "type": "done",
             "retrieval_trace": trace,
         }
 
