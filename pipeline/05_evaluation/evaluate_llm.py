@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import sys
 import re
 import time
 from collections import defaultdict
@@ -30,7 +31,7 @@ DEFAULT_MODELS = (
     "llama-3.3-70b-versatile",
     "qwen/qwen3-32b",
 )
-DEFAULT_SETUPS = ("no_rag", "hybrid_rerank")
+DEFAULT_SETUPS = ("no_rag", "hybrid_rerank", "hybrid_graph")
 ANSWER_RE = re.compile(r"\b([ABCD])\b", re.IGNORECASE)
 
 
@@ -47,6 +48,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--setups", nargs="+", choices=DEFAULT_SETUPS, default=list(DEFAULT_SETUPS))
     parser.add_argument("--sparse-index", default="vietlegal_chunks_sparse_current")
+    parser.add_argument("--neo4j-uri", default=os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687"))
+    parser.add_argument("--neo4j-user", default=os.environ.get("NEO4J_USER", "neo4j"))
+    parser.add_argument("--neo4j-password", default=os.environ.get("NEO4J_PASSWORD", "password"))
+    parser.add_argument("--neo4j-database", default=os.environ.get("NEO4J_DATABASE", "neo4j"))
+    parser.add_argument("--max-hops", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-context-chars", type=int, default=4_000)
     parser.add_argument("--max-completion-tokens", type=int, default=192)
@@ -92,18 +98,20 @@ def normalize_query(value: str) -> str:
 def load_env(path: Path) -> None:
     if path.exists():
         load_dotenv(path, override=False)
-    groq_keys = [
-        value
-        for name, value in {**dotenv_values(path), **os.environ}.items()
-        if name.startswith("GROQ_API_KEY") and value
-    ]
-    missing = [
-        name
-        for name in ("ELASTIC_CLOUD_ID", "ELASTIC_API_KEY")
-        if not os.environ.get(name)
-    ]
-    if not groq_keys:
-        missing.append("GROQ_API_KEY*")
+    
+    env_vars = {**dotenv_values(path), **os.environ}
+    missing = []
+    
+    # Elasticsearch credentials
+    if not env_vars.get("ELASTICSEARCH_URL") and not (env_vars.get("ELASTIC_CLOUD_ID") and env_vars.get("ELASTIC_API_KEY")):
+        missing.append("ELASTICSEARCH_URL or (ELASTIC_CLOUD_ID + ELASTIC_API_KEY)")
+        
+    # LLM credentials
+    if not env_vars.get("LLM_API_KEY"):
+        groq_keys = [value for name, value in env_vars.items() if name.startswith("GROQ_API_KEY") and value]
+        if not groq_keys:
+            missing.append("LLM_API_KEY or GROQ_API_KEY*")
+
     if missing:
         raise ValueError(
             "Missing credentials: "
@@ -136,14 +144,18 @@ class GroqKeyPool:
             **{str(key): value for key, value in dotenv_values(self.env_file).items()},
             **os.environ,
         }
-        candidates = sorted(
-            (
-                (name, str(value))
-                for name, value in values.items()
-                if name.startswith("GROQ_API_KEY") and value
-            ),
-            key=lambda item: key_sort_value(item[0]),
-        )
+        
+        if "LLM_API_KEY" in values and values["LLM_API_KEY"]:
+            candidates = [("LLM_API_KEY", str(values["LLM_API_KEY"]))]
+        else:
+            candidates = sorted(
+                (
+                    (name, str(value))
+                    for name, value in values.items()
+                    if name.startswith("GROQ_API_KEY") and value
+                ),
+                key=lambda item: key_sort_value(item[0]),
+            )
         unique: list[tuple[str, str]] = []
         seen_values: set[str] = set()
         for name, value in candidates:
@@ -159,7 +171,7 @@ class GroqKeyPool:
                 self.disabled.discard(name)
                 self.cooldown_until.pop(name, None)
         if not self.keys:
-            raise ValueError(f"No GROQ_API_KEY* values found in {self.env_file}")
+            raise ValueError(f"No LLM_API_KEY or GROQ_API_KEY* values found in {self.env_file}")
         if initial:
             self.index = self.offset % len(self.keys)
         elif old_name:
@@ -180,7 +192,12 @@ class GroqKeyPool:
     def client(self) -> Groq:
         name, key = self.keys[self.index]
         if name not in self.clients:
-            self.clients[name] = Groq(api_key=key, max_retries=0, timeout=90)
+            values = {**dotenv_values(self.env_file), **os.environ}
+            base_url = values.get("LLM_BASE_URL")
+            if base_url and name == "LLM_API_KEY":
+                self.clients[name] = Groq(api_key=key, base_url=base_url, max_retries=0, timeout=90)
+            else:
+                self.clients[name] = Groq(api_key=key, max_retries=0, timeout=90)
         return self.clients[name]
 
     def disable_active(self) -> None:
@@ -274,6 +291,77 @@ def hydrate_contexts(
             f"from {index}; first missing ID: {missing[0]}"
         )
     return chunks
+
+
+def hydrate_graph_contexts(
+    elastic: Elasticsearch,
+    driver: Any,
+    neo4j_database: str,
+    questions: list[dict[str, Any]],
+    retrieval: dict[str, dict[str, Any]],
+    chunks: dict[str, dict[str, Any]],
+    *,
+    index: str,
+    top_k: int,
+    max_hops: int,
+) -> dict[str, list[str]]:
+    """Perform graph expansion for each question and hydrate the neighbor chunks."""
+    backend_path = str(Path(__file__).resolve().parent.parent.parent / "src" / "backend")
+    if backend_path not in sys.path:
+        sys.path.append(backend_path)
+    try:
+        from services.graph_retriever import GraphRetriever
+        from services.elasticsearch_retriever import ElasticsearchGraphChunkFetcher
+    except ImportError:
+        raise RuntimeError("Failed to import GraphRetriever. Ensure src/backend is reachable.")
+
+    fetcher = ElasticsearchGraphChunkFetcher(elastic, index=index, per_doc_size=1)
+    retriever = GraphRetriever(driver, database=neo4j_database, chunk_fetcher=fetcher)
+
+    query_graph_chunk_ids: dict[str, list[str]] = {}
+
+    for q in questions:
+        q_id = q["question_id"]
+        query_text = q["question"]
+        row = retrieval.get(normalize_query(query_text))
+        if not row:
+            continue
+        
+        top_ids = [str(cid) for cid in row["top_chunk_ids"][:top_k]]
+        base_doc_ids = []
+        for cid in top_ids:
+            if cid in chunks and chunks[cid].get("doc_id"):
+                base_doc_ids.append(str(chunks[cid]["doc_id"]))
+        
+        expanded_chunks = []
+        seen_chunk_ids = set(top_ids)
+        for doc_id in set(base_doc_ids):
+            graph_context = retriever.get_document_neighbors(doc_id, depth=max_hops)
+            related_docs = []
+            for node in graph_context.nodes:
+                node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
+                if not node_doc_id and hasattr(node, "id") and str(node.id).startswith("doc:"):
+                    node_doc_id = str(node.id).split(":", 1)[1]
+                if node_doc_id:
+                    related_docs.append({"doc_id": str(node_doc_id)})
+            
+            answer_contexts = fetcher(query=query_text, related_documents=related_docs)
+            for ac in answer_contexts:
+                cid = str(ac.chunk_id)
+                if cid not in seen_chunk_ids:
+                    seen_chunk_ids.add(cid)
+                    chunks[cid] = {
+                        "chunk_id": cid,
+                        "chunk_text": ac.text,
+                        "doc_id": ac.doc_id,
+                        "title": ac.title,
+                        "citation": ac.citation,
+                    }
+                    expanded_chunks.append(cid)
+                    
+        query_graph_chunk_ids[q_id] = expanded_chunks
+
+    return query_graph_chunk_ids
 
 
 def build_context(
@@ -548,7 +636,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "completion_tokens": sum(row.get("completion_tokens", 0) for row in subset),
             "by_question_type": by_type,
         }
-        if setup == "hybrid_rerank":
+        if setup in ("hybrid_rerank", "hybrid_graph"):
             item.update(
                 {
                     "retrieval_hit_rate": safe_mean(
@@ -592,6 +680,8 @@ def usage_value(usage: Any, name: str) -> int:
 
 def main() -> None:
     args = parse_args()
+    if not args.env_file.exists() and Path("env").exists():
+        args.env_file = Path("env")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.top_k <= 0 or args.max_context_chars <= 0:
         raise ValueError("--top-k and --max-context-chars must be positive")
@@ -601,12 +691,27 @@ def main() -> None:
     selected = questions[args.start_index :]
     if args.limit is not None:
         selected = selected[: args.limit]
+        
+    models_to_run = args.models
+    if "LLM_MODEL" in os.environ and args.models == list(DEFAULT_MODELS):
+        models_to_run = [os.environ["LLM_MODEL"]]
 
-    elastic = Elasticsearch(
-        cloud_id=os.environ["ELASTIC_CLOUD_ID"],
-        api_key=os.environ["ELASTIC_API_KEY"],
-        request_timeout=60,
-    )
+    es_url = os.environ.get("ELASTICSEARCH_URL")
+    if es_url:
+        es_api_key = os.environ.get("ELASTICSEARCH_API_KEY") or os.environ.get("ELASTIC_API_KEY")
+        elastic = Elasticsearch(
+            hosts=[es_url],
+            api_key=es_api_key,
+            verify_certs=os.environ.get("ELASTICSEARCH_VERIFY_CERTS", "true").lower() == "true",
+            request_timeout=60,
+        )
+    else:
+        elastic = Elasticsearch(
+            cloud_id=os.environ["ELASTIC_CLOUD_ID"],
+            api_key=os.environ["ELASTIC_API_KEY"],
+            request_timeout=60,
+        )
+    query_graph_chunk_ids: dict[str, list[str]] = {}
     try:
         chunks = hydrate_contexts(
             elastic,
@@ -614,35 +719,62 @@ def main() -> None:
             index=args.sparse_index,
             top_k=args.top_k,
         )
+        if "hybrid_graph" in args.setups:
+            from neo4j import GraphDatabase
+            driver = GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, args.neo4j_password))
+            try:
+                logging.info("Hydrating graph contexts...")
+                query_graph_chunk_ids = hydrate_graph_contexts(
+                    elastic=elastic,
+                    driver=driver,
+                    neo4j_database=args.neo4j_database,
+                    questions=selected,
+                    retrieval=retrieval,
+                    chunks=chunks,
+                    index=args.sparse_index,
+                    top_k=args.top_k,
+                    max_hops=args.max_hops,
+                )
+            finally:
+                driver.close()
     finally:
         elastic.close()
 
     contexts_path = args.output_dir / "contexts.jsonl"
     contexts_path.parent.mkdir(parents=True, exist_ok=True)
-    context_rows: dict[str, dict[str, Any]] = {}
+    context_rows: dict[tuple[str, str], dict[str, Any]] = {}
     for question in questions:
         row = retrieval.get(normalize_query(question["question"]))
         if row is None:
             raise RuntimeError(f"No retrieval result for {question['question_id']}")
-        top_ids = [str(value) for value in row["top_chunk_ids"][: args.top_k]]
-        text, included_ids, truncated = build_context(
-            top_ids,
-            chunks,
-            max_chars=args.max_context_chars,
-        )
-        context_rows[question["question_id"]] = {
-            "question_id": question["question_id"],
-            "top_chunk_ids": top_ids,
-            "included_chunk_ids": included_ids,
-            "context": text,
-            "truncated": truncated,
-        }
+        for setup in args.setups:
+            if setup == "no_rag":
+                continue
+            
+            top_ids = [str(value) for value in row["top_chunk_ids"][: args.top_k]]
+            if setup == "hybrid_graph":
+                top_ids.extend(query_graph_chunk_ids.get(question["question_id"], []))
+                
+            text, included_ids, truncated = build_context(
+                top_ids,
+                chunks,
+                max_chars=args.max_context_chars,
+            )
+            context_rows[(setup, question["question_id"])] = {
+                "question_id": question["question_id"],
+                "top_chunk_ids": top_ids,
+                "included_chunk_ids": included_ids,
+                "context": text,
+                "truncated": truncated,
+            }
+    
     with contexts_path.open("w", encoding="utf-8") as handle:
         for question in questions:
-            handle.write(
-                json.dumps(context_rows[question["question_id"]], ensure_ascii=False)
-                + "\n"
-            )
+            for setup in args.setups:
+                if setup == "no_rag":
+                    continue
+                row_data = context_rows[(setup, question["question_id"])]
+                handle.write(json.dumps({"setup": setup, **row_data}, ensure_ascii=False) + "\n")
     logging.info("Wrote hydrated contexts to %s", contexts_path)
     if args.hydrate_only:
         return
@@ -650,21 +782,28 @@ def main() -> None:
     results_path = args.output_dir / "responses.jsonl"
     completed = set() if args.no_resume else existing_keys(results_path)
     key_pool = GroqKeyPool(args.env_file, offset=args.groq_key_offset)
-    total = len(selected) * len(args.models) * len(args.setups)
+    total = len(selected) * len(models_to_run) * len(args.setups)
     done = 0
-    for model in args.models:
+    for model in models_to_run:
         for setup in args.setups:
             for question in selected:
                 key = (question["question_id"], model, setup)
                 done += 1
                 if key in completed:
                     continue
-                context_row = context_rows[question["question_id"]]
+                if setup == "no_rag":
+                    context_str = ""
+                    included_ids_list = []
+                else:
+                    context_row = context_rows[(setup, question["question_id"])]
+                    context_str = context_row["context"]
+                    included_ids_list = context_row["included_chunk_ids"]
+
                 prompt = build_prompt(
                     question,
                     setup,
-                    context_row["context"] if setup == "hybrid_rerank" else "",
-                    context_row["included_chunk_ids"] if setup == "hybrid_rerank" else [],
+                    context_str,
+                    included_ids_list,
                 )
                 started = time.perf_counter()
                 base = {
@@ -688,7 +827,7 @@ def main() -> None:
                     )
                     content = response.choices[0].message.content or ""
                     answer, cited_ids, valid_json = parse_response(content)
-                    allowed_ids = set(context_row["included_chunk_ids"])
+                    allowed_ids = set(included_ids_list)
                     gold_ids = set(question.get("evidence", {}).get("chunk_ids") or [])
                     retrieval_hit = bool(allowed_ids & gold_ids)
                     usage = getattr(response, "usage", None)
@@ -700,17 +839,17 @@ def main() -> None:
                         "cited_chunk_ids": cited_ids,
                         "valid_json": valid_json,
                         "citation_valid": (
-                            setup == "hybrid_rerank"
+                            setup in ("hybrid_rerank", "hybrid_graph")
                             and bool(cited_ids)
                             and set(cited_ids).issubset(allowed_ids)
                         ),
                         "cites_gold": (
-                            setup == "hybrid_rerank"
+                            setup in ("hybrid_rerank", "hybrid_graph")
                             and bool(set(cited_ids) & gold_ids)
                         ),
                         "retrieval_hit": retrieval_hit,
-                        "included_chunk_ids": context_row["included_chunk_ids"],
-                        "context_truncated": context_row["truncated"],
+                        "included_chunk_ids": included_ids_list,
+                        "context_truncated": context_row["truncated"] if setup != "no_rag" else False,
                         "latency_seconds": round(time.perf_counter() - started, 4),
                         "prompt_tokens": usage_value(usage, "prompt_tokens"),
                         "completion_tokens": usage_value(usage, "completion_tokens"),
@@ -742,7 +881,7 @@ def main() -> None:
     rows = load_jsonl(results_path)
     summary = summarize(rows)
     summary["configuration"] = {
-        "models": args.models,
+        "models": models_to_run,
         "setups": args.setups,
         "top_k": args.top_k,
         "max_context_chars": args.max_context_chars,

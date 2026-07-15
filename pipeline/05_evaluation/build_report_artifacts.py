@@ -71,7 +71,7 @@ def summarize_llm() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 model=model,
                 setup=setup,
             )
-            for setup in ("no_rag", "hybrid_rerank")
+            for setup in ("no_rag", "hybrid_rerank", "hybrid_graph")
         }
         model_result: dict[str, Any] = {}
         for setup, rows in setups.items():
@@ -83,7 +83,7 @@ def summarize_llm() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                     [float(row["latency_seconds"]) for row in rows]
                 ),
             }
-            if setup == "hybrid_rerank":
+            if setup in ("hybrid_rerank", "hybrid_graph"):
                 item.update(
                     {
                         "citation_validity": mean(
@@ -194,19 +194,27 @@ def plot_llm(summary: dict[str, Any]) -> None:
     models = list(summary)
     short = ["Llama 3.1 8B", "Llama 3.3 70B", "Qwen3 32B"]
     x = range(len(models))
-    width = 0.34
+    width = 0.25
     no_rag = [summary[model]["no_rag"]["accuracy"] for model in models]
     rag = [summary[model]["hybrid_rerank"]["accuracy"] for model in models]
+    graph = [summary.get(model, {}).get("hybrid_graph", {}).get("accuracy", 0.0) for model in models]
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    first = ax.bar([value - width / 2 for value in x], no_rag, width, label="No-RAG")
+    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG")
     second = ax.bar(
-        [value + width / 2 for value in x],
+        list(x),
         rag,
         width,
         label="Hybrid + Rerank",
     )
+    third = ax.bar(
+        [value + width for value in x],
+        graph,
+        width,
+        label="Hybrid + KG",
+    )
     ax.bar_label(first, fmt="%.3f", fontsize=9)
     ax.bar_label(second, fmt="%.3f", fontsize=9)
+    ax.bar_label(third, fmt="%.3f", fontsize=9)
     ax.set_xticks(list(x), short)
     ax.set_ylim(0, 1)
     ax.set_ylabel("MCQ accuracy")
@@ -230,6 +238,7 @@ def main() -> None:
             "llm_results_complete": all(
                 setups["no_rag"]["questions"] == 200
                 and setups["hybrid_rerank"]["questions"] == 200
+                and setups.get("hybrid_graph", {}).get("questions", 0) == 200
                 for setups in llm_summary.values()
             ),
         },
