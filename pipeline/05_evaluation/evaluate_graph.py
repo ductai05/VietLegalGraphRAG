@@ -186,7 +186,12 @@ def main():
     }
     
     print("\n--- Ablation Table (Base vs 1-Hop vs 2-Hop) ---")
-    print(json.dumps(summary, indent=2))
+    print(f"{'Metric':<20} | {'Base':<10} | {'1-Hop':<10} | {'2-Hop':<10}")
+    print("-" * 57)
+    print(f"{'Hit Rate':<20} | {summary['base_hit_rate']:<10.4f} | {summary['hop1_hit_rate']:<10.4f} | {summary['hop2_hit_rate']:<10.4f}")
+    print(f"{'Recall':<20} | {summary['base_recall']:<10.4f} | {summary['hop1_recall']:<10.4f} | {summary['hop2_recall']:<10.4f}")
+    print(f"{'Rescue Rate':<20} | {'-':<10} | {summary['hop1_rescue_rate']:<10.4f} | {summary['hop2_rescue_rate']:<10.4f}")
+    print(f"{'Noise Avg':<20} | {'-':<10} | {summary['hop1_noise_avg']:<10.4f} | {summary['hop2_noise_avg']:<10.4f}")
     
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

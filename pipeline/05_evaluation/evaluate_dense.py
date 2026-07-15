@@ -32,7 +32,8 @@ def parse_args() -> argparse.Namespace:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--faiss-dir", type=Path)
     target.add_argument("--elastic-cloud-id")
-    parser.add_argument("--elastic-api-key", default=None)
+    target.add_argument("--elastic-url", "--url", dest="elastic_url", default=None)
+    parser.add_argument("--elastic-api-key", "--api-key", dest="elastic_api_key", default=None)
     parser.add_argument("--elastic-index", default=COLLECTION_NAME)
     parser.add_argument("--elastic-num-candidates", type=int, default=None)
     parser.add_argument("--chunks", type=Path, default=None)
@@ -170,6 +171,7 @@ def main() -> None:
         faiss_nprobe=args.faiss_nprobe,
         faiss_oversample=args.faiss_oversample,
         elastic_cloud_id=args.elastic_cloud_id,
+        elastic_url=args.elastic_url,
         elastic_api_key=args.elastic_api_key,
         elastic_index=args.elastic_index,
         elastic_num_candidates=args.elastic_num_candidates,

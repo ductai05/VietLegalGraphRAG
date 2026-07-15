@@ -59,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         help="Elastic Cloud ID. Defaults to ELASTIC_CLOUD_ID.",
     )
     parser.add_argument(
+        "--url",
+        default=None,
+        help="Elasticsearch URL. Defaults to ELASTICSEARCH_URL or ELASTIC_URL.",
+    )
+    parser.add_argument(
         "--api-key",
         default=None,
         help="Elasticsearch API key. Defaults to ELASTIC_API_KEY.",
@@ -520,7 +525,7 @@ def finalize_index(
 def main() -> None:
     args = parse_args()
     validate_args(args)
-    cloud_id, api_key = resolve_credentials(args.cloud_id, args.api_key)
+    cloud_id, url, api_key = resolve_credentials(args.cloud_id, args.api_key, args.url)
     if Elasticsearch is None:
         raise ModuleNotFoundError(
             "Elasticsearch ingest requires the `elasticsearch` package. "
@@ -564,13 +569,22 @@ def main() -> None:
     if not completed:
         raise ValueError("No completed embedding shards were selected")
 
-    es = Elasticsearch(
-        cloud_id=cloud_id,
-        api_key=api_key,
-        request_timeout=args.request_timeout,
-        retry_on_timeout=True,
-        max_retries=5,
-    )
+    if cloud_id:
+        es = Elasticsearch(
+            cloud_id=cloud_id,
+            api_key=api_key,
+            request_timeout=args.request_timeout,
+            retry_on_timeout=True,
+            max_retries=5,
+        )
+    else:
+        es = Elasticsearch(
+            hosts=[url],
+            api_key=api_key,
+            request_timeout=args.request_timeout,
+            retry_on_timeout=True,
+            max_retries=5,
+        )
     try:
         info = es.info()
         logging.info("Connected to Elasticsearch cluster %s", info.get("cluster_name"))

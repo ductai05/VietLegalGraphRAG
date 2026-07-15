@@ -69,7 +69,7 @@ def parse_args(argv=None):
                         help="Elasticsearch password")
     parser.add_argument("--index", default=os.environ.get("ELASTICSEARCH_ALIAS") or os.environ.get("ELASTICSEARCH_INDEX"),
                         help="Hybrid Elasticsearch index or alias for dense and sparse search")
-    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K,
+    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K, 
                         help="RRF rank constant used by hybrid_search.py")
     parser.add_argument("--elastic-num-candidates", type=int, default=None,
                         help="Elasticsearch kNN num_candidates override for hybrid dense search")
@@ -77,6 +77,14 @@ def parse_args(argv=None):
                         help="Hugging Face reranker model name")
     parser.add_argument("--rerank-batch-size", type=int, default=8,
                         help="Reranker batch size")
+    parser.add_argument("--neo4j-uri", default=os.environ.get("NEO4J_URI"),
+                        help="Neo4j connection URI")
+    parser.add_argument("--neo4j-user", default=os.environ.get("NEO4J_USER"),
+                        help="Neo4j username")
+    parser.add_argument("--neo4j-password", default=os.environ.get("NEO4J_PASSWORD"),
+                        help="Neo4j password")
+    parser.add_argument("--neo4j-database", default=os.environ.get("NEO4J_DATABASE"),
+                        help="Neo4j database name")
     parser.add_argument("--chunks", type=Path, default=None,
                         help="Path to chunks parquet dataset for metadata hydration")
     parser.add_argument("--device", default=None,
@@ -233,6 +241,26 @@ def main():
             if args.device:
                 hybrid_cmd.extend(["--device", args.device])
             run_command(hybrid_cmd, f"Hybrid + Reranker Evaluation (K={k_val})")
+
+        # 3.5 Run Knowledge Graph Evaluation on Hybrid Results (K=50)
+        graph_output = args.output_dir / "elasticsearch_hybrid_graph_eval.json"
+        graph_cmd = [
+            sys.executable, str(EVAL_DIR / "evaluate_graph.py"),
+            "--search-results", str(rerank_outputs[50]),
+            "--gold", str(eval_gold_path),
+            "--output", str(graph_output)
+        ]
+        if args.env_file:
+            graph_cmd.extend(["--env-file", str(args.env_file)])
+        if args.neo4j_uri:
+            graph_cmd.extend(["--neo4j-uri", args.neo4j_uri])
+        if args.neo4j_user:
+            graph_cmd.extend(["--neo4j-user", args.neo4j_user])
+        if args.neo4j_password:
+            graph_cmd.extend(["--neo4j-password", args.neo4j_password])
+        if args.neo4j_database:
+            graph_cmd.extend(["--neo4j-database", args.neo4j_database])
+        run_command(graph_cmd, "Knowledge Graph Retrieval Evaluation on Hybrid K=50")
 
         # 4. Run Plotting Metrics
         plot_cmd = [
