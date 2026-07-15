@@ -443,6 +443,7 @@ def _build_answer_service(
         return OpenAICompatibleAnswerService(
             client=OpenAI(**kwargs),
             model=settings.llm_model,
+            max_tokens=settings.llm_max_tokens,
         )
     except Exception:
         if not settings.runtime_fallback_enabled:

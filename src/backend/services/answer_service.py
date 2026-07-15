@@ -52,9 +52,10 @@ class ExtractiveAnswerService:
 
 
 class OpenAICompatibleAnswerService:
-    def __init__(self, client: object, model: str) -> None:
+    def __init__(self, client: object, model: str, max_tokens: int = 2048) -> None:
         self.client = client
         self.model = model
+        self.max_tokens = max_tokens
 
     def answer(
         self,
@@ -106,6 +107,7 @@ class OpenAICompatibleAnswerService:
                     ),
                 },
             ],
+            max_tokens=self.max_tokens,
         )
         answer = response.choices[0].message.content or ""
         return {

@@ -48,27 +48,22 @@ jobs:
 
             docker network inspect vietlegal_net >/dev/null 2>&1 || docker network create vietlegal_net
 
-            echo "Building backend"
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build backend
-            echo "Starting backend"
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps backend
+            echo "Building open-webui"
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build open-webui
+            echo "Starting open-webui"
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps open-webui
 
-            echo "Waiting for backend health"
+            echo "Waiting for open-webui health"
             for attempt in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:${BACKEND_PORT:-8000}/health >/dev/null; then
+              if curl --fail --silent --show-error http://127.0.0.1:${FRONTEND_PORT:-80}/ready >/dev/null; then
                 break
               fi
               if [ "$attempt" -eq 30 ]; then
-                echo "Backend health check failed"
-                docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=100 backend
+                echo "Open WebUI health check failed"
+                docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=100 open-webui
                 exit 1
               fi
               sleep 2
             done
-
-            echo "Building frontend"
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build frontend
-            echo "Starting frontend"
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps frontend
 
             docker image prune -f

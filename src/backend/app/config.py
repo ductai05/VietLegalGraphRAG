@@ -79,6 +79,7 @@ class Settings:
     llm_base_url: str | None
     llm_api_key: str | None
     llm_model: str
+    llm_max_tokens: int
     frontend_origin: str
     runtime_fallback_enabled: bool
     ocr_provider: str
@@ -147,6 +148,7 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL"),
         llm_api_key=os.getenv("LLM_API_KEY"),
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        llm_max_tokens=_getenv_int("LLM_MAX_TOKENS", 2048),
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:5173"),
         runtime_fallback_enabled=_getenv_bool("RUNTIME_FALLBACK_ENABLED", True),
         # OCR: "none" disables the route; "google" uses Google Vision.

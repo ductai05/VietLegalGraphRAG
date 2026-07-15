@@ -61,12 +61,15 @@ class RerankConfig:
 class LLMConfig:
     temperature: float = 0.2
     max_context_chunks: int = 8
+    max_tokens: int = 2048
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.temperature <= 1.0:
             raise ValueError("llm.temperature must be between 0.0 and 1.0")
         if not 0 < self.max_context_chunks <= MAX_CONTEXT_CHUNKS:
             raise ValueError(f"llm.max_context_chunks must be between 1 and {MAX_CONTEXT_CHUNKS}")
+        if self.max_tokens <= 0:
+            raise ValueError("llm.max_tokens must be positive")
 
 
 @dataclass

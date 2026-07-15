@@ -31,6 +31,7 @@ class RerankConfigModel(BaseModel):
 class LLMConfigModel(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     max_context_chunks: int = Field(default=8, gt=0, le=32)
+    max_tokens: int = Field(default=2048, gt=0, le=16384)
 
 
 class GraphConfigModel(BaseModel):

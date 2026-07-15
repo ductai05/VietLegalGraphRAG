@@ -17,8 +17,7 @@ def test_production_compose_manages_only_app_services() -> None:
     compose = read("src/infra/docker-compose.production.yml")
 
     assert not (ROOT / "src/infra/docker-compose.droplet.yml").exists()
-    assert "  backend:" in compose
-    assert "  frontend:" in compose
+    assert "  open-webui:" in compose
     assert "  graph_db:" not in compose
     assert "neo4j_prod_data" not in compose
     assert "depends_on:" not in compose
@@ -29,40 +28,15 @@ def test_production_compose_manages_only_app_services() -> None:
     assert "ELASTICSEARCH_SPARSE_INDEX" not in compose
     assert "external: true" in compose
     assert "name: vietlegal_net" in compose
-    assert '"127.0.0.1:${BACKEND_PORT:-8000}:8000"' in compose
-
-
-def test_frontend_has_nginx_container_definition() -> None:
-    compose = read("src/infra/docker-compose.production.yml")
-    nginx = read("src/frontend/nginx.conf")
-
-    assert "dockerfile: src/frontend/Dockerfile" in compose
-    assert (ROOT / "src/frontend/Dockerfile").is_file()
-    assert (ROOT / "src/frontend/nginx.conf").is_file()
-    assert "resolver 127.0.0.11" in nginx
-    assert "proxy_pass $backend_upstream" in nginx
-    assert "limit_req_zone" in nginx
-    assert "limit_req zone=api" in nginx
-    assert "gzip on;" in nginx
-    assert "X-Content-Type-Options" in nginx
-    assert "Cache-Control" in nginx
-
-
-def test_frontend_dockerfile_copies_only_public_assets() -> None:
-    dockerfile = read("src/frontend/Dockerfile")
-
-    assert "COPY src/frontend/ /usr/share/nginx/html/" not in dockerfile
-    assert "/app/dist" in dockerfile
-    assert "npm run build" in dockerfile
+    assert '"${FRONTEND_PORT:-80}:8080"' in compose
 
 
 def test_deploy_workflow_rebuilds_all_app_services() -> None:
     workflow = read(".github/workflows/deploy.yml")
 
-    assert "up -d --no-deps backend" in workflow
-    assert "up -d --no-deps frontend" in workflow
+    assert "up -d --no-deps open-webui" in workflow
     assert "up --build -d" not in workflow
-    assert "Waiting for backend health" in workflow
+    assert "Waiting for open-webui health" in workflow
     assert "curl --fail --silent --show-error" in workflow
 
 

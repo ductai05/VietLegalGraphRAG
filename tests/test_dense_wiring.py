@@ -56,6 +56,7 @@ def _settings(**overrides) -> Settings:
         llm_base_url=None,
         llm_api_key=None,
         llm_model="gpt-4o-mini",
+        llm_max_tokens=2048,
         frontend_origin="http://localhost:5173",
         runtime_fallback_enabled=True,
         ocr_provider="none",

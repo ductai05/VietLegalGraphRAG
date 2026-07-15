@@ -124,6 +124,10 @@ class Pipe:
             default=8, 
             description="Maximum context chunks allowed in prompt template"
         )
+        llm_max_tokens: int = Field(
+            default=2048,
+            description="Maximum tokens for LLM generation"
+        )
 
     def __init__(self):
         self.type = "pipe"
@@ -186,6 +190,7 @@ class Pipe:
             max_hops=self.valves.max_hops,
             llm_temperature=self.valves.llm_temperature,
             max_context_chunks=self.valves.max_context_chunks,
+            llm_max_tokens=self.valves.llm_max_tokens,
         )
         request = RetrievalRequest(**search_model.model_dump())
 

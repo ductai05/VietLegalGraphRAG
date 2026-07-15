@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import time
+import logging
 from typing import Any, Protocol
+
+logger = logging.getLogger("vietlegal_rag.services.lightrag_service")
 
 from answer_service import ExtractiveAnswerService
 from context_assembler import ContextAssembler
@@ -208,18 +211,49 @@ class LightRAGService:
         )
         graph_chunks_used = sum(1 for context in contexts if context.source == "graph")
         
-        try:
-            stream = self.answer_service.stream_answer(
-                request.query,
-                contexts,
-                request.llm.temperature,
-            )
-        except Exception:
-            stream = ExtractiveAnswerService().stream_answer(
-                request.query,
-                contexts,
-                request.llm.temperature,
-            )
+        def safe_stream_wrapper():
+            # Get primary generator object
+            try:
+                primary_stream = self.answer_service.stream_answer(
+                    request.query,
+                    contexts,
+                    request.llm.temperature,
+                )
+            except Exception as e:
+                logger.exception("Failed to initialize primary LLM stream, falling back to extractive")
+                yield from ExtractiveAnswerService().stream_answer(
+                    request.query,
+                    contexts,
+                    request.llm.temperature,
+                )
+                return
+
+            # Try to fetch the first token to verify the API connection
+            first_token_retrieved = False
+            try:
+                first_token = next(primary_stream)
+                first_token_retrieved = True
+            except StopIteration:
+                return
+            except Exception as e:
+                logger.exception("Failed on first chunk from primary LLM stream, falling back to extractive")
+                yield from ExtractiveAnswerService().stream_answer(
+                    request.query,
+                    contexts,
+                    request.llm.temperature,
+                )
+                return
+
+            if first_token_retrieved:
+                yield first_token
+                try:
+                    for chunk in primary_stream:
+                        yield chunk
+                except Exception as e:
+                    logger.exception("Error during primary LLM stream iteration")
+                    yield "\n⚠️ Đã xảy ra lỗi khi tạo câu trả lời từ mô hình ngôn ngữ."
+
+        stream = safe_stream_wrapper()
 
         trace = {
             "retrieval_mode": request.retrieval_mode,

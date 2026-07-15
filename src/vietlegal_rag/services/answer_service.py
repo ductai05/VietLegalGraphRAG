@@ -69,9 +69,10 @@ class ExtractiveAnswerService:
 
 
 class OpenAICompatibleAnswerService:
-    def __init__(self, client: object, model: str) -> None:
+    def __init__(self, client: object, model: str, max_tokens: int = 2048) -> None:
         self.client = client
         self.model = model
+        self.max_tokens = max_tokens
 
     def answer(
         self,
@@ -123,7 +124,7 @@ class OpenAICompatibleAnswerService:
                     ),
                 },
             ],
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
         )
         answer = response.choices[0].message.content or ""
         return {
@@ -192,11 +193,13 @@ class OpenAICompatibleAnswerService:
                 },
             ],
             stream=True,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
         )
         
         in_thinking = False
         for chunk in response:
+            if not getattr(chunk, "choices", None):
+                continue
             delta = chunk.choices[0].delta
             
             # Check for reasoning_content (e.g. from DeepSeek R1 or Qwen reasoning endpoints)
