@@ -136,6 +136,19 @@ class Pipe:
         self.valves = self.Valves()
         self._services = None
         self._lock = threading.Lock()
+        
+        # Pre-warm services in a background thread to load the heavy embedding model
+        # and prevent SSE timeouts on the very first user query.
+        threading.Thread(target=self._prewarm_services, daemon=True).start()
+
+    def _prewarm_services(self):
+        try:
+            logger.info("Pre-warming VietLegal RAG services in background...")
+            self._get_services()
+            logger.info("Pre-warming services completed successfully.")
+        except Exception as e:
+            logger.warning(f"Background pre-warming services failed: {e}")
+
 
     def _get_services(self):
         """Thread-safe lazy initialization of services."""
