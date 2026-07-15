@@ -8,6 +8,7 @@ import json
 import math
 import argparse
 import logging
+import concurrent.futures
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -404,6 +405,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rerank", action="store_true", help="Enable cross-encoder reranking")
     parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL, help="Hugging Face reranker model name")
     parser.add_argument("--rerank-batch-size", type=int, default=8)
+    parser.add_argument("--max-workers", type=int, default=10, help="Number of concurrent threads for retrieval")
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "hybrid_eval_results.json", help="Path to save evaluation output results JSON")
@@ -531,38 +533,53 @@ def main() -> None:
             rows = load_jsonl(gold_file)
             
             details = []
-            for i, row in enumerate(rows):
-                candidates = retriever.hybrid_search(
+            def process_retrieval(row: dict[str, Any]) -> list[dict[str, Any]]:
+                return retriever.hybrid_search(
                     row["query"],
                     filters=row.get("filters"),
                     candidate_k=args.candidate_k,
                     rrf_k=args.rrf_k,
                 )
 
-                rrf_hits = candidates[:max(args.k_values)]
-                final_hits = rrf_hits
-                rerank_scores = None
+            try:
+                from tqdm import tqdm
+            except ImportError:
+                tqdm = lambda x, **kwargs: x
 
-                if args.rerank and reranker is not None:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+                all_candidates = list(tqdm(executor.map(process_retrieval, rows), total=len(rows), desc="Retrieving Hybrid Candidates"))
+
+            if args.rerank and reranker is not None:
+                assert passage_loader is not None
+                all_pairs = []
+                pair_indices = []
+                for q_idx, (row, candidates) in enumerate(zip(rows, all_candidates)):
                     try:
                         passages = passage_loader.build_passages(candidates)
-                        rerank_scores = reranker.score_pairs(
-                            [(row["query"], passage) for passage in passages],
-                            batch_size=args.rerank_batch_size,
-                        )
-                        scored = sorted(
-                            zip(candidates, rerank_scores, strict=True),
-                            key=lambda item: item[1],
-                            reverse=True
-                        )
-                        final_hits = []
-                        for hit, score in scored[:max(args.k_values)]:
-                            h = dict(hit)
-                            h["rerank_score"] = score
-                            final_hits.append(h)
+                        for c_idx, passage in enumerate(passages):
+                            all_pairs.append((row["query"], passage))
+                            pair_indices.append((q_idx, c_idx))
                     except Exception:
-                        logging.warning("Reranking failed for query %r, falling back to RRF order.", row["query"], exc_info=True)
-                        final_hits = rrf_hits
+                        logging.warning("Failed to build passages for query %r", row["query"], exc_info=True)
+                
+                if all_pairs:
+                    print(f"Reranking {len(all_pairs)} pairs globally...")
+                    try:
+                        global_scores = reranker.score_pairs(all_pairs, batch_size=args.rerank_batch_size)
+                        for (q_idx, c_idx), score in zip(pair_indices, global_scores):
+                            all_candidates[q_idx][c_idx]["rerank_score"] = score
+                    except Exception:
+                        logging.warning("Global reranking failed; falling back to RRF order", exc_info=True)
+
+            for row, candidates in zip(rows, all_candidates):
+                rrf_hits = candidates[:max(args.k_values)]
+                final_hits = rrf_hits
+
+                if args.rerank and reranker is not None:
+                    valid_candidates = [c.copy() for c in candidates if "rerank_score" in c]
+                    if valid_candidates:
+                        valid_candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+                        final_hits = valid_candidates[:max(args.k_values)]
 
                 rrf_metrics = metrics_for_hits(rrf_hits, row, args.k_values)
                 final_metrics = metrics_for_hits(final_hits, row, args.k_values)
@@ -581,9 +598,6 @@ def main() -> None:
                         } for hit in final_hits
                     ]
                 })
-
-                if (i + 1) % 50 == 0:
-                    print(f"Processed {i + 1}/{len(rows)} queries...")
 
             # Summarize results
             report = {

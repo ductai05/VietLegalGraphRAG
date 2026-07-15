@@ -93,7 +93,21 @@ def main():
     results = []
     
     print(f"Evaluating {len(details)} queries...")
-    for idx, row in enumerate(details):
+    try:
+        from tqdm import tqdm
+        iterator = tqdm(details, desc="Evaluating Graph Queries")
+    except ImportError:
+        iterator = details
+
+    chunk_to_doc_cache = {}
+    doc_neighbors_cache = {}
+
+    def get_cached_doc_id(chunk_id):
+        if chunk_id not in chunk_to_doc_cache:
+            chunk_to_doc_cache[chunk_id] = get_doc_id_from_chunk(driver, args.neo4j_database, chunk_id)
+        return chunk_to_doc_cache[chunk_id]
+
+    for idx, row in enumerate(iterator):
         query = row["query"]
         gold_row = gold_dict.get(query)
         if not gold_row:
@@ -103,7 +117,7 @@ def main():
         relevant_doc_ids = set(gold_row.get("relevant_doc_ids", []))
         if not relevant_doc_ids:
             relevant_chunk_ids = set(gold_row.get("relevant_chunk_ids", []))
-            relevant_doc_ids = {get_doc_id_from_chunk(driver, args.neo4j_database, c) for c in relevant_chunk_ids}
+            relevant_doc_ids = {get_cached_doc_id(c) for c in relevant_chunk_ids}
             
         if not relevant_doc_ids:
             continue
@@ -115,7 +129,7 @@ def main():
             if not top_chunk_ids and "final_ordered_results" in row:
                 top_chunk_ids = [res["chunk_id"] for res in row["final_ordered_results"]][:k]
                 
-            base_doc_ids = {get_doc_id_from_chunk(driver, args.neo4j_database, c) for c in top_chunk_ids}
+            base_doc_ids = {get_cached_doc_id(c) for c in top_chunk_ids}
             
             base_hit = any(doc_id in relevant_doc_ids for doc_id in base_doc_ids)
             base_recall = len(base_doc_ids.intersection(relevant_doc_ids)) / len(relevant_doc_ids) if relevant_doc_ids else 0.0
@@ -123,14 +137,18 @@ def main():
             def explore_graph(depth: int, seed_docs: set) -> set:
                 expanded_docs = set()
                 for doc_id in seed_docs:
-                    context = retriever.get_document_neighbors(doc_id, depth=depth)
-                    if context and hasattr(context, "nodes") and context.nodes:
-                        for node in context.nodes:
-                            node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
-                            if not node_doc_id and hasattr(node, "id") and node.id and str(node.id).startswith("doc:"):
-                                node_doc_id = str(node.id).split(":", 1)[1]
-                            if node_doc_id:
-                                expanded_docs.add(node_doc_id)
+                    if doc_id not in doc_neighbors_cache:
+                        context = retriever.get_document_neighbors(doc_id, depth=depth)
+                        docs = set()
+                        if context and hasattr(context, "nodes") and context.nodes:
+                            for node in context.nodes:
+                                node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
+                                if not node_doc_id and hasattr(node, "id") and node.id and str(node.id).startswith("doc:"):
+                                    node_doc_id = str(node.id).split(":", 1)[1]
+                                if node_doc_id:
+                                    docs.add(node_doc_id)
+                        doc_neighbors_cache[doc_id] = docs
+                    expanded_docs.update(doc_neighbors_cache[doc_id])
                 return expanded_docs
                 
             hop1_docs = explore_graph(1, base_doc_ids)
@@ -157,8 +175,7 @@ def main():
             
         results.append(query_result)
         
-        if (idx + 1) % 10 == 0:
-            print(f"Processed {idx + 1}/{len(details)} queries...")
+        pass # Progress handled by tqdm
     
     if not results:
         print("No valid evaluation records found.")

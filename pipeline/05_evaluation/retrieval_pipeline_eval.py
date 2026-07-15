@@ -75,8 +75,10 @@ def parse_args(argv=None):
                         help="Elasticsearch kNN num_candidates override for hybrid dense search")
     parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL,
                         help="Hugging Face reranker model name")
-    parser.add_argument("--rerank-batch-size", type=int, default=8,
+    parser.add_argument("--rerank-batch-size", type=int, default=32,
                         help="Reranker batch size")
+    parser.add_argument("--max-workers", type=int, default=4,
+                        help="Number of concurrent threads for Elasticsearch retrieval")
     parser.add_argument("--neo4j-uri", default=os.environ.get("NEO4J_URI"),
                         help="Neo4j connection URI")
     parser.add_argument("--neo4j-user", default=os.environ.get("NEO4J_USER"),
@@ -167,7 +169,8 @@ def main():
         dense_cmd = [
             sys.executable, str(EVAL_DIR / "evaluate_dense.py"),
             "--gold", str(eval_gold_path),
-            "--output", str(dense_output)
+            "--output", str(dense_output),
+            "--max-workers", str(args.max_workers)
         ]
         if args.elastic_cloud_id:
             dense_cmd.extend(["--elastic-cloud-id", args.elastic_cloud_id])
@@ -194,7 +197,8 @@ def main():
             sys.executable, str(EVAL_DIR / "evaluate_sparse.py"),
             "--eval-questions", str(eval_gold_path),
             "--url", args.url,
-            "--output", str(sparse_output)
+            "--output", str(sparse_output),
+            "--max-workers", str(args.max_workers)
         ]
         if args.api_key:
             sparse_cmd.extend(["--api-key", args.api_key])
@@ -222,7 +226,8 @@ def main():
                 "--reranker-model", args.reranker_model,
                 "--rerank-batch-size", str(args.rerank_batch_size),
                 "--rerank",
-                "--output", str(out_file)
+                "--output", str(out_file),
+                "--max-workers", str(args.max_workers)
             ]
             if args.env_file:
                 hybrid_cmd.extend(["--env-file", str(args.env_file)])
