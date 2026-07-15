@@ -131,66 +131,12 @@ def plot_reranker_k_tuning(rerank_configs, output_path):
     plt.close()
     print(f"Saved Reranker K-tuning plot to {output_path}")
 
-def main():
-    args = parse_args()
-    configs = []
-    
-    if args.dense and args.dense.exists():
-        with open(args.dense, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            r, m, n = extract_metrics(data)
-            if r: configs.append(("Dense", r, m, n))
-
-    if args.sparse and args.sparse.exists():
-        with open(args.sparse, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            r, m, n = extract_metrics(data)
-            if r: configs.append(("Sparse", r, m, n))
-
-    if args.hybrid and args.hybrid.exists():
-        with open(args.hybrid, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if data.get("rerank_enabled"):
-                r, m, n = extract_metrics(data, use_rrf=True)
-                if r: configs.append(("Dense + Sparse", r, m, n))
-            else:
-                r, m, n = extract_metrics(data)
-                if r: configs.append(("Dense + Sparse", r, m, n))
-
-    rerank_configs = {}
-    for k_val in [20, 30, 40, 50]:
-        file_path = getattr(args, f"rerank_k{k_val}", None)
-        if file_path and file_path.exists():
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                r, m, n = extract_metrics(data)
-                if r:
-                    rerank_configs[k_val] = (r, m, n)
-
-    best_k = None
-    best_avg = -1.0
-    for k_val, (r, m, n) in rerank_configs.items():
-        target_k = 10
-        if target_k not in r:
-            target_k = max(r.keys()) if r.keys() else None
-        
-        if target_k is not None:
-            avg_val = (r.get(target_k, 0) + m.get(target_k, 0) + n.get(target_k, 0)) / 3.0
-            if avg_val > best_avg:
-                best_avg = avg_val
-                best_k = k_val
-
-    if best_k is not None:
-        r, m, n = rerank_configs[best_k]
-        configs.append((f"Dense + Sparse + Reranker (K={best_k})", r, m, n))
-        print(f"Selected K={best_k} as the best reranker candidate pool size (avg score: {best_avg:.4f})")
-
     if args.graph and args.graph.exists():
         with open(args.graph, "r", encoding="utf-8") as f:
             data = json.load(f)
-            r_hop1, m_hop1, n_hop1 = extract_metrics(data, prefix="hop1_")
-            if r_hop1:
-                configs.append(("Hybrid + KG", r_hop1, m_hop1, n_hop1))
+            r, m, n = extract_metrics(data)
+            if r:
+                configs.append(("Hybrid + KG + Rerank", r, m, n))
 
     if not configs:
         print("No valid evaluation data found.")

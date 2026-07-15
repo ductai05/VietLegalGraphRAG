@@ -249,16 +249,37 @@ def main():
                 hybrid_cmd.extend(["--device", args.device])
             run_command(hybrid_cmd, f"Hybrid + Reranker Evaluation (K={k_val})")
 
-        # 3.5 Run Knowledge Graph Evaluation on Hybrid Results (K=50)
+        # 3.5 Run Knowledge Graph + Reranker Evaluation (Hybrid + KG + Reranker)
         graph_output = args.output_dir / "elasticsearch_hybrid_graph_eval.json"
         graph_cmd = [
-            sys.executable, str(EVAL_DIR / "evaluate_graph.py"),
-            "--search-results", str(rerank_outputs[50]),
+            sys.executable, str(EVAL_DIR / "graph_hybrid_search.py"),
             "--gold", str(eval_gold_path),
-            "--output", str(graph_output)
+            "--url", args.url,
+            "--candidate-k", "50",
+            "--rrf-k", str(args.rrf_k),
+            "--reranker-model", args.reranker_model,
+            "--rerank-batch-size", str(args.rerank_batch_size),
+            "--rerank",
+            "--output", str(graph_output),
+            "--max-workers", str(args.max_workers)
         ]
         if args.env_file:
             graph_cmd.extend(["--env-file", str(args.env_file)])
+        if args.index:
+            graph_cmd.extend(["--index", args.index])
+        if args.elastic_num_candidates:
+            graph_cmd.extend(["--elastic-num-candidates", str(args.elastic_num_candidates)])
+        if args.api_key:
+            graph_cmd.extend(["--api-key", args.api_key])
+        if args.username:
+            graph_cmd.extend(["--username", args.username])
+        if args.password:
+            graph_cmd.extend(["--password", args.password])
+        if args.chunks:
+            graph_cmd.extend(["--chunks", str(args.chunks)])
+        if args.device:
+            graph_cmd.extend(["--device", args.device])
+            
         if args.neo4j_uri:
             graph_cmd.extend(["--neo4j-uri", args.neo4j_uri])
         if args.neo4j_user:
@@ -267,7 +288,8 @@ def main():
             graph_cmd.extend(["--neo4j-password", args.neo4j_password])
         if args.neo4j_database:
             graph_cmd.extend(["--neo4j-database", args.neo4j_database])
-        run_command(graph_cmd, "Knowledge Graph Retrieval Evaluation on Hybrid K=50")
+            
+        run_command(graph_cmd, "Hybrid + KG + Reranker Retrieval Evaluation")
 
         # 4. Run Plotting Metrics
         plot_cmd = [

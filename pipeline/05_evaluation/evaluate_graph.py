@@ -305,13 +305,7 @@ def main():
             base_hit = any(base_rel)
             base_recall = len(set(base_doc_list) & relevant_doc_ids) / len(relevant_doc_ids)
             
-            base_first_hit = next((i + 1 for i, r in enumerate(base_rel) if r), None)
-            base_mrr = 1.0 / base_first_hit if base_first_hit else 0.0
-
-            base_dcg = sum(r / math.log2(i + 2) for i, r in enumerate(base_rel))
-            base_ideal_hits = min(len(relevant_doc_ids), k)
-            base_idcg = sum(1.0 / math.log2(i + 2) for i in range(base_ideal_hits))
-            base_ndcg = base_dcg / base_idcg if base_idcg else 0.0
+            # Remove base MRR/NDCG calculation as it is not needed here
                 
             hop1_docs = explore_graph(1, base_doc_list)
             hop1_new = [d for d in hop1_docs if d not in set(base_doc_list)]
@@ -323,25 +317,19 @@ def main():
             hop1_rescue = int(not base_hit and hop1_hit)
             hop1_noise = len(set(hop1_new) - relevant_doc_ids) / len(hop1_new) if hop1_new else 0.0
 
-            first_hit = next((i + 1 for i, r in enumerate(hop1_rel) if r), None)
-            hop1_mrr = 1.0 / first_hit if first_hit else 0.0
-
-            dcg = sum(r / math.log2(i + 2) for i, r in enumerate(hop1_rel))
-            ideal_hits = min(len(relevant_doc_ids), len(combined_hop1_list))
-            idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_hits))
-            hop1_ndcg = dcg / idcg if idcg else 0.0
+            recall_lift = hop1_recall - base_recall
+            hop1_relevant_count = sum(1 for d in hop1_new if d in relevant_doc_ids)
+            kg_precision = hop1_relevant_count / len(hop1_new) if hop1_new else 0.0
             
             query_result.update({
                 f"base_hit@{k}": int(base_hit),
                 f"base_recall@{k}": base_recall,
-                f"base_mrr@{k}": base_mrr,
-                f"base_ndcg@{k}": base_ndcg,
                 f"hop1_hit@{k}": int(hop1_hit),
                 f"hop1_recall@{k}": hop1_recall,
-                f"hop1_mrr@{k}": hop1_mrr,
-                f"hop1_ndcg@{k}": hop1_ndcg,
                 f"hop1_rescue@{k}": hop1_rescue,
                 f"hop1_noise@{k}": hop1_noise,
+                f"recall_lift@{k}": recall_lift,
+                f"kg_precision@{k}": kg_precision,
             })
             
         results.append(query_result)
@@ -357,27 +345,24 @@ def main():
         summary.update({
             f"base_hit_rate@{k}": sum(r[f"base_hit@{k}"] for r in results) / num_queries,
             f"base_recall@{k}": sum(r[f"base_recall@{k}"] for r in results) / num_queries,
-            f"base_mrr@{k}": sum(r[f"base_mrr@{k}"] for r in results) / num_queries,
-            f"base_ndcg@{k}": sum(r[f"base_ndcg@{k}"] for r in results) / num_queries,
             f"hop1_hit_rate@{k}": sum(r[f"hop1_hit@{k}"] for r in results) / num_queries,
             f"hop1_recall@{k}": sum(r[f"hop1_recall@{k}"] for r in results) / num_queries,
-            f"hop1_mrr@{k}": sum(r[f"hop1_mrr@{k}"] for r in results) / num_queries,
-            f"hop1_ndcg@{k}": sum(r[f"hop1_ndcg@{k}"] for r in results) / num_queries,
             f"hop1_rescue_rate@{k}": sum(r[f"hop1_rescue@{k}"] for r in results) / num_queries,
             f"hop1_noise_avg@{k}": sum(r[f"hop1_noise@{k}"] for r in results) / num_queries,
+            f"recall_lift_avg@{k}": sum(r[f"recall_lift@{k}"] for r in results) / num_queries,
+            f"kg_precision_avg@{k}": sum(r[f"kg_precision@{k}"] for r in results) / num_queries,
         })
     
     tk = args.top_k if args.top_k in args.k_values else args.k_values[-1]
     
     print(f"\n--- Ablation Table (Base vs Hybrid + KG) at K={tk} ---")
-    print(f"{'Metric':<20} | {'Base':<10} | {'Hybrid + KG':<10}")
-    print("-" * 45)
-    print(f"{'Hit Rate':<20} | {summary[f'base_hit_rate@{tk}']:<10.4f} | {summary[f'hop1_hit_rate@{tk}']:<10.4f}")
-    print(f"{'Recall':<20} | {summary[f'base_recall@{tk}']:<10.4f} | {summary[f'hop1_recall@{tk}']:<10.4f}")
-    print(f"{'MRR':<20} | {summary[f'base_mrr@{tk}']:<10.4f} | {summary[f'hop1_mrr@{tk}']:<10.4f}")
-    print(f"{'NDCG':<20} | {summary[f'base_ndcg@{tk}']:<10.4f} | {summary[f'hop1_ndcg@{tk}']:<10.4f}")
-    print(f"{'Rescue Rate':<20} | {'-':<10} | {summary[f'hop1_rescue_rate@{tk}']:<10.4f}")
-    print(f"{'Noise Avg':<20} | {'-':<10} | {summary[f'hop1_noise_avg@{tk}']:<10.4f}")
+    print(f"{'Metric':<20} | {'Base':<10} | {'Hybrid + KG':<10} | {'Δ (Lift)':<10}")
+    print("-" * 60)
+    print(f"{'Hit Rate':<20} | {summary[f'base_hit_rate@{tk}']:<10.4f} | {summary[f'hop1_hit_rate@{tk}']:<10.4f} | {summary[f'hop1_hit_rate@{tk}'] - summary[f'base_hit_rate@{tk}']:<10.4f}")
+    print(f"{'Recall':<20} | {summary[f'base_recall@{tk}']:<10.4f} | {summary[f'hop1_recall@{tk}']:<10.4f} | {summary[f'recall_lift_avg@{tk}']:<10.4f}")
+    print(f"{'Rescue Rate':<20} | {'-':<10} | {summary[f'hop1_rescue_rate@{tk}']:<10.4f} | {'-':<10}")
+    print(f"{'Noise Avg':<20} | {'-':<10} | {summary[f'hop1_noise_avg@{tk}']:<10.4f} | {'-':<10}")
+    print(f"{'KG Precision':<20} | {'-':<10} | {summary[f'kg_precision_avg@{tk}']:<10.4f} | {'-':<10}")
     
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
