@@ -131,6 +131,44 @@ def plot_reranker_k_tuning(rerank_configs, output_path):
     plt.close()
     print(f"Saved Reranker K-tuning plot to {output_path}")
 
+def main():
+    args = parse_args()
+    configs = []
+
+    if args.dense and args.dense.exists():
+        with open(args.dense, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            r, m, n = extract_metrics(data)
+            if r:
+                configs.append(("Dense", r, m, n))
+
+    if args.sparse and args.sparse.exists():
+        with open(args.sparse, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            r, m, n = extract_metrics(data)
+            if r:
+                configs.append(("Sparse", r, m, n))
+
+    if args.hybrid and args.hybrid.exists():
+        with open(args.hybrid, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            r, m, n = extract_metrics(data, use_rrf=True)
+            if r:
+                configs.append(("Hybrid (RRF)", r, m, n))
+
+    rerank_configs = {}
+    for k_val in [20, 30, 40, 50]:
+        arg_name = f"rerank_k{k_val}"
+        path = getattr(args, arg_name, None)
+        if path and path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                r, m, n = extract_metrics(data)
+                if r:
+                    rerank_configs[k_val] = (r, m, n)
+                    if k_val == 50:
+                        configs.append(("Hybrid + Rerank", r, m, n))
+
     if args.graph and args.graph.exists():
         with open(args.graph, "r", encoding="utf-8") as f:
             data = json.load(f)
