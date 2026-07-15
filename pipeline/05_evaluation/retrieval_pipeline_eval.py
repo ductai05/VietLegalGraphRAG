@@ -34,7 +34,7 @@ def decode_cloud_id(cloud_id: str) -> str:
         _, encoded = cloud_id.split(":", 1)
     else:
         encoded = cloud_id
-    padded = encoded + "=" * (4 - len(encoded) % 4)
+    padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
     decoded = base64.b64decode(padded).decode("utf-8")
     parts = decoded.split("$")
     if len(parts) >= 2:
@@ -200,6 +200,8 @@ def main():
             "--output", str(sparse_output),
             "--max-workers", str(args.max_workers)
         ]
+        if args.env_file:
+            sparse_cmd.extend(["--env-file", str(args.env_file)])
         if args.api_key:
             sparse_cmd.extend(["--api-key", args.api_key])
         if args.username:
@@ -212,7 +214,7 @@ def main():
             sparse_cmd.extend(["--index", args.index])
         run_command(sparse_cmd, "Sparse Retrieval Evaluation")
 
-        # 3. Run Hybrid + Reranker Evaluations for K = 10, 20, 30, 40, 50
+        # 3. Run Hybrid + Reranker Evaluations for K = 20, 30, 40, 50
         rerank_outputs = {}
         for k_val in [20, 30, 40, 50]:
             out_file = args.output_dir / f"elasticsearch_hybrid_rerank_eval_k{k_val}.json"

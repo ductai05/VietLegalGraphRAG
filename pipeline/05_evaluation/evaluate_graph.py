@@ -1,8 +1,10 @@
 import os
 import sys
 import json
+import math
 import argparse
 from pathlib import Path
+from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PIPELINE_DIR = Path(__file__).resolve().parents[1]
@@ -16,7 +18,7 @@ if str(BACKEND_SRC / "services") not in sys.path:
 from graph_retriever import GraphRetriever
 
 def load_env_file(path: Path) -> None:
-    if not path.exists():
+    if not path or not path.exists():
         return
     with path.open("r", encoding="utf-8") as file:
         for line in file:
@@ -30,25 +32,69 @@ def load_env_file(path: Path) -> None:
                 if key and key not in os.environ:
                     os.environ[key] = val
 
-def load_jsonl(path: Path) -> list[dict]:
-    with path.open("r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
+def clean_doc_id(val: Any) -> str:
+    s = str(val or "").strip()
+    if s.startswith("doc:"):
+        return s[4:]
+    return s
 
-def get_doc_id_from_chunk(driver, database: str, chunk_id: str) -> str:
-    """Extract doc_id from chunk_id by querying Neo4j."""
-    query = "MATCH (c:Article {chunk_id: $cid}) RETURN c.doc_id AS doc_id"
+def load_gold_data(path: Path) -> list[dict]:
+    with path.open("r", encoding="utf-8") as f:
+        content = f.read().strip()
+    if not content:
+        return []
+    try:
+        data = json.loads(content)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "questions" in data:
+            return data["questions"]
+        return [data]
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in content.splitlines() if line.strip()]
+
+def batch_get_doc_ids_from_chunks(driver, database: str, chunk_ids: set[str]) -> dict[str, str]:
+    if not chunk_ids:
+        return {}
+    query = """
+    UNWIND $chunk_ids AS cid
+    MATCH (c) WHERE c.chunk_id = cid
+    OPTIONAL MATCH (c)-[:BELONGS_TO|PART_OF]->(d:Document)
+    RETURN c.chunk_id AS chunk_id, COALESCE(c.doc_id, d.doc_id, d.id) AS doc_id
+    """
+    mapping = {}
     with driver.session(database=database) as session:
-        record = session.run(query, cid=chunk_id).single()
-        if record and record["doc_id"]:
-            return str(record["doc_id"])
-    return chunk_id
+        records = session.run(query, chunk_ids=list(chunk_ids))
+        for record in records:
+            if record["doc_id"]:
+                mapping[record["chunk_id"]] = clean_doc_id(record["doc_id"])
+    return mapping
+
+def ensure_indexes(driver, database: str) -> None:
+    queries = [
+        "CREATE INDEX chunk_id_index IF NOT EXISTS FOR (c:Article) ON (c.chunk_id)",
+        "CREATE INDEX chunk_id_generic_index IF NOT EXISTS FOR (c:Chunk) ON (c.chunk_id)",
+        "CREATE INDEX document_doc_id_index IF NOT EXISTS FOR (d:Document) ON (d.doc_id)",
+        "CREATE INDEX document_id_index IF NOT EXISTS FOR (d:Document) ON (d.id)"
+    ]
+    with driver.session(database=database) as session:
+        for q in queries:
+            try:
+                session.run(q)
+            except Exception as e:
+                print(f"Warning creating index ({q}): {e}")
 
 def parse_args():
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--env-file", type=Path, default=BASE_DIR / ".env")
+    pre_args, _ = pre_parser.parse_known_args()
+    load_env_file(pre_args.env_file)
+
     parser = argparse.ArgumentParser(description="Evaluate Knowledge Graph retrieval expansion.")
     parser.add_argument("--search-results", type=Path, required=True,
                         help="Path to the initial hybrid search results JSON.")
     parser.add_argument("--gold", type=Path, required=True,
-                        help="Path to eval_questions_gold.jsonl.")
+                        help="Path to eval_questions_gold.jsonl or json.")
     parser.add_argument("--neo4j-uri", default=os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687"),
                         help="Neo4j connection URI.")
     parser.add_argument("--neo4j-user", default=os.environ.get("NEO4J_USER", "neo4j"),
@@ -63,12 +109,11 @@ def parse_args():
                         help="k values to evaluate hit rate and recall.")
     parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "graph_eval_results.json",
                         help="Path to save evaluation results.")
-    parser.add_argument("--env-file", type=Path, default=BASE_DIR / ".env",
+    parser.add_argument("--env-file", type=Path, default=pre_args.env_file,
                         help="Path to .env file.")
     return parser.parse_args()
 
 def main():
-    load_env_file(BASE_DIR / ".env")
     args = parse_args()
 
     try:
@@ -79,17 +124,26 @@ def main():
 
     print(f"Connecting to Neo4j at {args.neo4j_uri}...")
     driver = GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, args.neo4j_password))
+    print("Ensuring Neo4j indexes exist...")
+    ensure_indexes(driver, args.neo4j_database)
     retriever = GraphRetriever(driver, database=args.neo4j_database)
     
     print(f"Loading gold file: {args.gold}")
-    gold_data = load_jsonl(args.gold)
-    gold_dict = {row["query"]: row for row in gold_data}
+    gold_data = load_gold_data(args.gold)
+    gold_dict = {}
+    for row in gold_data:
+        q_key = (row.get("query") or row.get("question") or "").strip()
+        if q_key:
+            gold_dict[q_key] = row
     
     print(f"Loading search results: {args.search_results}")
     with args.search_results.open("r", encoding="utf-8") as f:
         search_data = json.load(f)
     
-    details = search_data.get("details", [])
+    details = search_data.get("details", search_data) if isinstance(search_data, dict) else search_data
+    if not isinstance(details, list):
+        details = []
+
     results = []
     
     print(f"Evaluating {len(details)} queries...")
@@ -99,25 +153,35 @@ def main():
     except ImportError:
         iterator = details
 
-    chunk_to_doc_cache = {}
+    print("Pre-fetching doc_ids for chunks...")
+    all_chunk_ids = set()
+    for row in details:
+        query_text = (row.get("query") or row.get("question") or "").strip()
+        gold_row = gold_dict.get(query_text)
+        if gold_row and not gold_row.get("relevant_doc_ids"):
+            all_chunk_ids.update(gold_row.get("relevant_chunk_ids", []))
+        for k in args.k_values:
+            top_chunk_ids = (row.get("top_chunk_ids") or [])[:k]
+            if not top_chunk_ids and "final_ordered_results" in row:
+                top_chunk_ids = [res["chunk_id"] for res in row["final_ordered_results"]][:k]
+            all_chunk_ids.update(top_chunk_ids)
+
+    chunk_to_doc_cache = batch_get_doc_ids_from_chunks(driver, args.neo4j_database, all_chunk_ids)
     doc_neighbors_cache = {}
 
-    def get_cached_doc_id(chunk_id):
-        if chunk_id not in chunk_to_doc_cache:
-            chunk_to_doc_cache[chunk_id] = get_doc_id_from_chunk(driver, args.neo4j_database, chunk_id)
-        return chunk_to_doc_cache[chunk_id]
+    def get_cached_doc_id(chunk_id: str) -> str:
+        return chunk_to_doc_cache.get(chunk_id, clean_doc_id(chunk_id))
 
     for idx, row in enumerate(iterator):
-        query = row["query"]
+        query = (row.get("query") or row.get("question") or "").strip()
         gold_row = gold_dict.get(query)
         if not gold_row:
             continue
             
-        # Extract relevant doc_ids
-        relevant_doc_ids = set(gold_row.get("relevant_doc_ids", []))
+        relevant_doc_ids = {clean_doc_id(d) for d in gold_row.get("relevant_doc_ids", []) if d}
         if not relevant_doc_ids:
             relevant_chunk_ids = set(gold_row.get("relevant_chunk_ids", []))
-            relevant_doc_ids = {get_cached_doc_id(c) for c in relevant_chunk_ids}
+            relevant_doc_ids = {clean_doc_id(get_cached_doc_id(c)) for c in relevant_chunk_ids if c}
             
         if not relevant_doc_ids:
             continue
@@ -125,57 +189,86 @@ def main():
         query_result = {"query": query}
         
         for k in args.k_values:
-            top_chunk_ids = row.get("top_chunk_ids", [])[:k]
+            top_chunk_ids = (row.get("top_chunk_ids") or [])[:k]
             if not top_chunk_ids and "final_ordered_results" in row:
                 top_chunk_ids = [res["chunk_id"] for res in row["final_ordered_results"]][:k]
                 
-            base_doc_ids = {get_cached_doc_id(c) for c in top_chunk_ids}
+            base_doc_list = []
+            for c in top_chunk_ids:
+                d = get_cached_doc_id(c)
+                if d and d not in base_doc_list:
+                    base_doc_list.append(d)
+
+            base_rel = [int(d in relevant_doc_ids) for d in base_doc_list]
+            base_hit = any(base_rel)
+            base_recall = len(set(base_doc_list) & relevant_doc_ids) / len(relevant_doc_ids)
             
-            base_hit = any(doc_id in relevant_doc_ids for doc_id in base_doc_ids)
-            base_recall = len(base_doc_ids.intersection(relevant_doc_ids)) / len(relevant_doc_ids) if relevant_doc_ids else 0.0
-            
-            def explore_graph(depth: int, seed_docs: set) -> set:
-                expanded_docs = set()
+            base_first_hit = next((i + 1 for i, r in enumerate(base_rel) if r), None)
+            base_mrr = 1.0 / base_first_hit if base_first_hit else 0.0
+
+            base_dcg = sum(r / math.log2(i + 2) for i, r in enumerate(base_rel))
+            base_ideal_hits = min(len(relevant_doc_ids), k)
+            base_idcg = sum(1.0 / math.log2(i + 2) for i in range(base_ideal_hits))
+            base_ndcg = base_dcg / base_idcg if base_idcg else 0.0
+
+            def explore_graph(depth: int, seed_docs: list[str]) -> list[str]:
+                expanded_docs = []
+                seen_exp = set()
                 for doc_id in seed_docs:
-                    if doc_id not in doc_neighbors_cache:
+                    cache_key = (doc_id, depth)
+                    if cache_key not in doc_neighbors_cache:
                         context = retriever.get_document_neighbors(doc_id, depth=depth)
-                        docs = set()
+                        docs = []
                         if context and hasattr(context, "nodes") and context.nodes:
                             for node in context.nodes:
-                                node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
-                                if not node_doc_id and hasattr(node, "id") and node.id and str(node.id).startswith("doc:"):
-                                    node_doc_id = str(node.id).split(":", 1)[1]
+                                node_doc_id = None
+                                if hasattr(node, "properties") and node.properties:
+                                    node_doc_id = node.properties.get("doc_id")
+                                if not node_doc_id and hasattr(node, "id") and node.id:
+                                    node_doc_id = clean_doc_id(node.id)
                                 if node_doc_id:
-                                    docs.add(node_doc_id)
-                        doc_neighbors_cache[doc_id] = docs
-                    expanded_docs.update(doc_neighbors_cache[doc_id])
+                                    cleaned = clean_doc_id(node_doc_id)
+                                    if cleaned not in docs:
+                                        docs.append(cleaned)
+                        doc_neighbors_cache[cache_key] = docs
+                    for neighbor in doc_neighbors_cache[cache_key]:
+                        if neighbor not in seen_exp:
+                            seen_exp.add(neighbor)
+                            expanded_docs.append(neighbor)
                 return expanded_docs
                 
-            hop1_docs = explore_graph(1, base_doc_ids)
+            hop1_docs = explore_graph(1, base_doc_list)
+            hop1_new = [d for d in hop1_docs if d not in set(base_doc_list)]
+            combined_hop1_list = base_doc_list + hop1_new
             
-            combined_hop1 = base_doc_ids.union(hop1_docs)
-            
-            hop1_hit = any(doc_id in relevant_doc_ids for doc_id in combined_hop1)
-            
-            hop1_recall = len(combined_hop1.intersection(relevant_doc_ids)) / len(relevant_doc_ids) if relevant_doc_ids else 0.0
-            
+            hop1_rel = [int(d in relevant_doc_ids) for d in combined_hop1_list]
+            hop1_hit = any(hop1_rel)
+            hop1_recall = len(set(combined_hop1_list) & relevant_doc_ids) / len(relevant_doc_ids)
             hop1_rescue = int(not base_hit and hop1_hit)
-            
-            hop1_new = hop1_docs - base_doc_ids
-            hop1_noise = len(hop1_new - relevant_doc_ids) / max(1, len(base_doc_ids))
+            hop1_noise = len(set(hop1_new) - relevant_doc_ids) / len(hop1_new) if hop1_new else 0.0
+
+            first_hit = next((i + 1 for i, r in enumerate(hop1_rel) if r), None)
+            hop1_mrr = 1.0 / first_hit if first_hit else 0.0
+
+            dcg = sum(r / math.log2(i + 2) for i, r in enumerate(hop1_rel))
+            ideal_hits = min(len(relevant_doc_ids), len(combined_hop1_list))
+            idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_hits))
+            hop1_ndcg = dcg / idcg if idcg else 0.0
             
             query_result.update({
                 f"base_hit@{k}": int(base_hit),
                 f"base_recall@{k}": base_recall,
+                f"base_mrr@{k}": base_mrr,
+                f"base_ndcg@{k}": base_ndcg,
                 f"hop1_hit@{k}": int(hop1_hit),
                 f"hop1_recall@{k}": hop1_recall,
+                f"hop1_mrr@{k}": hop1_mrr,
+                f"hop1_ndcg@{k}": hop1_ndcg,
                 f"hop1_rescue@{k}": hop1_rescue,
                 f"hop1_noise@{k}": hop1_noise,
             })
             
         results.append(query_result)
-        
-        pass # Progress handled by tqdm
     
     if not results:
         print("No valid evaluation records found.")
@@ -188,8 +281,12 @@ def main():
         summary.update({
             f"base_hit_rate@{k}": sum(r[f"base_hit@{k}"] for r in results) / num_queries,
             f"base_recall@{k}": sum(r[f"base_recall@{k}"] for r in results) / num_queries,
+            f"base_mrr@{k}": sum(r[f"base_mrr@{k}"] for r in results) / num_queries,
+            f"base_ndcg@{k}": sum(r[f"base_ndcg@{k}"] for r in results) / num_queries,
             f"hop1_hit_rate@{k}": sum(r[f"hop1_hit@{k}"] for r in results) / num_queries,
             f"hop1_recall@{k}": sum(r[f"hop1_recall@{k}"] for r in results) / num_queries,
+            f"hop1_mrr@{k}": sum(r[f"hop1_mrr@{k}"] for r in results) / num_queries,
+            f"hop1_ndcg@{k}": sum(r[f"hop1_ndcg@{k}"] for r in results) / num_queries,
             f"hop1_rescue_rate@{k}": sum(r[f"hop1_rescue@{k}"] for r in results) / num_queries,
             f"hop1_noise_avg@{k}": sum(r[f"hop1_noise@{k}"] for r in results) / num_queries,
         })
@@ -201,6 +298,8 @@ def main():
     print("-" * 45)
     print(f"{'Hit Rate':<20} | {summary[f'base_hit_rate@{tk}']:<10.4f} | {summary[f'hop1_hit_rate@{tk}']:<10.4f}")
     print(f"{'Recall':<20} | {summary[f'base_recall@{tk}']:<10.4f} | {summary[f'hop1_recall@{tk}']:<10.4f}")
+    print(f"{'MRR':<20} | {summary[f'base_mrr@{tk}']:<10.4f} | {summary[f'hop1_mrr@{tk}']:<10.4f}")
+    print(f"{'NDCG':<20} | {summary[f'base_ndcg@{tk}']:<10.4f} | {summary[f'hop1_ndcg@{tk}']:<10.4f}")
     print(f"{'Rescue Rate':<20} | {'-':<10} | {summary[f'hop1_rescue_rate@{tk}']:<10.4f}")
     print(f"{'Noise Avg':<20} | {'-':<10} | {summary[f'hop1_noise_avg@{tk}']:<10.4f}")
     
@@ -214,3 +313,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
