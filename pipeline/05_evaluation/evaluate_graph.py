@@ -59,7 +59,7 @@ def batch_get_doc_ids_from_chunks(driver, database: str, chunk_ids: set[str]) ->
     query = """
     UNWIND $chunk_ids AS cid
     MATCH (c) WHERE c.chunk_id = cid
-    OPTIONAL MATCH (c)-[:BELONGS_TO|PART_OF]->(d:Document)
+    OPTIONAL MATCH (c)<-[:HAS_CHUNK]-(d:Document)
     RETURN c.chunk_id AS chunk_id, COALESCE(c.doc_id, d.doc_id, d.id) AS doc_id
     """
     mapping = {}
@@ -83,6 +83,27 @@ def ensure_indexes(driver, database: str) -> None:
                 session.run(q)
             except Exception as e:
                 print(f"Warning creating index ({q}): {e}")
+
+def wait_for_indexes(driver, database: str, timeout: int = 60) -> None:
+    import time
+    start = time.time()
+    with driver.session(database=database) as session:
+        while time.time() - start < timeout:
+            try:
+                recs = list(session.run("SHOW INDEXES"))
+                pending = 0
+                for r in recs:
+                    state = r.get("state")
+                    if state and state != "ONLINE":
+                        pending += 1
+                if pending == 0:
+                    return
+            except Exception as e:
+                # If SHOW INDEXES is not supported or errors, just exit early
+                print(f"Warning checking index state: {e}")
+                return
+            time.sleep(2)
+    print("Warning: Some indexes not yet ONLINE after timeout")
 
 def parse_args():
     pre_parser = argparse.ArgumentParser(add_help=False)
@@ -126,6 +147,7 @@ def main():
     driver = GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, args.neo4j_password))
     print("Ensuring Neo4j indexes exist...")
     ensure_indexes(driver, args.neo4j_database)
+    wait_for_indexes(driver, args.neo4j_database)
     retriever = GraphRetriever(driver, database=args.neo4j_database)
     
     print(f"Loading gold file: {args.gold}")
@@ -172,6 +194,86 @@ def main():
     def get_cached_doc_id(chunk_id: str) -> str:
         return chunk_to_doc_cache.get(chunk_id, clean_doc_id(chunk_id))
 
+    print("Pre-warming graph neighbor cache...")
+    all_seed_docs = set()
+    max_k = max(args.k_values)
+    for row in details:
+        top_chunk_ids = (row.get("top_chunk_ids") or [])[:max_k]
+        if not top_chunk_ids and "final_ordered_results" in row:
+            top_chunk_ids = [res["chunk_id"] for res in row["final_ordered_results"]][:max_k]
+        for c in top_chunk_ids:
+            d = get_cached_doc_id(c)
+            if d:
+                all_seed_docs.add(d)
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _warm_one(doc_id: str) -> tuple[str, list[str]]:
+        try:
+            context = retriever.get_document_neighbors(doc_id, depth=1)
+            docs = []
+            if context and hasattr(context, "nodes") and context.nodes:
+                for node in context.nodes:
+                    node_doc_id = None
+                    if hasattr(node, "properties") and node.properties:
+                        node_doc_id = node.properties.get("doc_id")
+                    if not node_doc_id and hasattr(node, "id") and node.id:
+                        node_doc_id = clean_doc_id(node.id)
+                    if node_doc_id:
+                        cleaned = clean_doc_id(node_doc_id)
+                        if cleaned not in docs:
+                            docs.append(cleaned)
+            return doc_id, docs
+        except Exception as e:
+            print(f"Error fetching neighbors for {doc_id}: {e}")
+            return doc_id, []
+
+    if all_seed_docs:
+        try:
+            from tqdm import tqdm
+            has_tqdm = True
+        except ImportError:
+            has_tqdm = False
+
+        # Use 8 workers to fetch in parallel
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_warm_one, d): d for d in all_seed_docs}
+            iterator_warm = as_completed(futures)
+            if has_tqdm:
+                iterator_warm = tqdm(iterator_warm, total=len(futures), desc="Pre-warming neighbor cache")
+            for fut in iterator_warm:
+                doc_id, docs = fut.result()
+                doc_neighbors_cache[(doc_id, 1)] = docs
+
+    def explore_graph(depth: int, seed_docs: list[str]) -> list[str]:
+        expanded_docs = []
+        seen_exp = set()
+        for doc_id in seed_docs:
+            cache_key = (doc_id, depth)
+            if cache_key not in doc_neighbors_cache:
+                try:
+                    context = retriever.get_document_neighbors(doc_id, depth=depth)
+                    docs = []
+                    if context and hasattr(context, "nodes") and context.nodes:
+                        for node in context.nodes:
+                            node_doc_id = None
+                            if hasattr(node, "properties") and node.properties:
+                                node_doc_id = node.properties.get("doc_id")
+                            if not node_doc_id and hasattr(node, "id") and node.id:
+                                node_doc_id = clean_doc_id(node.id)
+                            if node_doc_id:
+                                cleaned = clean_doc_id(node_doc_id)
+                                if cleaned not in docs:
+                                    docs.append(cleaned)
+                    doc_neighbors_cache[cache_key] = docs
+                except Exception:
+                    doc_neighbors_cache[cache_key] = []
+            for neighbor in doc_neighbors_cache[cache_key]:
+                if neighbor not in seen_exp:
+                    seen_exp.add(neighbor)
+                    expanded_docs.append(neighbor)
+        return expanded_docs
+
     for idx, row in enumerate(iterator):
         query = (row.get("query") or row.get("question") or "").strip()
         gold_row = gold_dict.get(query)
@@ -210,32 +312,6 @@ def main():
             base_ideal_hits = min(len(relevant_doc_ids), k)
             base_idcg = sum(1.0 / math.log2(i + 2) for i in range(base_ideal_hits))
             base_ndcg = base_dcg / base_idcg if base_idcg else 0.0
-
-            def explore_graph(depth: int, seed_docs: list[str]) -> list[str]:
-                expanded_docs = []
-                seen_exp = set()
-                for doc_id in seed_docs:
-                    cache_key = (doc_id, depth)
-                    if cache_key not in doc_neighbors_cache:
-                        context = retriever.get_document_neighbors(doc_id, depth=depth)
-                        docs = []
-                        if context and hasattr(context, "nodes") and context.nodes:
-                            for node in context.nodes:
-                                node_doc_id = None
-                                if hasattr(node, "properties") and node.properties:
-                                    node_doc_id = node.properties.get("doc_id")
-                                if not node_doc_id and hasattr(node, "id") and node.id:
-                                    node_doc_id = clean_doc_id(node.id)
-                                if node_doc_id:
-                                    cleaned = clean_doc_id(node_doc_id)
-                                    if cleaned not in docs:
-                                        docs.append(cleaned)
-                        doc_neighbors_cache[cache_key] = docs
-                    for neighbor in doc_neighbors_cache[cache_key]:
-                        if neighbor not in seen_exp:
-                            seen_exp.add(neighbor)
-                            expanded_docs.append(neighbor)
-                return expanded_docs
                 
             hop1_docs = explore_graph(1, base_doc_list)
             hop1_new = [d for d in hop1_docs if d not in set(base_doc_list)]
