@@ -59,3 +59,4 @@ src/infra/hf-cache/
 
 # ui-forge runtime workspace
 .ui-forge/
+/onnx_model
