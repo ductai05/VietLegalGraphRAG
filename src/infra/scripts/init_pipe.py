@@ -116,3 +116,17 @@ if __name__ == "__main__":
         
     upsert_function(token)
 
+    # Force enable the function in SQLite to ensure is_active and is_global are 1 (True)
+    try:
+        import sqlite3
+        db_path = '/app/backend/data/webui.db'
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE function SET is_active = 1, is_global = 1 WHERE id = 'vietlegal_rag'")
+            conn.commit()
+            logger.info(f"Forced function activation in SQLite. Rows updated: {cursor.rowcount}")
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to force enable function in SQLite database: {e}")
+

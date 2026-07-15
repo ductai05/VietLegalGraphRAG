@@ -123,6 +123,7 @@ class OpenAICompatibleAnswerService:
                     ),
                 },
             ],
+            max_tokens=4096,
         )
         answer = response.choices[0].message.content or ""
         return {
@@ -137,7 +138,7 @@ class OpenAICompatibleAnswerService:
                 for context in contexts
             ],
         }
-
+ 
     def stream_answer(
         self,
         query: str,
@@ -148,7 +149,7 @@ class OpenAICompatibleAnswerService:
             for chunk in ExtractiveAnswerService().stream_answer(query, contexts, temperature):
                 yield chunk
             return
-
+ 
         formatted_contexts = []
         for index, context in enumerate(contexts, start=1):
             if not context.text:
@@ -164,7 +165,7 @@ class OpenAICompatibleAnswerService:
                 elif action == "superseded":
                     header += f" [TRẠNG THÁI: PHIÊN BẢN CŨ - Đã có phiên bản mới hơn {replacement_id}]"
             formatted_contexts.append(f"{header}\n{context.text}")
-
+ 
         context_text = "\n\n".join(formatted_contexts)
         response = self.client.chat.completions.create(
             model=self.model,
@@ -191,10 +192,31 @@ class OpenAICompatibleAnswerService:
                 },
             ],
             stream=True,
+            max_tokens=4096,
         )
+        
+        in_thinking = False
         for chunk in response:
             delta = chunk.choices[0].delta
-            if delta.content:
-                yield delta.content
+            
+            # Check for reasoning_content (e.g. from DeepSeek R1 or Qwen reasoning endpoints)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                if not in_thinking:
+                    yield "<think>\n"
+                    in_thinking = True
+                yield reasoning
+            else:
+                if in_thinking:
+                    yield "\n</think>\n\n"
+                    in_thinking = False
+                
+                # Yield standard text content
+                if delta.content:
+                    yield delta.content
+                    
+        if in_thinking:
+            yield "\n</think>\n\n"
+
 
 

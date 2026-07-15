@@ -4,7 +4,9 @@ WORKDIR /app
 COPY src/open-webui/package.json src/open-webui/package-lock.json ./
 RUN npm ci --force
 COPY src/open-webui/ ./
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
+
 
 # Stage 2: Python backend + VietLegal RAG package
 FROM python:3.11-slim-bookworm AS runtime

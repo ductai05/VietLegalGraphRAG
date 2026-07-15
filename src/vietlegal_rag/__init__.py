@@ -3,11 +3,14 @@ import os
 import threading
 from pathlib import Path
 
-# Add services subdirectory to sys.path to allow legacy imports within services/ directory
+# Add package directories to sys.path to allow legacy absolute imports
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _SERVICES_DIR = _PACKAGE_ROOT / "services"
 if str(_SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVICES_DIR))
+if str(_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_ROOT))
+
 
 # Lock for building services to avoid race conditions during concurrent startup
 _build_lock = threading.Lock()

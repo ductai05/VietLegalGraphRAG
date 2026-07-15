@@ -22,77 +22,78 @@ class Pipe:
     class Valves(BaseModel):
         # Elasticsearch Config
         elasticsearch_url: str = Field(
-            default="http://localhost:9200", 
+            default=os.environ.get("ELASTICSEARCH_URL", "http://localhost:9200"), 
             description="URL to Elasticsearch instance or cloud endpoint"
         )
         elasticsearch_api_key: str = Field(
-            default="", 
+            default=os.environ.get("ELASTICSEARCH_API_KEY", ""), 
             description="API Key for Elasticsearch Cloud authentication"
         )
         elasticsearch_index: str = Field(
-            default="vietlegal_chunks_hybrid_v1", 
+            default=os.environ.get("ELASTICSEARCH_INDEX", "vietlegal_chunks_hybrid_v1"), 
             description="Active Elasticsearch index name"
         )
         
         # Neo4j Config
         neo4j_uri: str = Field(
-            default="bolt://localhost:7687", 
+            default=os.environ.get("NEO4J_URI", "bolt://localhost:7687"), 
             description="Neo4j connection URI"
         )
         neo4j_user: str = Field(
-            default="neo4j", 
+            default=os.environ.get("NEO4J_USER", "neo4j"), 
             description="Neo4j username"
         )
         neo4j_password: str = Field(
-            default="", 
+            default=os.environ.get("NEO4J_PASSWORD", ""), 
             description="Neo4j password"
         )
         
         # Reranker Config
         rerank_provider: str = Field(
-            default="noop", 
+            default=os.environ.get("RERANK_PROVIDER", "noop"), 
             description="Rerank provider ('voyage', 'jina', or 'noop')"
         )
         rerank_model: str = Field(
-            default="rerank-2.5", 
+            default=os.environ.get("RERANK_MODEL", "rerank-2.5"), 
             description="Model identifier for the reranker"
         )
         
         # Embedding Config
         embedding_provider: str = Field(
-            default="hf", 
+            default=os.environ.get("EMBEDDING_PROVIDER", "hf"), 
             description="Embedding provider ('hf' or 'onnx')"
         )
         embedding_model: str = Field(
-            default="darklethelong/vnlegal-lal", 
+            default=os.environ.get("EMBEDDING_MODEL", "darklethelong/vnlegal-lal"), 
             description="HuggingFace model repository path"
         )
         embedding_onnx_model_path: str = Field(
-            default="", 
+            default=os.environ.get("EMBEDDING_ONNX_MODEL_PATH", ""), 
             description="Local file path to model.onnx"
         )
         embedding_onnx_tokenizer_path: str = Field(
-            default="", 
+            default=os.environ.get("EMBEDDING_ONNX_TOKENIZER_PATH", ""), 
             description="Local file path to tokenizer.json"
         )
         
         # LLM Config
         llm_provider: str = Field(
-            default="extractive", 
+            default=os.environ.get("LLM_PROVIDER", "extractive"), 
             description="LLM provider ('openai-compatible' or 'extractive')"
         )
         llm_base_url: str = Field(
-            default="", 
+            default=os.environ.get("LLM_BASE_URL", ""), 
             description="Base URL for OpenAI-compatible endpoint"
         )
         llm_api_key: str = Field(
-            default="", 
+            default=os.environ.get("LLM_API_KEY", ""), 
             description="API Key for OpenAI-compatible model"
         )
         llm_model: str = Field(
-            default="gpt-4o-mini", 
+            default=os.environ.get("LLM_MODEL", "gpt-4o-mini"), 
             description="LLM model identifier"
         )
+
         
         # Runtime retrieval settings
         retrieval_mode: str = Field(
@@ -173,7 +174,9 @@ class Pipe:
 
         # 2. Build search request
         from vietlegal_rag.schemas import build_search_request
-        request = build_search_request(
+        from vietlegal_rag.services.retrieval_modes import RetrievalRequest
+        
+        search_model = build_search_request(
             query=user_message,
             retrieval_mode=self.valves.retrieval_mode,
             top_k=self.valves.top_k,
@@ -184,6 +187,8 @@ class Pipe:
             llm_temperature=self.valves.llm_temperature,
             max_context_chunks=self.valves.max_context_chunks,
         )
+        request = RetrievalRequest(**search_model.model_dump())
+
 
         # 3. Stream pipeline phases
         await _emit_status("Đang tìm kiếm tài liệu & đồ thị...")
