@@ -221,31 +221,57 @@ def plot_llm(summary: dict[str, Any]) -> None:
     short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
     width = 0.22
+    
     no_rag = [summary[model]["no_rag"]["accuracy"] for model in models]
     rag = [summary[model]["hybrid_rerank"]["accuracy"] for model in models]
+    rag_ref = [summary[model]["hybrid_rerank"].get("refusal_rate", 0.0) for model in models]
     graph = [summary.get(model, {}).get("hybrid_graph", {}).get("accuracy", 0.0) for model in models]
+    graph_ref = [summary.get(model, {}).get("hybrid_graph", {}).get("refusal_rate", 0.0) for model in models]
+    
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG")
-    second = ax.bar(
-        list(x),
-        rag,
-        width,
-        label="Hybrid + Rerank",
-    )
-    third = ax.bar(
-        [value + width for value in x],
-        graph,
-        width,
-        label="Hybrid + KG",
-    )
+    
+    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG", color="tab:blue")
+    
+    second = ax.bar(list(x), rag, width, label="Hybrid + Rerank", color="tab:orange")
+    second_ref = ax.bar(list(x), rag_ref, width, bottom=rag, color="tab:orange", alpha=0.4, hatch="//", label="Refusal (E)")
+    
+    third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG", color="tab:green")
+    third_ref = ax.bar([value + width for value in x], graph_ref, width, bottom=graph, color="tab:green", alpha=0.4, hatch="//")
+    
     ax.bar_label(first, fmt="%.2f", fontsize=7)
-    ax.bar_label(second, fmt="%.2f", fontsize=7)
-    ax.bar_label(third, fmt="%.2f", fontsize=7)
+    
+    ax.bar_label(second, fmt="%.2f", fontsize=7, label_type='center')
+    ax.bar_label(third, fmt="%.2f", fontsize=7, label_type='center')
+    
+    for bars in [second_ref, third_ref]:
+        for bar in bars:
+            h = bar.get_height()
+            bottom = bar.get_y()
+            total = bottom + h
+            # Label in the center of the refusal portion
+            if h >= 0.02:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bottom + h / 2,
+                    f"{h:.2f}",
+                    ha='center', va='center', fontsize=6, color='black'
+                )
+            # Label on top of the entire stacked bar
+            if h >= 0.01:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    total + 0.01,
+                    f"{total:.2f}",
+                    ha='center', va='bottom', fontsize=7, color='black'
+                )
+
     ax.set_xticks(list(x), short)
-    ax.set_ylim(0, 1.15)
+    ax.set_ylim(0, 1.25)
     ax.set_ylabel("MCQ accuracy")
-    ax.set_title("LLM answer accuracy")
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize='small')
+    ax.set_title("LLM answer accuracy (with Refusal Rate stacked)")
+    
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize='small')
     fig.savefig(REPORT_DIR / "llm_accuracy.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
