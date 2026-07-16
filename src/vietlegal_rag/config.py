@@ -80,6 +80,11 @@ class Settings:
     llm_api_key: str | None
     llm_model: str
     llm_max_tokens: int
+    agent_enabled: bool
+    agent_max_iterations: int
+    web_search_provider: str
+    exa_api_key: str | None
+    web_search_domains: tuple[str, ...]
     frontend_origin: str
     runtime_fallback_enabled: bool
     ocr_provider: str
@@ -149,6 +154,21 @@ def get_settings() -> Settings:
         llm_api_key=os.getenv("LLM_API_KEY"),
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
         llm_max_tokens=_getenv_int("LLM_MAX_TOKENS", 2048),
+        # LangGraph ReAct agent: off by default, static LightRAG flow stays the fallback.
+        agent_enabled=_getenv_bool("AGENT_ENABLED", False),
+        agent_max_iterations=_getenv_int("AGENT_MAX_ITERATIONS", 8),
+        # Web search backs the agent's source-link tool: "exa" or "none".
+        web_search_provider=os.getenv("WEB_SEARCH_PROVIDER", "none") or "none",
+        exa_api_key=os.getenv("EXA_API_KEY") or None,
+        web_search_domains=_getenv_csv(
+            "WEB_SEARCH_DOMAINS",
+            (
+                "thuvienphapluat.vn",
+                "vanban.chinhphu.vn",
+                "vbpl.vn",
+                "datafiles.chinhphu.vn",
+            ),
+        ),
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:5173"),
         runtime_fallback_enabled=_getenv_bool("RUNTIME_FALLBACK_ENABLED", True),
         # OCR: "none" disables the route; "google" uses Google Vision.

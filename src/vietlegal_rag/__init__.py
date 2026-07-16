@@ -39,6 +39,10 @@ def build_services(valves):
             "LLM_BASE_URL": valves.llm_base_url,
             "LLM_API_KEY": valves.llm_api_key,
             "LLM_MODEL": valves.llm_model,
+            "AGENT_ENABLED": valves.agent_enabled,
+            "AGENT_MAX_ITERATIONS": valves.agent_max_iterations,
+            "WEB_SEARCH_PROVIDER": valves.web_search_provider,
+            "EXA_API_KEY": valves.exa_api_key,
         }
         
         for env_key, value in env_mappings.items():

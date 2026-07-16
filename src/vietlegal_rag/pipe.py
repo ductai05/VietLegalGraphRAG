@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import queue
 import threading
 from typing import Generator, Callable, Awaitable, AsyncGenerator, Any
 from pydantic import BaseModel, Field
@@ -129,6 +130,24 @@ class Pipe:
             description="Maximum tokens for LLM generation"
         )
 
+        # Agent Config
+        agent_enabled: bool = Field(
+            default=os.environ.get("AGENT_ENABLED", "false").lower() == "true",
+            description="Use the LangGraph ReAct agent instead of the static RAG flow"
+        )
+        agent_max_iterations: int = Field(
+            default=8,
+            description="Maximum agent tool-calling iterations"
+        )
+        web_search_provider: str = Field(
+            default=os.environ.get("WEB_SEARCH_PROVIDER", "none"),
+            description="Web search provider ('exa' or 'none')"
+        )
+        exa_api_key: str = Field(
+            default=os.environ.get("EXA_API_KEY", ""),
+            description="Exa API key"
+        )
+
     def __init__(self):
         self.type = "pipe"
         self.id = "vietlegal_rag"
@@ -172,12 +191,20 @@ class Pipe:
         """
         user_id = __user__.get("id", "anonymous")
         user_message = body["messages"][-1]["content"]
+        status_queue: "queue.Queue[str]" = queue.Queue()
 
         async def _emit_status(description: str, done: bool = False):
             if __event_emitter__:
                 await __event_emitter__(
                     {"type": "status", "data": {"description": description, "done": done}}
                 )
+
+        async def _drain_status_queue():
+            while True:
+                try:
+                    await _emit_status(status_queue.get_nowait())
+                except queue.Empty:
+                    return
 
         # 1. Initialize services dependency graph
         try:
@@ -191,8 +218,9 @@ class Pipe:
 
         # 2. Build search request
         from vietlegal_rag.schemas import build_search_request
+        from vietlegal_rag.services.citation_formatter import format_citations_block
         from vietlegal_rag.services.retrieval_modes import RetrievalRequest
-        
+
         search_model = build_search_request(
             query=user_message,
             retrieval_mode=self.valves.retrieval_mode,
@@ -209,10 +237,20 @@ class Pipe:
 
 
         # 3. Stream pipeline phases
-        await _emit_status("Đang tìm kiếm tài liệu & đồ thị...")
+        use_agent = bool(self.valves.agent_enabled and services.agent_service)
+        if use_agent:
+            await _emit_status("Agent đang phân tích câu hỏi...")
+        else:
+            await _emit_status("Đang tìm kiếm tài liệu & đồ thị...")
         try:
-            # We call services.lightrag_service.stream_answer directly
-            result = services.lightrag_service.stream_answer(request)
+            if use_agent:
+                # AgentService cannot await __event_emitter__ from inside its sync
+                # generator, so tool progress arrives via a queue drained below.
+                result = services.agent_service.stream_answer(
+                    request, on_status=status_queue.put
+                )
+            else:
+                result = services.lightrag_service.stream_answer(request)
             answer_stream = result["answer_stream"]
             citations = result["citations"]
         except Exception as e:
@@ -225,7 +263,9 @@ class Pipe:
         
         # 4. Stream response tokens
         try:
+            await _drain_status_queue()
             for token in answer_stream:
+                await _drain_status_queue()
                 yield token
         except Exception as e:
             logger.exception("LLM token streaming failed")
@@ -233,23 +273,11 @@ class Pipe:
             yield "\n⚠️ Đã xảy ra lỗi khi tạo câu trả lời từ mô hình ngôn ngữ."
             return
 
-        # 5. Yield citations at the end of the answer
-        if citations:
-            citations_md = "\n\n---\n**📚 Căn cứ pháp lý:**\n"
-            seen = set()
-            idx = 1
-            for cite in citations:
-                citation_str = cite.get("citation", "")
-                title_str = cite.get("title", "Tài liệu liên quan")
-                if not citation_str:
-                    continue
-                # Remove duplicate citations to keep list clean
-                dedup_key = (title_str, citation_str)
-                if dedup_key in seen:
-                    continue
-                seen.add(dedup_key)
-                citations_md += f"- **[{idx}]** {title_str} ({citation_str})\n"
-                idx += 1
+        # 5. Yield citations at the end of the answer.
+        # The agent path fills `citations` in place while the stream drains,
+        # so this must run after the token loop.
+        citations_md = format_citations_block(citations)
+        if citations_md:
             yield citations_md
 
         await _emit_status("Hoàn thành", done=True)

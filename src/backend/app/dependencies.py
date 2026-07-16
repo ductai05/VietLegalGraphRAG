@@ -58,6 +58,7 @@ class NoopGraphRetriever:
         query: str,
         retrieval_hits: list[dict[str, Any]],
         max_hops: int,
+        auto_depth: bool = True,
     ) -> GraphContext:
         return GraphContext(center=None, query_intent="general")
 

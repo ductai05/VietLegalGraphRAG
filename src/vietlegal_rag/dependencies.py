@@ -32,6 +32,7 @@ from lightrag_service import LightRAGService
 from rerank_service import NoopReranker, VoyageReranker, JinaReranker, RoutingReranker
 from retrieval_modes import RetrievalRequest
 from retrieval_service import RetrievalService
+from web_search_service import ExaWebSearch, FallbackWebSearch, NoopWebSearch
 
 
 class DemoRetrievalService:
@@ -61,6 +62,7 @@ class NoopGraphRetriever:
         query: str,
         retrieval_hits: list[dict[str, Any]],
         max_hops: int,
+        auto_depth: bool = True,
     ) -> GraphContext:
         return GraphContext(center=None, query_intent="general")
 
@@ -91,6 +93,9 @@ class RuntimeServices:
     answer_service: Any
     lightrag_service: LightRAGService
     ocr_service: Any
+    document_resolver: Any
+    web_search: Any
+    agent_service: Any
     status: dict[str, str]
     warnings: list[str]
 
@@ -118,6 +123,20 @@ def get_runtime_services() -> RuntimeServices:
         answer_service=answer_service,
         context_assembler=ContextAssembler(document_resolver=document_resolver),
     )
+
+    # Built after lightrag_service so it can double as the agent's fallback.
+    web_search = _build_web_search(settings, warnings, status)
+    agent_service = _build_agent_service(
+        settings,
+        warnings,
+        status,
+        retrieval_service=retrieval_service,
+        graph_retriever=graph_retriever,
+        document_resolver=document_resolver,
+        web_search=web_search,
+        fallback_service=lightrag_service,
+    )
+
     status["runtime"] = "fallback" if "runtime.fallback" in warnings else "configured"
     return RuntimeServices(
         retrieval_service=retrieval_service,
@@ -125,6 +144,9 @@ def get_runtime_services() -> RuntimeServices:
         answer_service=answer_service,
         lightrag_service=lightrag_service,
         ocr_service=ocr_service,
+        document_resolver=document_resolver,
+        web_search=web_search,
+        agent_service=agent_service,
         status=status,
         warnings=warnings,
     )
@@ -451,6 +473,92 @@ def _build_answer_service(
         warnings.append("llm.init_failed")
         status["llm"] = "extractive"
         return ExtractiveAnswerService()
+
+
+def _build_web_search(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+) -> Any:
+    provider = settings.web_search_provider.strip().lower()
+    if provider in {"", "none"}:
+        status["web_search"] = "disabled"
+        return NoopWebSearch()
+    if provider != "exa":
+        # TinyFish is not implemented: no SDK is pinned and its API is unknown.
+        warnings.append("websearch.unknown_provider")
+        status["web_search"] = "disabled"
+        return NoopWebSearch()
+    if not settings.exa_api_key:
+        warnings.append("websearch.not_configured")
+        status["web_search"] = "disabled"
+        return NoopWebSearch()
+    try:
+        from exa_py import Exa
+
+        primary = ExaWebSearch(
+            client=Exa(settings.exa_api_key),
+            include_domains=settings.web_search_domains,
+        )
+        status["web_search"] = "exa"
+        # Keeps the two-provider seam open for a future secondary provider.
+        return FallbackWebSearch(primary=primary, secondary=NoopWebSearch())
+    except Exception:
+        if not settings.runtime_fallback_enabled:
+            raise
+        warnings.append("websearch.init_failed")
+        status["web_search"] = "disabled"
+        return NoopWebSearch()
+
+
+def _build_agent_service(
+    settings: Settings,
+    warnings: list[str],
+    status: dict[str, str],
+    *,
+    retrieval_service: Any,
+    graph_retriever: Any,
+    document_resolver: Any,
+    web_search: Any,
+    fallback_service: Any,
+) -> Any:
+    if not settings.agent_enabled:
+        status["agent"] = "disabled"
+        return None
+    if settings.llm_provider.strip().lower() != "openai-compatible" or not settings.llm_api_key:
+        # The agent needs OpenAI-style tool calling; pipe.py stays on the static path.
+        warnings.append("agent.llm_not_supported")
+        status["agent"] = "disabled"
+        return None
+    try:
+        from agent_service import AgentService
+        from langchain_openai import ChatOpenAI
+
+        kwargs: dict[str, Any] = {
+            "api_key": settings.llm_api_key,
+            "model": settings.llm_model,
+            "max_tokens": settings.llm_max_tokens,
+            "streaming": True,
+        }
+        if settings.llm_base_url:
+            kwargs["base_url"] = settings.llm_base_url
+        agent_service = AgentService(
+            retrieval_service=retrieval_service,
+            graph_retriever=graph_retriever,
+            document_resolver=document_resolver,
+            web_search=web_search,
+            llm=ChatOpenAI(**kwargs),
+            fallback_service=fallback_service,
+            max_iterations=settings.agent_max_iterations,
+        )
+        status["agent"] = "configured"
+        return agent_service
+    except Exception:
+        if not settings.runtime_fallback_enabled:
+            raise
+        warnings.append("agent.init_failed")
+        status["agent"] = "disabled"
+        return None
 
 
 def _elasticsearch_is_configured(settings: Settings) -> bool:

@@ -25,6 +25,15 @@ class GraphRetriever(Protocol):
         query: str,
         retrieval_hits: list[dict[str, Any]],
         max_hops: int,
+        auto_depth: bool = True,
+    ) -> GraphContext:
+        ...
+
+    def get_document_neighbors(
+        self,
+        doc_id: str,
+        relations: list[str] | None = None,
+        depth: int = 1,
     ) -> GraphContext:
         ...
 

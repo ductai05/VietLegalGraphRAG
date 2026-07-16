@@ -7,12 +7,14 @@ from unittest.mock import Mock, MagicMock
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-# Add vietlegal_rag package directories to sys.path
-VIETLEGAL_RAG_SRC = ROOT / "src" / "vietlegal_rag"
-VIETLEGAL_RAG_SERVICES = ROOT / "src" / "vietlegal_rag" / "services"
-for path in (VIETLEGAL_RAG_SERVICES, VIETLEGAL_RAG_SRC):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+# src/backend/services holds same-named copies of these modules, so force the
+# vietlegal_rag copies to the front however other test modules ordered sys.path.
+# Only services/ is added: adding the package root would make the flat name
+# `dependencies` resolve here instead of in src/backend/app for other tests.
+VIETLEGAL_RAG_SERVICES = str(ROOT / "src" / "vietlegal_rag" / "services")
+if VIETLEGAL_RAG_SERVICES in sys.path:
+    sys.path.remove(VIETLEGAL_RAG_SERVICES)
+sys.path.insert(0, VIETLEGAL_RAG_SERVICES)
 
 # Clear cached backend services from sys.modules
 for mod_name in ["lightrag_service", "answer_service"]:
