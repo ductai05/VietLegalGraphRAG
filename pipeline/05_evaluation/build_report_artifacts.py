@@ -220,7 +220,7 @@ def plot_llm(summary: dict[str, Any]) -> None:
     models = list(summary)
     short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
-    width = 0.25
+    width = 0.22
     no_rag = [summary[model]["no_rag"]["accuracy"] for model in models]
     rag = [summary[model]["hybrid_rerank"]["accuracy"] for model in models]
     graph = [summary.get(model, {}).get("hybrid_graph", {}).get("accuracy", 0.0) for model in models]
@@ -238,9 +238,9 @@ def plot_llm(summary: dict[str, Any]) -> None:
         width,
         label="Hybrid + KG",
     )
-    ax.bar_label(first, fmt="%.2f", fontsize=8)
-    ax.bar_label(second, fmt="%.2f", fontsize=8)
-    ax.bar_label(third, fmt="%.2f", fontsize=8)
+    ax.bar_label(first, fmt="%.2f", fontsize=7)
+    ax.bar_label(second, fmt="%.2f", fontsize=7)
+    ax.bar_label(third, fmt="%.2f", fontsize=7)
     ax.set_xticks(list(x), short)
     ax.set_ylim(0, 1.15)
     ax.set_ylabel("MCQ accuracy")
@@ -267,9 +267,9 @@ def plot_llm_refusal(summary: dict[str, Any]) -> None:
     bottom_p3 = [r + l for r, l in zip(refusal_miss, lucky_miss)]
     p3 = ax.bar(list(x), hallucination_miss, width, bottom=bottom_p3, label="Hallucination on Miss (Bad)", color="crimson")
     
-    ax.bar_label(p1, labels=[f"{v:.2f}" if v > 0 else "" for v in refusal_miss], label_type='center', fontsize=8, color='black')
-    ax.bar_label(p2, labels=[f"{v:.2f}" if v > 0 else "" for v in lucky_miss], label_type='center', fontsize=8, color='black')
-    ax.bar_label(p3, labels=[f"{v:.2f}" if v > 0 else "" for v in hallucination_miss], label_type='center', fontsize=8, color='white')
+    ax.bar_label(p1, labels=[f"{v:.2f}" if v >= 0.05 else "" for v in refusal_miss], label_type='center', fontsize=8, color='black')
+    ax.bar_label(p2, labels=[f"{v:.2f}" if v >= 0.05 else "" for v in lucky_miss], label_type='center', fontsize=8, color='black')
+    ax.bar_label(p3, labels=[f"{v:.2f}" if v >= 0.05 else "" for v in hallucination_miss], label_type='center', fontsize=8, color='black')
     
     ax.set_xticks(list(x), short)
     ax.set_ylim(0, 1.15)
@@ -284,7 +284,7 @@ def plot_llm_valid_json(summary: dict[str, Any]) -> None:
     models = list(summary)
     short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
-    width = 0.25
+    width = 0.22
     no_rag = [summary[model].get("no_rag", {}).get("valid_json_rate", 0.0) for model in models]
     rag = [summary[model].get("hybrid_rerank", {}).get("valid_json_rate", 0.0) for model in models]
     graph = [summary[model].get("hybrid_graph", {}).get("valid_json_rate", 0.0) for model in models]
@@ -294,9 +294,9 @@ def plot_llm_valid_json(summary: dict[str, Any]) -> None:
     second = ax.bar(list(x), rag, width, label="Hybrid + Rerank")
     third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG")
     
-    ax.bar_label(first, fmt="%.2f", fontsize=8)
-    ax.bar_label(second, fmt="%.2f", fontsize=8)
-    ax.bar_label(third, fmt="%.2f", fontsize=8)
+    ax.bar_label(first, fmt="%.2f", fontsize=7)
+    ax.bar_label(second, fmt="%.2f", fontsize=7)
+    ax.bar_label(third, fmt="%.2f", fontsize=7)
     ax.set_xticks(list(x), short)
     ax.set_ylim(0, 1.15)
     ax.set_ylabel("Valid JSON Rate")

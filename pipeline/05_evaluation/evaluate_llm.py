@@ -103,6 +103,7 @@ ANSWER_RE = re.compile(r"\b([ABCDE])\b", re.IGNORECASE)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path, default=Path("output/eval_questions.json"))
+    parser.add_argument("--gold", type=Path, default=Path("output/eval_questions_gold.jsonl"))
     parser.add_argument(
         "--retrieval",
         type=Path,
@@ -147,6 +148,18 @@ def load_questions(path: Path) -> list[dict[str, Any]]:
         raise ValueError(f"No questions found in {path}")
     return rows
 
+
+
+def load_gold_mapping(path: Path) -> dict[str, set[str]]:
+    if not path.exists():
+        return {}
+    mapping = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip(): continue
+            row = json.loads(line)
+            mapping[normalize_query(row["query"])] = set(row.get("relevant_chunk_ids", []))
+    return mapping
 
 def load_retrieval(path: Path) -> dict[str, dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -820,6 +833,7 @@ def main() -> None:
     load_env(args.env_file)
     questions = load_questions(args.questions)
     retrieval = load_retrieval(args.retrieval)
+    gold_mapping = load_gold_mapping(args.gold) if getattr(args, "gold", None) else {}
     selected = questions[args.start_index :]
     if args.limit is not None:
         selected = selected[: args.limit]
@@ -963,7 +977,10 @@ def main() -> None:
                     content = response.choices[0].message.content or ""
                     answer, cited_ids, valid_json = parse_response(content)
                     allowed_ids = set(included_ids_list)
-                    gold_ids = set(question.get("evidence", {}).get("chunk_ids") or [])
+                    norm_q = normalize_query(question.get("question", ""))
+                    gold_ids = gold_mapping.get(norm_q)
+                    if not gold_ids:
+                        gold_ids = set(question.get("evidence", {}).get("chunk_ids") or [])
                     retrieval_hit = bool(allowed_ids & gold_ids)
                     usage = getattr(response, "usage", None)
                     result = {
