@@ -349,6 +349,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     
     # KG config
     parser.add_argument("--kg-chunk-limit", type=int, default=20, help="Max chunks to retrieve from KG neighbors")
+    parser.add_argument("--kg-boost", type=float, default=0.1, help="Score boost applied to KG candidates during reranking")
     
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--query", help="Single query string")
@@ -463,8 +464,14 @@ def main() -> None:
                     [(args.query, passage) for passage in passages],
                     batch_size=args.rerank_batch_size,
                 )
+                scored_candidates = []
+                for hit, score in zip(combined, rerank_scores, strict=True):
+                    if hit.get("source") == "kg":
+                        score += args.kg_boost
+                    scored_candidates.append((hit, score))
+                    
                 scored = sorted(
-                    zip(combined, rerank_scores, strict=True),
+                    scored_candidates,
                     key=lambda item: item[1],
                     reverse=True
                 )
@@ -545,6 +552,12 @@ def main() -> None:
                 if args.rerank and reranker is not None:
                     # Sort combine list by rerank_score
                     valid_candidates = [c.copy() for c in combined if "rerank_score" in c]
+                    
+                    # Apply KG Boost
+                    for c in valid_candidates:
+                        if c.get("source") == "kg":
+                            c["rerank_score"] += args.kg_boost
+                            
                     if valid_candidates:
                         valid_candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
                         final_hits = valid_candidates[:max(args.k_values)]
@@ -554,11 +567,14 @@ def main() -> None:
                 rrf_metrics = metrics_for_hits(rrf_hits, row, args.k_values)
                 final_metrics = metrics_for_hits(final_hits, row, args.k_values)
 
+                kg_in_final = sum(1 for hit in final_hits if hit.get("source") == "kg")
                 details.append({
                     "query": row["query"],
                     "group": row.get("group", "unknown"),
                     **final_metrics,
                     **{f"rrf_{key}": value for key, value in rrf_metrics.items()},
+                    "kg_candidates_count": len(kg),
+                    "kg_in_final_count": kg_in_final,
                     "top_chunk_ids": [hit["chunk_id"] for hit in final_hits],
                     "final_ordered_results": [
                         {
@@ -570,6 +586,8 @@ def main() -> None:
                     ]
                 })
 
+            total_kg = sum(d.get("kg_candidates_count", 0) for d in details)
+            kg_in_final_total = sum(d.get("kg_in_final_count", 0) for d in details)
             report = {
                 **summarize(details, args.k_values),
                 "rrf_metrics": summarize(details, args.k_values, prefix="rrf_"),
@@ -577,6 +595,12 @@ def main() -> None:
                 "reranker_model": args.reranker_model if args.rerank else None,
                 "kg_config": {
                     "kg_chunk_limit": args.kg_chunk_limit,
+                    "kg_boost": args.kg_boost,
+                },
+                "kg_stats": {
+                    "total_kg_candidates": total_kg,
+                    "total_kg_in_final": kg_in_final_total,
+                    "avg_kg_per_query": total_kg / len(details) if details else 0,
                 },
                 "details": details
             }
