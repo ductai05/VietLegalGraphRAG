@@ -206,14 +206,13 @@ def plot_retrieval(rows: list[dict[str, Any]]) -> None:
     ]:
         values = [row[metric] for row in rows]
         bars = ax.bar([value + offset for value in x], values, width, label=label)
-        ax.bar_label(bars, fmt="%.3f", fontsize=8)
+        ax.bar_label(bars, fmt="%.2f", fontsize=8)
     ax.set_xticks(list(x), labels, rotation=12, ha="right")
     ax.set_ylim(0, 0.9)
     ax.set_ylabel("Score")
     ax.set_title("Retrieval performance on 200 synthetic questions")
     ax.legend()
-    fig.tight_layout()
-    fig.savefig(REPORT_DIR / "retrieval_at10.png", dpi=180)
+    fig.savefig(REPORT_DIR / "retrieval_at10.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -221,34 +220,59 @@ def plot_llm(summary: dict[str, Any]) -> None:
     models = list(summary)
     short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
-    width = 0.25
+    width = 0.22
+    
     no_rag = [summary[model]["no_rag"]["accuracy"] for model in models]
     rag = [summary[model]["hybrid_rerank"]["accuracy"] for model in models]
+    rag_ref = [summary[model]["hybrid_rerank"].get("refusal_rate", 0.0) for model in models]
     graph = [summary.get(model, {}).get("hybrid_graph", {}).get("accuracy", 0.0) for model in models]
+    graph_ref = [summary.get(model, {}).get("hybrid_graph", {}).get("refusal_rate", 0.0) for model in models]
+    
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG")
-    second = ax.bar(
-        list(x),
-        rag,
-        width,
-        label="Hybrid + Rerank",
-    )
-    third = ax.bar(
-        [value + width for value in x],
-        graph,
-        width,
-        label="Hybrid + KG",
-    )
-    ax.bar_label(first, fmt="%.3f", fontsize=9)
-    ax.bar_label(second, fmt="%.3f", fontsize=9)
-    ax.bar_label(third, fmt="%.3f", fontsize=9)
+    
+    first = ax.bar([value - width for value in x], no_rag, width, label="No-RAG", color="tab:blue")
+    
+    second = ax.bar(list(x), rag, width, label="Hybrid + Rerank", color="tab:orange")
+    second_ref = ax.bar(list(x), rag_ref, width, bottom=rag, color="tab:orange", alpha=0.4, hatch="//", label="Refusal (E)")
+    
+    third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG", color="tab:green")
+    third_ref = ax.bar([value + width for value in x], graph_ref, width, bottom=graph, color="tab:green", alpha=0.4, hatch="//")
+    
+    ax.bar_label(first, fmt="%.2f", fontsize=7)
+    
+    ax.bar_label(second, fmt="%.2f", fontsize=7, label_type='center')
+    ax.bar_label(third, fmt="%.2f", fontsize=7, label_type='center')
+    
+    for bars in [second_ref, third_ref]:
+        for bar in bars:
+            h = bar.get_height()
+            bottom = bar.get_y()
+            total = bottom + h
+            # Label in the center of the refusal portion
+            if h >= 0.02:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bottom + h / 2,
+                    f"{h:.2f}",
+                    ha='center', va='center', fontsize=6, color='black'
+                )
+            # Label on top of the entire stacked bar
+            if h >= 0.01:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    total + 0.01,
+                    f"{total:.2f}",
+                    ha='center', va='bottom', fontsize=7, color='black'
+                )
+
     ax.set_xticks(list(x), short)
-    ax.set_ylim(0, 1.3)
+    ax.set_ylim(0, 1.25)
     ax.set_ylabel("MCQ accuracy")
-    ax.set_title("LLM answer accuracy")
-    ax.legend(loc='upper center', ncol=3)
-    fig.tight_layout()
-    fig.savefig(REPORT_DIR / "llm_accuracy.png", dpi=180)
+    ax.set_title("LLM answer accuracy (with Refusal Rate stacked)")
+    
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize='small')
+    fig.savefig(REPORT_DIR / "llm_accuracy.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -256,29 +280,29 @@ def plot_llm_refusal(summary: dict[str, Any]) -> None:
     models = list(summary)
     short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
-    width = 0.25
+    width = 0.5
     
     # We only plot for hybrid_rerank for now
-    refusal = [summary.get(model, {}).get("hybrid_rerank", {}).get("refusal_rate", 0.0) for model in models]
     refusal_miss = [summary.get(model, {}).get("hybrid_rerank", {}).get("refusal_when_retrieval_miss", 0.0) for model in models]
+    lucky_miss = [summary.get(model, {}).get("hybrid_rerank", {}).get("accuracy_when_retrieval_miss", 0.0) for model in models]
     hallucination_miss = [summary.get(model, {}).get("hybrid_rerank", {}).get("hallucination_when_retrieval_miss", 0.0) for model in models]
     
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    first = ax.bar([value - width for value in x], refusal, width, label="Overall Refusal", color="silver")
-    second = ax.bar(list(x), refusal_miss, width, label="Refusal on Miss (Good)", color="mediumseagreen")
-    third = ax.bar([value + width for value in x], hallucination_miss, width, label="Hallucination on Miss (Bad)", color="crimson")
+    p1 = ax.bar(list(x), refusal_miss, width, label="Refusal on Miss (Good)", color="mediumseagreen")
+    p2 = ax.bar(list(x), lucky_miss, width, bottom=refusal_miss, label="Lucky Guess on Miss (Neutral)", color="gold")
+    bottom_p3 = [r + l for r, l in zip(refusal_miss, lucky_miss)]
+    p3 = ax.bar(list(x), hallucination_miss, width, bottom=bottom_p3, label="Hallucination on Miss (Bad)", color="crimson")
     
-    ax.bar_label(first, fmt="%.3f", fontsize=9)
-    ax.bar_label(second, fmt="%.3f", fontsize=9)
-    ax.bar_label(third, fmt="%.3f", fontsize=9)
+    ax.bar_label(p1, labels=[f"{v:.2f}" if v >= 0.05 else "" for v in refusal_miss], label_type='center', fontsize=8, color='black')
+    ax.bar_label(p2, labels=[f"{v:.2f}" if v >= 0.05 else "" for v in lucky_miss], label_type='center', fontsize=8, color='black')
+    ax.bar_label(p3, labels=[f"{v:.2f}" if v >= 0.05 else "" for v in hallucination_miss], label_type='center', fontsize=8, color='black')
     
     ax.set_xticks(list(x), short)
-    ax.set_ylim(0, 1.3)
-    ax.set_ylabel("Rate")
-    ax.set_title("LLM Refusal & Hallucination Metrics (Hybrid Rerank)")
-    ax.legend(loc='upper center', ncol=3)
-    fig.tight_layout()
-    fig.savefig(REPORT_DIR / "llm_refusal.png", dpi=180)
+    ax.set_ylim(0, 1.15)
+    ax.set_ylabel("Proportion of Retrieval Misses")
+    ax.set_title("LLM Behavior when Retrieval Fails (Hybrid Rerank)")
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize='small')
+    fig.savefig(REPORT_DIR / "llm_refusal.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -286,7 +310,7 @@ def plot_llm_valid_json(summary: dict[str, Any]) -> None:
     models = list(summary)
     short = ["Llama 3.3 70B", "Llama 3.1 8B", "Qwen3 32B", "Qwen3.6 27B"]
     x = range(len(models))
-    width = 0.25
+    width = 0.22
     no_rag = [summary[model].get("no_rag", {}).get("valid_json_rate", 0.0) for model in models]
     rag = [summary[model].get("hybrid_rerank", {}).get("valid_json_rate", 0.0) for model in models]
     graph = [summary[model].get("hybrid_graph", {}).get("valid_json_rate", 0.0) for model in models]
@@ -296,16 +320,15 @@ def plot_llm_valid_json(summary: dict[str, Any]) -> None:
     second = ax.bar(list(x), rag, width, label="Hybrid + Rerank")
     third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG")
     
-    ax.bar_label(first, fmt="%.3f", fontsize=9)
-    ax.bar_label(second, fmt="%.3f", fontsize=9)
-    ax.bar_label(third, fmt="%.3f", fontsize=9)
+    ax.bar_label(first, fmt="%.2f", fontsize=7)
+    ax.bar_label(second, fmt="%.2f", fontsize=7)
+    ax.bar_label(third, fmt="%.2f", fontsize=7)
     ax.set_xticks(list(x), short)
-    ax.set_ylim(0, 1.3)
+    ax.set_ylim(0, 1.15)
     ax.set_ylabel("Valid JSON Rate")
     ax.set_title("LLM Valid JSON Formatting Rate")
-    ax.legend(loc='upper center', ncol=3)
-    fig.tight_layout()
-    fig.savefig(REPORT_DIR / "llm_valid_json.png", dpi=180)
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize='small')
+    fig.savefig(REPORT_DIR / "llm_valid_json.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 def plot_llm_latency(summary: dict[str, Any]) -> None:
@@ -322,17 +345,16 @@ def plot_llm_latency(summary: dict[str, Any]) -> None:
     second = ax.bar(list(x), rag, width, label="Hybrid + Rerank")
     third = ax.bar([value + width for value in x], graph, width, label="Hybrid + KG")
     
-    ax.bar_label(first, fmt="%.2f", fontsize=9)
-    ax.bar_label(second, fmt="%.2f", fontsize=9)
-    ax.bar_label(third, fmt="%.2f", fontsize=9)
+    ax.bar_label(first, fmt="%.2f", fontsize=8)
+    ax.bar_label(second, fmt="%.2f", fontsize=8)
+    ax.bar_label(third, fmt="%.2f", fontsize=8)
     ax.set_xticks(list(x), short)
     max_y = max(max(no_rag), max(rag), max(graph)) if any(no_rag + rag + graph) else 1.0
     ax.set_ylim(0, max_y * 1.3)
     ax.set_ylabel("Latency (seconds)")
     ax.set_title("LLM Mean Latency per Question")
-    ax.legend(loc='upper center', ncol=3)
-    fig.tight_layout()
-    fig.savefig(REPORT_DIR / "llm_latency.png", dpi=180)
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize='small')
+    fig.savefig(REPORT_DIR / "llm_latency.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 def plot_llm_citation(summary: dict[str, Any]) -> None:
@@ -347,15 +369,14 @@ def plot_llm_citation(summary: dict[str, Any]) -> None:
     first = ax.bar([value - width/2 for value in x], citation_validity, width, label="Citation Validity (Valid chunk IDs)")
     second = ax.bar([value + width/2 for value in x], gold_citation, width, label="Gold Citation Rate (Actually cited Gold)")
     
-    ax.bar_label(first, fmt="%.3f", fontsize=9)
-    ax.bar_label(second, fmt="%.3f", fontsize=9)
+    ax.bar_label(first, fmt="%.2f", fontsize=8)
+    ax.bar_label(second, fmt="%.2f", fontsize=8)
     ax.set_xticks(list(x), short)
-    ax.set_ylim(0, 1.3)
+    ax.set_ylim(0, 1.15)
     ax.set_ylabel("Rate")
     ax.set_title("LLM Citation Quality (Hybrid Rerank)")
-    ax.legend(loc='upper center', ncol=2)
-    fig.tight_layout()
-    fig.savefig(REPORT_DIR / "llm_citation.png", dpi=180)
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize='small')
+    fig.savefig(REPORT_DIR / "llm_citation.png", dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 def main() -> None:
