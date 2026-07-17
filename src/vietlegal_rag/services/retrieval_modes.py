@@ -62,6 +62,7 @@ class LLMConfig:
     temperature: float = 0.2
     max_context_chunks: int = 8
     max_tokens: int = 2048
+    system_prompt: str = ""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.temperature <= 1.0:

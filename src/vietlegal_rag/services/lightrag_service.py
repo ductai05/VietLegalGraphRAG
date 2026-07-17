@@ -112,6 +112,7 @@ class LightRAGService:
                 request.query,
                 contexts,
                 request.llm.temperature,
+                request.llm.system_prompt,
             )
         except Exception:
             answer_error = "llm.answer_failed"
@@ -119,6 +120,7 @@ class LightRAGService:
                 request.query,
                 contexts,
                 request.llm.temperature,
+                request.llm.system_prompt,
             )
         answer_done = time.perf_counter()
 
@@ -230,6 +232,7 @@ class LightRAGService:
                     request.query,
                     contexts,
                     request.llm.temperature,
+                    request.llm.system_prompt,
                 )
             except Exception:
                 logger.exception("Failed to initialize primary LLM stream, falling back to extractive")
@@ -237,6 +240,7 @@ class LightRAGService:
                     request.query,
                     contexts,
                     request.llm.temperature,
+                    request.llm.system_prompt,
                 )
                 return
 
@@ -253,6 +257,7 @@ class LightRAGService:
                     request.query,
                     contexts,
                     request.llm.temperature,
+                    request.llm.system_prompt,
                 )
                 return
 

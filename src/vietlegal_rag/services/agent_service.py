@@ -28,17 +28,21 @@ from retrieval_modes import RetrievalRequest
 
 logger = logging.getLogger("vietlegal_rag.services.agent_service")
 
-AGENT_SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên nghiệp của Việt Nam. Nhiệm vụ của bạn là giải thích luật pháp và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên thông tin tra cứu thực tế.
+AGENT_SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên thông tin tra cứu thực tế.
 
 QUY TRÌNH BẮT BUỘC:
 1. Luôn gọi `retrieval_search` trước tiên để tìm văn bản pháp luật liên quan. Hãy viết lại câu hỏi của người dùng thành truy vấn giàu từ khoá pháp lý.
 2. Với MỌI văn bản bạn định trích dẫn, bắt buộc gọi `graph_validate` với `doc_id` của văn bản đó (lấy từ kết quả `retrieval_search`, không dùng tiêu đề) trước khi trích dẫn.
 3. Nếu `effect_verdict` là `expired` hoặc `superseded`, bạn PHẢI chủ động ghi thêm cảnh báo rõ ràng bằng biểu tượng ⚠️ ở câu trả lời tương ứng, đồng thời dựa câu trả lời trên văn bản mới hơn (gọi thêm `retrieval_search` để lấy nội dung văn bản thay thế nếu cần) và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới.
-4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn — tuyệt đối không tự bịa URL.
+4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn. Tuyệt đối không tự bịa URL.
 
 GIỚI HẠN: tối đa 8 lượt gọi công cụ. Nếu các công cụ không trả về thông tin hữu ích, hãy nói rõ rằng bạn không tìm được đủ căn cứ pháp lý thay vì suy đoán.
 
-Câu trả lời cuối cùng phải bằng tiếng Việt, có cấu trúc rõ ràng, sử dụng các gạch đầu dòng hợp lý để dễ theo dõi, nêu rõ căn cứ và cảnh báo hiệu lực nếu có."""
+CÂU TRẢ LỜI CUỐI CÙNG:
+1. Trả lời bằng tiếng Việt, rõ ràng, có cấu trúc, ưu tiên kết luận trực tiếp trước rồi mới giải thích.
+2. Mỗi nhận định pháp lý quan trọng phải có citation inline dạng [n], trong đó n là `source_index` của kết quả `retrieval_search` đã hỗ trợ nhận định đó.
+3. Không tự tạo mục 'Căn cứ pháp lý', 'Nguồn', danh sách tài liệu hoặc URL ở cuối câu trả lời. Open WebUI sẽ hiển thị chi tiết căn cứ trong Sources và citation modal.
+4. Nếu chưa đủ căn cứ, nói rõ phần chưa đủ căn cứ thay vì suy đoán. Không thay thế tư vấn pháp lý của luật sư trong vụ việc cụ thể."""
 
 EXPIRY_WARNING = (
     "⚠️ Lưu ý: một số căn cứ được trích dẫn có thể đã hết hiệu lực "
@@ -157,7 +161,18 @@ class AgentService:
             make_web_search_tool(self.web_search, state),
         ]
         return create_react_agent(
-            self._request_llm(request), tools, prompt=AGENT_SYSTEM_PROMPT
+            self._request_llm(request), tools, prompt=self._system_prompt(request)
+        )
+
+    @staticmethod
+    def _system_prompt(request: RetrievalRequest) -> str:
+        external_prompt = (request.llm.system_prompt or "").strip()
+        if not external_prompt:
+            return AGENT_SYSTEM_PROMPT
+        return (
+            f"{external_prompt}\n\n"
+            "QUY TRÌNH RAG BẮT BUỘC CỦA HỆ THỐNG:\n"
+            f"{AGENT_SYSTEM_PROMPT}"
         )
 
     def _graph_config(self) -> dict[str, Any]:
@@ -377,8 +392,8 @@ class AgentService:
                 _finalize()
                 return
 
-            # Runs before the safety-net warning and before pipe.py appends the
-            # citations block, so neither ends up inside the reasoning bubble.
+            # Runs before the safety-net warning and before pipe.py emits
+            # structured citations, so neither ends up inside the reasoning bubble.
             yield from _close_dangling_think(thinking)
             if not produced_answer:
                 yield from _fallback("agent.no_answer")
