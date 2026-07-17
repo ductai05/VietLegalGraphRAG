@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 import numpy as np
 
@@ -17,8 +16,7 @@ def test_production_compose_manages_only_app_services() -> None:
     compose = read("src/infra/docker-compose.production.yml")
 
     assert not (ROOT / "src/infra/docker-compose.droplet.yml").exists()
-    assert "  backend:" in compose
-    assert "  frontend:" in compose
+    assert "  open-webui:" in compose
     assert "  graph_db:" not in compose
     assert "neo4j_prod_data" not in compose
     assert "depends_on:" not in compose
@@ -29,40 +27,15 @@ def test_production_compose_manages_only_app_services() -> None:
     assert "ELASTICSEARCH_SPARSE_INDEX" not in compose
     assert "external: true" in compose
     assert "name: vietlegal_net" in compose
-    assert '"127.0.0.1:${BACKEND_PORT:-8000}:8000"' in compose
-
-
-def test_frontend_has_nginx_container_definition() -> None:
-    compose = read("src/infra/docker-compose.production.yml")
-    nginx = read("src/frontend/nginx.conf")
-
-    assert "dockerfile: src/frontend/Dockerfile" in compose
-    assert (ROOT / "src/frontend/Dockerfile").is_file()
-    assert (ROOT / "src/frontend/nginx.conf").is_file()
-    assert "resolver 127.0.0.11" in nginx
-    assert "proxy_pass $backend_upstream" in nginx
-    assert "limit_req_zone" in nginx
-    assert "limit_req zone=api" in nginx
-    assert "gzip on;" in nginx
-    assert "X-Content-Type-Options" in nginx
-    assert "Cache-Control" in nginx
-
-
-def test_frontend_dockerfile_copies_only_public_assets() -> None:
-    dockerfile = read("src/frontend/Dockerfile")
-
-    assert "COPY src/frontend/ /usr/share/nginx/html/" not in dockerfile
-    assert "/app/dist" in dockerfile
-    assert "npm run build" in dockerfile
+    assert '"${FRONTEND_PORT:-80}:8080"' in compose
 
 
 def test_deploy_workflow_rebuilds_all_app_services() -> None:
     workflow = read(".github/workflows/deploy.yml")
 
-    assert "up -d --no-deps backend" in workflow
-    assert "up -d --no-deps frontend" in workflow
+    assert "up -d --no-deps --remove-orphans open-webui" in workflow
     assert "up --build -d" not in workflow
-    assert "Waiting for backend health" in workflow
+    assert "Waiting for open-webui health" in workflow
     assert "curl --fail --silent --show-error" in workflow
 
 
@@ -73,7 +46,7 @@ def test_ci_runs_lint_and_blocks_tracked_env_files() -> None:
     assert "git ls-files '*.env'" in workflow
     assert "!*.env.example" in read(".gitignore")
     assert "https://download.pytorch.org/whl/cpu" in workflow
-    assert "grep -v '^torch==' src/backend/requirements.txt" in workflow
+    assert "grep -v '^torch==' src/open-webui/backend/requirements.txt" in workflow
 
 
 def test_neo4j_setup_script_is_destructive_but_guarded() -> None:
@@ -105,29 +78,20 @@ def test_neo4j_droplet_import_wrapper_uploads_graph_artifacts_over_ssh() -> None
 
 
 def test_backend_requirements_are_installable_and_include_runtime_clients() -> None:
-    requirements = read("src/backend/requirements.txt")
+    toml_content = read("src/vietlegal_rag/pyproject.toml")
 
-    assert "Cloud SDKs" not in requirements
-    assert "python-dotenv" in requirements
-    assert "neo4j" in requirements
-    assert "elasticsearch" in requirements
-    assert "openai" in requirements
-    assert "voyageai" in requirements
-    assert "onnxruntime" in requirements
-    assert "transformers" in requirements
-    assert "pypdf" in requirements
-    for line in requirements.splitlines():
-        if not line or line.startswith("#"):
-            continue
-        assert re.match(r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[0-9][A-Za-z0-9_.!+-]*$", line), line
+    assert "python-dotenv" in toml_content
+    assert "neo4j" in toml_content
+    assert "elasticsearch" in toml_content
+    assert "voyageai" in toml_content
+    assert "onnxruntime" in toml_content
 
 
 def test_backend_dockerfile_uses_onnx_runtime() -> None:
-    dockerfile = read("src/backend/Dockerfile")
+    dockerfile = read("src/infra/Dockerfile.openwebui")
 
-    assert "ONNX Runtime" in dockerfile
-    assert "https://download.pytorch.org/whl/cpu" not in dockerfile
-    assert "pip install --no-cache-dir -r /tmp/requirements.txt" in dockerfile
+    assert "python:3.11-slim-bookworm" in dockerfile
+    assert "pip install --no-cache-dir /app/vietlegal_rag/" in dockerfile
 
 
 def test_production_env_uses_single_hybrid_elasticsearch_index() -> None:

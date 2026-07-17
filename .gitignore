@@ -60,3 +60,11 @@ src/infra/hf-cache/
 # ui-forge runtime workspace
 .ui-forge/
 /onnx_model
+
+# Open WebUI files
+/src/open-webui/node_modules/
+/src/open-webui/build/
+/src/open-webui/backend/data/
+/src/open-webui/backend/.venv/
+/src/open-webui/backend/venv/
+
