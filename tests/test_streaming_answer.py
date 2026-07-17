@@ -6,7 +6,7 @@ import importlib
 from pathlib import Path
 
 import pytest
-pytest.importorskip("fastapi")
+pytest.skip("FastAPI backend is obsolete/removed in this branch", allow_module_level=True)
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
