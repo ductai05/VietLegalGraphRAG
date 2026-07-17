@@ -191,7 +191,8 @@ def test_format_citations_block_agent_path_fallback_without_text() -> None:
 
     block = format_citations_block([cite])
 
-    assert "[Điều 101, Nghị định 15/2020/NĐ-CP](https://vanban.chinhphu.vn/nd15)" in block
+    assert "[Điều 101, Nghị định 15/2020/NĐ-CP quy định xử phạt vi phạm hành chính" in block
+    assert "https://vanban.chinhphu.vn/nd15" in block
     assert "⚠️ (Hết hiệu lực)" in block
 
 
