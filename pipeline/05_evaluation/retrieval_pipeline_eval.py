@@ -34,7 +34,7 @@ def decode_cloud_id(cloud_id: str) -> str:
         _, encoded = cloud_id.split(":", 1)
     else:
         encoded = cloud_id
-    padded = encoded + "=" * (4 - len(encoded) % 4)
+    padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
     decoded = base64.b64decode(padded).decode("utf-8")
     parts = decoded.split("$")
     if len(parts) >= 2:
@@ -69,14 +69,24 @@ def parse_args(argv=None):
                         help="Elasticsearch password")
     parser.add_argument("--index", default=os.environ.get("ELASTICSEARCH_ALIAS") or os.environ.get("ELASTICSEARCH_INDEX"),
                         help="Hybrid Elasticsearch index or alias for dense and sparse search")
-    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K,
+    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K, 
                         help="RRF rank constant used by hybrid_search.py")
     parser.add_argument("--elastic-num-candidates", type=int, default=None,
                         help="Elasticsearch kNN num_candidates override for hybrid dense search")
     parser.add_argument("--reranker-model", default=DEFAULT_RERANKER_MODEL,
                         help="Hugging Face reranker model name")
-    parser.add_argument("--rerank-batch-size", type=int, default=8,
+    parser.add_argument("--rerank-batch-size", type=int, default=32,
                         help="Reranker batch size")
+    parser.add_argument("--max-workers", type=int, default=4,
+                        help="Number of concurrent threads for Elasticsearch retrieval")
+    parser.add_argument("--neo4j-uri", default=os.environ.get("NEO4J_URI"),
+                        help="Neo4j connection URI")
+    parser.add_argument("--neo4j-user", default=os.environ.get("NEO4J_USER"),
+                        help="Neo4j username")
+    parser.add_argument("--neo4j-password", default=os.environ.get("NEO4J_PASSWORD"),
+                        help="Neo4j password")
+    parser.add_argument("--neo4j-database", default=os.environ.get("NEO4J_DATABASE"),
+                        help="Neo4j database name")
     parser.add_argument("--chunks", type=Path, default=None,
                         help="Path to chunks parquet dataset for metadata hydration")
     parser.add_argument("--device", default=None,
@@ -159,7 +169,8 @@ def main():
         dense_cmd = [
             sys.executable, str(EVAL_DIR / "evaluate_dense.py"),
             "--gold", str(eval_gold_path),
-            "--output", str(dense_output)
+            "--output", str(dense_output),
+            "--max-workers", str(args.max_workers)
         ]
         if args.elastic_cloud_id:
             dense_cmd.extend(["--elastic-cloud-id", args.elastic_cloud_id])
@@ -186,8 +197,11 @@ def main():
             sys.executable, str(EVAL_DIR / "evaluate_sparse.py"),
             "--eval-questions", str(eval_gold_path),
             "--url", args.url,
-            "--output", str(sparse_output)
+            "--output", str(sparse_output),
+            "--max-workers", str(args.max_workers)
         ]
+        if args.env_file:
+            sparse_cmd.extend(["--env-file", str(args.env_file)])
         if args.api_key:
             sparse_cmd.extend(["--api-key", args.api_key])
         if args.username:
@@ -200,7 +214,7 @@ def main():
             sparse_cmd.extend(["--index", args.index])
         run_command(sparse_cmd, "Sparse Retrieval Evaluation")
 
-        # 3. Run Hybrid + Reranker Evaluations for K = 10, 20, 30, 40, 50
+        # 3. Run Hybrid + Reranker Evaluations for K = 20, 30, 40, 50
         rerank_outputs = {}
         for k_val in [20, 30, 40, 50]:
             out_file = args.output_dir / f"elasticsearch_hybrid_rerank_eval_k{k_val}.json"
@@ -214,7 +228,8 @@ def main():
                 "--reranker-model", args.reranker_model,
                 "--rerank-batch-size", str(args.rerank_batch_size),
                 "--rerank",
-                "--output", str(out_file)
+                "--output", str(out_file),
+                "--max-workers", str(args.max_workers)
             ]
             if args.env_file:
                 hybrid_cmd.extend(["--env-file", str(args.env_file)])
@@ -234,12 +249,55 @@ def main():
                 hybrid_cmd.extend(["--device", args.device])
             run_command(hybrid_cmd, f"Hybrid + Reranker Evaluation (K={k_val})")
 
+        # 3.5 Run Knowledge Graph + Reranker Evaluation (Hybrid + KG + Reranker)
+        graph_output = args.output_dir / "elasticsearch_hybrid_graph_eval.json"
+        graph_cmd = [
+            sys.executable, str(EVAL_DIR / "graph_hybrid_search.py"),
+            "--gold", str(eval_gold_path),
+            "--url", args.url,
+            "--candidate-k", "50",
+            "--rrf-k", str(args.rrf_k),
+            "--reranker-model", args.reranker_model,
+            "--rerank-batch-size", str(args.rerank_batch_size),
+            "--rerank",
+            "--output", str(graph_output),
+            "--max-workers", str(args.max_workers)
+        ]
+        if args.env_file:
+            graph_cmd.extend(["--env-file", str(args.env_file)])
+        if args.index:
+            graph_cmd.extend(["--index", args.index])
+        if args.elastic_num_candidates:
+            graph_cmd.extend(["--elastic-num-candidates", str(args.elastic_num_candidates)])
+        if args.api_key:
+            graph_cmd.extend(["--api-key", args.api_key])
+        if args.username:
+            graph_cmd.extend(["--username", args.username])
+        if args.password:
+            graph_cmd.extend(["--password", args.password])
+        if args.chunks:
+            graph_cmd.extend(["--chunks", str(args.chunks)])
+        if args.device:
+            graph_cmd.extend(["--device", args.device])
+            
+        if args.neo4j_uri:
+            graph_cmd.extend(["--neo4j-uri", args.neo4j_uri])
+        if args.neo4j_user:
+            graph_cmd.extend(["--neo4j-user", args.neo4j_user])
+        if args.neo4j_password:
+            graph_cmd.extend(["--neo4j-password", args.neo4j_password])
+        if args.neo4j_database:
+            graph_cmd.extend(["--neo4j-database", args.neo4j_database])
+            
+        run_command(graph_cmd, "Hybrid + KG + Reranker Retrieval Evaluation")
+
         # 4. Run Plotting Metrics
         plot_cmd = [
             sys.executable, str(EVAL_DIR / "plot_metrics.py"),
             "--dense", str(dense_output),
             "--sparse", str(sparse_output),
             "--hybrid", str(rerank_outputs[50]),  # Pass one rerank output to extract baseline hybrid RRF metrics
+            "--graph", str(graph_output),
             "--output-dir", str(args.output_dir)
         ]
         for k_val, out_file in rerank_outputs.items():

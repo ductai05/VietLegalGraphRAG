@@ -23,7 +23,7 @@ class ElasticsearchCommonTests(unittest.TestCase):
         ):
             self.assertEqual(
                 resolve_credentials("arg-id", "arg-key"),
-                ("arg-id", "arg-key"),
+                ("arg-id", None, "arg-key"),
             )
 
     def test_resolve_credentials_reads_environment(self):
@@ -31,7 +31,7 @@ class ElasticsearchCommonTests(unittest.TestCase):
             os.environ,
             {"ELASTIC_CLOUD_ID": "env-id", "ELASTIC_API_KEY": "env-key"},
         ):
-            self.assertEqual(resolve_credentials(None, None), ("env-id", "env-key"))
+            self.assertEqual(resolve_credentials(None, None), ("env-id", None, "env-key"))
 
     def test_resolve_credentials_rejects_missing_values(self):
         with patch.dict(os.environ, {}, clear=True):

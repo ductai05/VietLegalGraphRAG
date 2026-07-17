@@ -19,7 +19,7 @@ from hybrid_search import (
     fuse_ranked_hits,
     parse_args,
 )
-from run_pipeline_eval import parse_args as parse_pipeline_eval_args
+from retrieval_pipeline_eval import parse_args as parse_pipeline_eval_args
 
 
 def test_fuse_ranked_hits_uses_one_based_rrf_and_preserves_component_scores() -> None:

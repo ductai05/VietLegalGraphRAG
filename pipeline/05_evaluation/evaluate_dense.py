@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import sys
+import concurrent.futures
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,8 @@ def parse_args() -> argparse.Namespace:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--faiss-dir", type=Path)
     target.add_argument("--elastic-cloud-id")
-    parser.add_argument("--elastic-api-key", default=None)
+    target.add_argument("--elastic-url", "--url", dest="elastic_url", default=None)
+    parser.add_argument("--elastic-api-key", "--api-key", dest="elastic_api_key", default=None)
     parser.add_argument("--elastic-index", default=COLLECTION_NAME)
     parser.add_argument("--elastic-num-candidates", type=int, default=None)
     parser.add_argument("--chunks", type=Path, default=None)
@@ -45,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rerank-batch-size", type=int, default=8)
     parser.add_argument("--faiss-nprobe", type=int, default=32)
     parser.add_argument("--faiss-oversample", type=int, default=20)
+    parser.add_argument("--max-workers", type=int, default=10)
     parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "dense_eval_results.json",
                         help="Path to save evaluation results JSON")
     parser.add_argument("--device", default=None)
@@ -170,6 +173,7 @@ def main() -> None:
         faiss_nprobe=args.faiss_nprobe,
         faiss_oversample=args.faiss_oversample,
         elastic_cloud_id=args.elastic_cloud_id,
+        elastic_url=args.elastic_url,
         elastic_api_key=args.elastic_api_key,
         elastic_index=args.elastic_index,
         elastic_num_candidates=args.elastic_num_candidates,
@@ -198,8 +202,8 @@ def main() -> None:
 
     details: list[dict[str, Any]] = []
     try:
-        for row in rows:
-            candidates = deduplicate_hits(
+        def process_retrieval(row: dict[str, Any]) -> list[dict[str, Any]]:
+            return deduplicate_hits(
                 retriever.search(
                     row["query"],
                     filters=row.get("filters"),
@@ -207,30 +211,47 @@ def main() -> None:
                     expand=False,
                 )
             )
+
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = lambda x, **kwargs: x
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+            all_candidates = list(tqdm(executor.map(process_retrieval, rows), total=len(rows), desc="Retrieving Dense Candidates"))
+
+        if args.rerank and reranker is not None:
+            assert passage_loader is not None
+            all_pairs = []
+            pair_indices = []
+            for q_idx, (row, candidates) in enumerate(zip(rows, all_candidates)):
+                try:
+                    passages = passage_loader.build_passages(candidates)
+                    for c_idx, passage in enumerate(passages):
+                        all_pairs.append((row["query"], passage))
+                        pair_indices.append((q_idx, c_idx))
+                except Exception:
+                    logging.warning("Failed to build passages for query %r", row["query"], exc_info=True)
+            
+            if all_pairs:
+                print(f"Reranking {len(all_pairs)} pairs globally...")
+                try:
+                    global_scores = reranker.score_pairs(all_pairs, batch_size=args.rerank_batch_size)
+                    for (q_idx, c_idx), score in zip(pair_indices, global_scores):
+                        all_candidates[q_idx][c_idx]["rerank_score"] = score
+                except Exception:
+                    logging.warning("Global reranking failed; falling back to dense order", exc_info=True)
+
+        for row, candidates in zip(rows, all_candidates):
             dense_hits = candidates[: args.top_k]
             final_hits = dense_hits
-            rerank_scores: list[float] | None = None
+            
             if args.rerank and reranker is not None:
-                try:
-                    assert passage_loader is not None
-                    passages = passage_loader.build_passages(candidates)
-                    rerank_scores = reranker.score_pairs(
-                        [(row["query"], passage) for passage in passages],
-                        batch_size=args.rerank_batch_size,
-                    )
-                    scored = list(zip(candidates, rerank_scores, strict=True))
-                    scored.sort(key=lambda item: item[1], reverse=True)
-                    final_hits = [
-                        {**hit, "rerank_score": score}
-                        for hit, score in scored[: args.top_k]
-                    ]
-                except Exception:
-                    logging.warning(
-                        "Reranking failed for query %r; using dense order",
-                        row["query"],
-                        exc_info=True,
-                    )
-                    rerank_scores = None
+                # Only use valid reranked candidates, fallback to dense_hits if missing
+                valid_candidates = [c for c in candidates if "rerank_score" in c]
+                if valid_candidates:
+                    valid_candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+                    final_hits = valid_candidates[:args.top_k]
 
             dense_metrics = metrics_for_hits(dense_hits, row, args.k_values)
             final_metrics = metrics_for_hits(final_hits, row, args.k_values)
@@ -242,21 +263,21 @@ def main() -> None:
                     **{f"dense_{key}": value for key, value in dense_metrics.items()},
                     "top_chunk_ids": [hit["chunk_id"] for hit in final_hits],
                     "baseline_dense_scores": [
-                        {"chunk_id": hit["chunk_id"], "score": hit["dense_score"]}
+                        {"chunk_id": hit["chunk_id"], "score": hit.get("dense_score", hit.get("score"))}
                         for hit in candidates
                     ],
                     "rerank_scores": (
                         [
-                            {"chunk_id": hit["chunk_id"], "score": score}
-                            for hit, score in zip(candidates, rerank_scores, strict=True)
+                            {"chunk_id": hit["chunk_id"], "score": hit["rerank_score"]}
+                            for hit in candidates if "rerank_score" in hit
                         ]
-                        if rerank_scores is not None
+                        if args.rerank and reranker is not None and any("rerank_score" in hit for hit in candidates)
                         else None
                     ),
                     "final_ordered_results": [
                         {
                             "chunk_id": hit["chunk_id"],
-                            "dense_score": hit["dense_score"],
+                            "dense_score": hit.get("dense_score", hit.get("score")),
                             "rerank_score": hit.get("rerank_score"),
                         }
                         for hit in final_hits
