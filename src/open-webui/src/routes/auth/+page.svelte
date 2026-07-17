@@ -59,8 +59,12 @@
 				updateUserTimezone(sessionUser.token, timezone);
 			}
 
+			if (typeof sessionStorage !== 'undefined') {
+				sessionStorage.setItem('enteredChat', 'true');
+			}
+
 			if (!redirectPath) {
-				redirectPath = $page.url.searchParams.get('redirect') || '/';
+				redirectPath = $page.url.searchParams.get('redirect') || '/?chat=true';
 			}
 
 			goto(redirectPath);
@@ -168,7 +172,7 @@
 	onMount(async () => {
 		const redirectPath = $page.url.searchParams.get('redirect');
 		if ($user !== undefined) {
-			goto(redirectPath || '/');
+			goto(redirectPath || '/?chat=true');
 		} else {
 			if (redirectPath) {
 				localStorage.setItem('redirectPath', redirectPath);
@@ -247,7 +251,7 @@
 						>
 							<div>
 								{#if $WEBUI_NAME === 'VietLegalGraphRAG'}
-									{$i18n.t('Signing in to')} <span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+									{$i18n.t('Signing in to')} <span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 								{:else}
 									{$i18n.t('Signing in to {{WEBUI_NAME}}', { WEBUI_NAME: $WEBUI_NAME })}
 								{/if}
@@ -283,13 +287,13 @@
 									<div class=" text-2xl font-medium">
 										{#if $WEBUI_NAME === 'VietLegalGraphRAG'}
 											{#if $config?.onboarding ?? false}
-												{$i18n.t('Get started with')} <span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+												{$i18n.t('Get started with')} <span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 											{:else if mode === 'ldap'}
-												{$i18n.t('Sign in with LDAP to')} <span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+												{$i18n.t('Sign in with LDAP to')} <span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 											{:else if mode === 'signin'}
-												{$i18n.t('Sign in to')} <span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+												{$i18n.t('Sign in to')} <span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 											{:else}
-												{$i18n.t('Sign up to')} <span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+												{$i18n.t('Sign up to')} <span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 											{/if}
 										{:else}
 											{#if $config?.onboarding ?? false}
@@ -308,7 +312,7 @@
 										<div class="mt-1 text-xs font-medium text-gray-600 dark:text-gray-500">
 											ⓘ
 											{#if $WEBUI_NAME === 'VietLegalGraphRAG'}
-												<span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+												<span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 											{:else}
 												{$WEBUI_NAME}
 											{/if}

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { user } from '$lib/stores';
+
+  $: tryNowLink = $user ? '/' : '/auth';
 
   // --- INTRO ANIMATION SUB-COMPONENT CONFIG ---
   const LETTERS = ["V", "I", "E", "T", "L", "E", "G", "A", "L"];
@@ -149,7 +152,7 @@
 
         <div class="flex items-center gap-2">
           <a
-            href="/auth"
+            href={tryNowLink}
             class="text-[11px] px-4 py-2 rounded-xl bg-[#0F2044] text-white hover:bg-[#1A3260] transition-all duration-200 tracking-wide hidden md:block font-medium font-sans"
           >
             DÙNG THỬ
@@ -197,7 +200,7 @@
             {/each}
             <div class="mt-1 px-2 pb-1">
               <a
-                href="/auth"
+                href={tryNowLink}
                 class="block w-full text-center text-[11px] px-4 py-2.5 rounded-xl bg-[#0F2044] text-white hover:bg-[#1A3260] transition-all duration-200 tracking-wide font-sans font-medium"
               >
                 DÙNG THỬ
@@ -276,7 +279,7 @@
         class="mt-8 flex flex-wrap gap-3"
         style="opacity: {heroReady ? 1 : 0}; transform: {heroReady ? 'translateY(0px)' : 'translateY(16px)'}; transition: opacity 0.8s cubic-bezier(0.16,1,0.3,1) 400ms, transform 0.8s cubic-bezier(0.16,1,0.3,1) 400ms;"
       >
-        <a href="/auth" class="px-6 py-3 rounded-xl bg-[#0F2044] text-white text-sm font-medium tracking-wide hover:bg-[#1A3260] transition-colors">
+        <a href={tryNowLink} class="px-6 py-3 rounded-xl bg-[#0F2044] text-white text-sm font-medium tracking-wide hover:bg-[#1A3260] transition-colors">
           Dùng thử miễn phí
         </a>
         <a href="#contact" class="px-6 py-3 rounded-xl border border-[#0F2044]/20 text-[#0F2044] text-sm font-medium tracking-wide hover:border-[#0F2044]/40 hover:bg-[#0F2044]/[0.04] transition-all">
@@ -676,7 +679,7 @@
             class="flex-1 bg-white border border-[#0F2044]/10 rounded-xl px-4 py-3 text-sm text-[#0F2044] placeholder:text-[#0F2044]/30 focus:outline-none focus:border-[#0F2044]/30 transition-colors"
           />
           <a
-            href="/auth"
+            href={tryNowLink}
             class="px-8 py-3 bg-[#0F2044] text-white text-sm rounded-xl hover:bg-[#1A3260] transition-colors tracking-wide font-medium flex items-center justify-center"
           >
             DÙNG THỬ

@@ -197,9 +197,7 @@
 
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
-			if ($page.url.pathname !== '/') {
-				await goto('/auth');
-			}
+			await goto('/auth');
 			return;
 		}
 		if (!['user', 'admin'].includes($user?.role)) {
@@ -475,8 +473,6 @@
 			{/if}
 		</div>
 	</div>
-{:else}
-	<slot />
 {/if}
 
 <style>

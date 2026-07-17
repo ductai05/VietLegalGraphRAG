@@ -3,9 +3,7 @@
 	import { toast } from 'svelte-sonner';
 
 	import Chat from '$lib/components/chat/Chat.svelte';
-	import LandingPage from '$lib/components/LandingPage.svelte';
 	import { page } from '$app/stores';
-	import { user } from '$lib/stores';
 
 	onMount(() => {
 		if ($page.url.searchParams.get('error')) {
@@ -14,8 +12,4 @@
 	});
 </script>
 
-{#if $user}
-	<Chat />
-{:else}
-	<LandingPage />
-{/if}
+<Chat />

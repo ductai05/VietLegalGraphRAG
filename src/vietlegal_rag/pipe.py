@@ -153,7 +153,7 @@ class Pipe:
     def __init__(self):
         self.type = "pipe"
         self.id = "vietlegal_rag"
-        self.name = "VietLegal RAG"
+        self.name = "VLGR ⚖️"
         self.valves = self.Valves()
         self._services = None
         self._services_fingerprint = None
@@ -228,9 +228,13 @@ class Pipe:
 
     def pipes(self) -> list[dict]:
         return [
-            {"id": "vietlegal_rag.gpt-4o-mini", "name": "⚖️ VietLegal RAG (GPT-4o Mini)"},
-            {"id": "vietlegal_rag.qwen-2.5-72b-instruct", "name": "⚖️ VietLegal RAG (Qwen 2.5 72B)"},
-            {"id": "vietlegal_rag.gemini-1.5-pro", "name": "⚖️ VietLegal RAG (Gemini 1.5 Pro)"}
+            {"id": "vietlegal_rag.groq/qwen/qwen3.6-27b", "name": "(Qwen 3.6 27B)"},
+            {"id": "vietlegal_rag.groq/qwen/qwen3-32b", "name": "(Qwen 3 32B)"},
+            {"id": "vietlegal_rag.ag/claude-opus-4-6-thinking", "name": "(Claude Opus 4.6)"},
+            {"id": "vietlegal_rag.ag/gemini-3-flash-agent", "name": "(Gemini 3.5 Flash)"},
+            {"id": "vietlegal_rag.gc/gemini-2.5-pro", "name": "(Gemini 2.5 Pro)"},
+            {"id": "vietlegal_rag.gemini/gemma-4-31b-it", "name": "(Gemma 4 31B)"},
+            {"id": "vietlegal_rag.groq/llama-3.3-70b-versatile", "name": "(Llama 3.3 70B)"}
         ]
 
     async def pipe(
@@ -246,7 +250,7 @@ class Pipe:
         # Override llm_model dynamically from the selected model dropdown
         selected_model_id = body.get("model", "vietlegal_rag")
         if "." in selected_model_id:
-            actual_model = selected_model_id.split(".")[-1]
+            actual_model = selected_model_id.split(".", 1)[1]
             logger.info(f"Overriding RAG LLM model with selected option: {actual_model}")
             self.valves.llm_model = actual_model
 

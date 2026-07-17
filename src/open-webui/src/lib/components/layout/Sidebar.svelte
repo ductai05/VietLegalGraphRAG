@@ -862,13 +862,13 @@
 					<Tooltip content={$i18n.t('New Chat')} placement="right">
 						<a
 							class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
-							href="/"
+							href="/?chat=true"
 							draggable="false"
 							on:click={async (e) => {
 								e.stopImmediatePropagation();
 								e.preventDefault();
 
-								goto('/');
+								goto('/?chat=true');
 								newChatHandler();
 							}}
 							aria-label={$i18n.t('New Chat')}
@@ -1051,7 +1051,7 @@
 			>
 				<a
 					class="flex items-center rounded-xl size-8.5 h-full justify-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition no-drag-region"
-					href="/"
+					href="/?chat=true"
 					draggable="false"
 					on:click={newChatHandler}
 				>
@@ -1063,13 +1063,13 @@
 					/>
 				</a>
 
-				<a href="/" class="flex flex-1 px-0.5" on:click={newChatHandler}>
+				<a href="/?chat=true" class="flex flex-1 px-0.5" on:click={newChatHandler}>
 					<div
 						id="sidebar-webui-name"
 						class=" self-center font-medium text-gray-850 dark:text-white font-primary"
 					>
 						{#if $WEBUI_NAME === 'VietLegalGraphRAG'}
-							<span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+							<span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 						{:else}
 							{$WEBUI_NAME}
 						{/if}
@@ -1116,7 +1116,7 @@
 						<a
 							id="sidebar-new-chat-button"
 							class="group grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
-							href="/"
+							href="/?chat=true"
 							draggable="false"
 							on:click={newChatHandler}
 							aria-label={$i18n.t('New Chat')}

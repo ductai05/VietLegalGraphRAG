@@ -50,7 +50,7 @@
 			<div class=" mb-2.5 text-sm font-medium flex space-x-2 items-center">
 				<div>
 					{#if $WEBUI_NAME === 'VietLegalGraphRAG'}
-						<span class="text-[#0F2044] dark:text-[#3B82F6] font-bold">VietLegal</span><span class="text-[#C9A227] dark:text-[#CFB53B] font-bold">GraphRAG</span>
+						<span class="text-[#3D4F5F] dark:text-[#CBD5E1] font-bold">VietLegal</span><span class="text-[#B8960C] dark:text-[#D4AF37] font-bold">GraphRAG</span>
 					{:else}
 						{$WEBUI_NAME}
 					{/if}
