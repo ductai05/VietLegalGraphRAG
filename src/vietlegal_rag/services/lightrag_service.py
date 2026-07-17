@@ -65,7 +65,9 @@ class LightRAGService:
         self.retrieval_service = retrieval_service
         self.graph_retriever = graph_retriever
         self.answer_service = answer_service
-        self.context_assembler = context_assembler or ContextAssembler()
+        self.document_resolver = (
+            context_assembler.document_resolver if context_assembler else None
+        )
 
     def answer(self, request: RetrievalRequest) -> dict[str, Any]:
         started = time.perf_counter()
@@ -95,7 +97,8 @@ class LightRAGService:
                 lightrag_error = "graph.retrieval_failed"
         graph_done = time.perf_counter()
 
-        contexts = self.context_assembler.merge(retrieval_hits, graph_context)
+        context_assembler = ContextAssembler(document_resolver=self.document_resolver)
+        contexts = context_assembler.merge(retrieval_hits, graph_context)
         contexts = self._limit_contexts(
             contexts,
             graph_context,
@@ -141,7 +144,7 @@ class LightRAGService:
             trace["answer_error"] = answer_error
 
         # Include document resolution info in trace.
-        resolved = self.context_assembler.last_resolved
+        resolved = context_assembler.last_resolved
         if resolved is not None:
             if resolved.warnings:
                 trace["resolution_warnings"] = resolved.warnings
@@ -212,7 +215,8 @@ class LightRAGService:
                 lightrag_error = "graph.retrieval_failed"
         graph_done = time.perf_counter()
 
-        contexts = self.context_assembler.merge(retrieval_hits, graph_context)
+        context_assembler = ContextAssembler(document_resolver=self.document_resolver)
+        contexts = context_assembler.merge(retrieval_hits, graph_context)
         contexts = self._limit_contexts(
             contexts,
             graph_context,
@@ -278,7 +282,7 @@ class LightRAGService:
         if lightrag_error:
             trace["lightrag_error"] = lightrag_error
 
-        resolved = self.context_assembler.last_resolved
+        resolved = context_assembler.last_resolved
         if resolved is not None:
             if resolved.warnings:
                 trace["resolution_warnings"] = resolved.warnings
@@ -304,4 +308,3 @@ class LightRAGService:
             "graph_context": graph_payload,
             "retrieval_trace": trace,
         }
-

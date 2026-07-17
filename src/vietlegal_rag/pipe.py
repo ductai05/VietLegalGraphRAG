@@ -1,14 +1,16 @@
 import os
 import sys
 import logging
+import asyncio
 import queue
 import threading
-from typing import Generator, Callable, Awaitable, AsyncGenerator, Any
+from typing import Callable, Awaitable, AsyncGenerator, Any
 from pydantic import BaseModel, Field
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vietlegal_rag.pipe")
+_STREAM_DONE = object()
 
 # Ensure legacy imports work by adding package directories if not present
 from pathlib import Path
@@ -154,6 +156,7 @@ class Pipe:
         self.name = "VietLegal RAG"
         self.valves = self.Valves()
         self._services = None
+        self._services_fingerprint = None
         self._lock = threading.Lock()
         
         # Pre-warm services in a background thread to load the heavy embedding model
@@ -170,14 +173,65 @@ class Pipe:
 
 
     def _get_services(self):
-        """Thread-safe lazy initialization of services."""
-        if self._services is None:
+        """Thread-safe lazy initialization keyed by the active Valves."""
+        fingerprint = self._valves_fingerprint()
+        if self._services is None or self._services_fingerprint != fingerprint:
             with self._lock:
-                if self._services is None:
+                if self._services is None or self._services_fingerprint != fingerprint:
                     from vietlegal_rag import build_services
                     logger.info("Initializing VietLegal RAG services dependency injection...")
                     self._services = build_services(self.valves)
+                    self._services_fingerprint = fingerprint
         return self._services
+
+    def _valves_fingerprint(self) -> tuple[tuple[str, Any], ...]:
+        """Return a stable, comparable snapshot of the current Valves."""
+        try:
+            values = self.valves.model_dump()
+        except AttributeError:
+            values = self.valves.dict()
+        return tuple(sorted(values.items()))
+
+    async def _stream_sync_generator(
+        self,
+        answer_stream,
+        drain_status_queue: Callable[[], Awaitable[None]],
+    ) -> AsyncGenerator[str, None]:
+        """Bridge a blocking sync token generator into the async SSE loop."""
+        loop = asyncio.get_running_loop()
+        output_queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        def _worker() -> None:
+            try:
+                for token in answer_stream:
+                    loop.call_soon_threadsafe(output_queue.put_nowait, token)
+            except Exception as exc:
+                loop.call_soon_threadsafe(output_queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(output_queue.put_nowait, _STREAM_DONE)
+
+        worker = threading.Thread(
+            target=_worker,
+            name="vietlegal-rag-stream",
+            daemon=True,
+        )
+        worker.start()
+
+        while True:
+            item = await output_queue.get()
+            if item is _STREAM_DONE:
+                break
+            if isinstance(item, Exception):
+                raise item
+            await drain_status_queue()
+            yield str(item)
+
+    def pipes(self) -> list[dict]:
+        return [
+            {"id": "vietlegal_rag.gpt-4o-mini", "name": "⚖️ VietLegal RAG (GPT-4o Mini)"},
+            {"id": "vietlegal_rag.qwen-2.5-72b-instruct", "name": "⚖️ VietLegal RAG (Qwen 2.5 72B)"},
+            {"id": "vietlegal_rag.gemini-1.5-pro", "name": "⚖️ VietLegal RAG (Gemini 1.5 Pro)"}
+        ]
 
     async def pipe(
         self,
@@ -189,6 +243,13 @@ class Pipe:
         Main pipeline execution entrypoint. Handles streaming responses
         back to Open WebUI while sending background status messages.
         """
+        # Override llm_model dynamically from the selected model dropdown
+        selected_model_id = body.get("model", "vietlegal_rag")
+        if "." in selected_model_id:
+            actual_model = selected_model_id.split(".")[-1]
+            logger.info(f"Overriding RAG LLM model with selected option: {actual_model}")
+            self.valves.llm_model = actual_model
+
         user_id = __user__.get("id", "anonymous")
         user_message = body["messages"][-1]["content"]
         status_queue: "queue.Queue[str]" = queue.Queue()
@@ -209,7 +270,7 @@ class Pipe:
         # 1. Initialize services dependency graph
         try:
             await _emit_status("Đang kết nối dịch vụ...")
-            services = self._get_services()
+            services = await asyncio.to_thread(self._get_services)
         except Exception as e:
             logger.exception("Failed to initialize backend services dependency tree")
             await _emit_status("Lỗi kết nối hệ thống RAG", done=True)
@@ -264,8 +325,7 @@ class Pipe:
         # 4. Stream response tokens
         try:
             await _drain_status_queue()
-            for token in answer_stream:
-                await _drain_status_queue()
+            async for token in self._stream_sync_generator(answer_stream, _drain_status_queue):
                 yield token
         except Exception as e:
             logger.exception("LLM token streaming failed")
