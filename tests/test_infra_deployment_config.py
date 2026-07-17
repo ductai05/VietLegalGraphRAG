@@ -33,7 +33,7 @@ def test_production_compose_manages_only_app_services() -> None:
 def test_deploy_workflow_rebuilds_all_app_services() -> None:
     workflow = read(".github/workflows/deploy.yml")
 
-    assert "up -d --no-deps open-webui" in workflow
+    assert "up -d --no-deps --remove-orphans open-webui" in workflow
     assert "up --build -d" not in workflow
     assert "Waiting for open-webui health" in workflow
     assert "curl --fail --silent --show-error" in workflow

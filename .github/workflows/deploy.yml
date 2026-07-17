@@ -95,7 +95,7 @@ jobs:
             docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull open-webui
 
             echo "Starting open-webui..."
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps open-webui
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps --remove-orphans open-webui
 
             echo "Waiting for open-webui health..."
             for attempt in $(seq 1 30); do
