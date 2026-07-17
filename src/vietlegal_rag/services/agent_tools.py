@@ -23,7 +23,11 @@ from retrieval_modes import RetrievalRequest
 
 logger = logging.getLogger("vietlegal_rag.services.agent_tools")
 
-MAX_TOOL_TEXT_CHARS = 1500
+# Per-chunk excerpt cap. Sized so a 5-hit result (~3500 chars, ~1750 Vietnamese
+# tokens) leaves room for a second search plus the answer inside the agent's prompt
+# budget; at 1500 a single result filled the budget on its own and every follow-up
+# search forced the previous one to be elided.
+MAX_TOOL_TEXT_CHARS = 700
 
 # DocumentResolver.ResolutionInfo.action -> effect_verdict (§4.3).
 _ACTION_TO_VERDICT = {
@@ -54,11 +58,27 @@ class AgentRunState:
     iterations: int = 0
     # "none" | "agent_tool" | "post_hoc" — see the §4.6 safety net.
     graph_validation: str = "none"
+    # Tool calls already served this run, keyed by (tool_name, normalised args).
+    seen_calls: set[tuple[str, str]] = field(default_factory=set)
 
     def record(self, tool_name: str) -> None:
         self.tool_calls += 1
         if tool_name not in self.tools_used:
             self.tools_used.append(tool_name)
+
+    def is_repeat(self, tool_name: str, key: str) -> bool:
+        """True when this exact call was already served.
+
+        The 27B model re-issues an identical search instead of moving on, burning
+        the iteration budget on a result it already has until the run dies at the
+        recursion limit. Re-running the query cannot produce new information, so
+        the caller answers from cache and tells the model to stop.
+        """
+        dedup_key = (tool_name, key.strip().lower())
+        if dedup_key in self.seen_calls:
+            return True
+        self.seen_calls.add(dedup_key)
+        return False
 
     def add_hits(self, hits: list[RetrievalHit]) -> None:
         known = {hit.chunk_id for hit in self.hits if hit.chunk_id}
@@ -81,7 +101,9 @@ class RetrievalSearchInput(BaseModel):
             "keyword-rich query."
         )
     )
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to return.")
+    # Capped at 8, not 20: every hit is spent from the agent's prompt budget, and a
+    # single 20-hit result would exceed it on its own and starve the answer.
+    top_k: int = Field(default=3, ge=1, le=8, description="Number of chunks to return.")
 
 
 def make_retrieval_tool(
@@ -91,8 +113,18 @@ def make_retrieval_tool(
 ) -> StructuredTool:
     """Tool 1: retrieval_search — hybrid ES search over legal chunks."""
 
-    def _run(query: str, top_k: int = 5) -> str:
+    def _run(query: str, top_k: int = 3) -> str:
         state.record("retrieval_search")
+        if state.is_repeat("retrieval_search", query):
+            return _dumps(
+                {
+                    "note": (
+                        "Bạn đã tìm với truy vấn này rồi và kết quả nằm ở trên. "
+                        "ĐỪNG tìm lại. Hãy dùng kết quả đã có để trả lời NGAY, "
+                        "hoặc gọi `graph_validate` nếu cần kiểm tra hiệu lực."
+                    )
+                }
+            )
         try:
             # dataclasses.replace re-runs __post_init__, which rejects
             # top_k > candidate_k while reranking.
@@ -138,7 +170,11 @@ def make_retrieval_tool(
 
 
 class GraphValidateInput(BaseModel):
-    doc_id: str = Field(
+    # str | int, not str: a doc_id like "477975" is emitted as a bare number by the
+    # model, and providers validate tool args against this schema before the call
+    # ever reaches us — a string-only schema gets the call rejected outright.
+    # _run normalises back to str.
+    doc_id: str | int = Field(
         description=(
             "A doc_id returned by retrieval_search — not a free-text document title."
         )
@@ -153,8 +189,18 @@ def make_graph_validate_tool(
 ) -> StructuredTool:
     """Tool 2: graph_validate — neighbours + legal-effect verdict for one document."""
 
-    def _run(doc_id: str, depth: int = 1) -> str:
+    def _run(doc_id: str | int, depth: int = 1) -> str:
         state.record("graph_validate")
+        doc_id = str(doc_id)
+        if state.is_repeat("graph_validate", doc_id):
+            return _dumps(
+                {
+                    "note": (
+                        "Bạn đã kiểm tra hiệu lực của văn bản này rồi và kết quả nằm ở trên. "
+                        "ĐỪNG kiểm tra lại. Hãy trả lời NGAY dựa trên các căn cứ đã có."
+                    )
+                }
+            )
         try:
             clamped_depth = max(1, min(int(depth), 2))
             graph_context = graph_retriever.get_document_neighbors(

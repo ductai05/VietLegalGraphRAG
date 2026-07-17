@@ -23,7 +23,20 @@ class AnswerService(Protocol):
 
 
 
+DEGRADED_NOTICE = (
+    "⚠️ **Không tạo được câu trả lời từ mô hình ngôn ngữ.** "
+    "Dưới đây là nguyên văn các đoạn luật liên quan nhất, chưa qua tổng hợp — "
+    "vui lòng tự đối chiếu."
+)
+
+
 class ExtractiveAnswerService:
+    def __init__(self, degraded: bool = False) -> None:
+        # True when standing in for a failed LLM rather than serving as the
+        # configured provider: the caller gets raw chunks either way, but only the
+        # failure case is a degradation worth announcing.
+        self.degraded = degraded
+
     def answer(
         self,
         query: str,
@@ -38,6 +51,8 @@ class ExtractiveAnswerService:
 
         # For extractive service, we can prefix the answer text with any document resolution warnings.
         warnings_text = []
+        if self.degraded:
+            warnings_text.append(DEGRADED_NOTICE)
         for ctx in contexts[:3]:
             if ctx.resolution:
                 action = ctx.resolution.get("action")

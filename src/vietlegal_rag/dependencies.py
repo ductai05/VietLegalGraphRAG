@@ -454,7 +454,7 @@ def _build_answer_service(
     if not settings.llm_api_key:
         warnings.append("llm.not_configured")
         status["llm"] = "extractive"
-        return ExtractiveAnswerService()
+        return ExtractiveAnswerService(degraded=True)
     try:
         from openai import OpenAI
 
@@ -472,7 +472,7 @@ def _build_answer_service(
             raise
         warnings.append("llm.init_failed")
         status["llm"] = "extractive"
-        return ExtractiveAnswerService()
+        return ExtractiveAnswerService(degraded=True)
 
 
 def _build_web_search(
@@ -550,6 +550,7 @@ def _build_agent_service(
             llm=ChatOpenAI(**kwargs),
             fallback_service=fallback_service,
             max_iterations=settings.agent_max_iterations,
+            max_request_tokens=settings.agent_max_request_tokens,
         )
         status["agent"] = "configured"
         return agent_service
