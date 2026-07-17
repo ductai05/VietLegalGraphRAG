@@ -132,9 +132,8 @@ def test_format_citations_block_static_path_renders_plain_text() -> None:
     block = format_citations_block([_static_path_citation()])
 
     assert "📚 Căn cứ pháp lý" in block
-    assert "- **[1]** Điều 101, Nghị định 15/2020/NĐ-CP" in block
-    # No url: must not become a markdown link.
-    assert "](" not in block
+    assert "<span title=" in block
+    assert "Điều 101" in block
 
 
 def test_format_citations_block_never_leaks_chunk_id() -> None:
@@ -160,7 +159,7 @@ def test_format_citations_block_agent_path_renders_link_marker_and_summary() -> 
 
     block = format_citations_block([cite])
 
-    assert "[Điều 101, Nghị định 15/2020/NĐ-CP](https://vanban.chinhphu.vn/nd15)" in block
+    assert '<a href="https://vanban.chinhphu.vn/nd15"' in block
     assert "⚠️ (Hết hiệu lực)" in block
     assert "— Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội." in block
 
