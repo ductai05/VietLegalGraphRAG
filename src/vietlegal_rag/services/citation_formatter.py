@@ -88,6 +88,8 @@ def format_citations_block(citations: list[dict[str, Any]]) -> str:
     if not citations:
         return ""
 
+    import html
+
     lines: list[str] = []
     seen: set[tuple[str, str]] = set()
     for cite in citations:
@@ -97,15 +99,24 @@ def format_citations_block(citations: list[dict[str, Any]]) -> str:
         if not title:
             continue
 
-        short_title = shorten_title(title)
-        dedup_key = (short_title, section_path)
+        dedup_key = (title, section_path)
         if dedup_key in seen:
             continue
         seen.add(dedup_key)
 
-        label = f"{section_path}, {short_title}" if section_path else short_title
+        label = f"{section_path}, {title}" if section_path else title
+        text = cite.get("text") or ""
+        escaped_text = html.escape(text.strip()) if text else ""
+
         url = cite.get("url")
-        rendered = f"[{label}]({url})" if url else label
+        if escaped_text:
+            if url:
+                rendered = f'<a href="{url}" title="{escaped_text}">{label}</a>'
+            else:
+                rendered = f'<span title="{escaped_text}">{label}</span>'
+        else:
+            rendered = f"[{label}]({url})" if url else label
+
         rendered += _EFFECT_MARKERS.get(cite.get("effect_verdict") or "", "")
         summary = cite.get("summary")
         if summary:

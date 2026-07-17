@@ -167,6 +167,7 @@ class AgentService:
                 "doc_id": hit.doc_id,
                 "title": hit.title,
                 "citation": hit.citation,
+                "text": hit.text,
             }
             url = state.links.get(shorten_title(hit.title or ""))
             if url:

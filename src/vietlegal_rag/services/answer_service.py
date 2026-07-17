@@ -52,6 +52,7 @@ class ExtractiveAnswerService:
                 "doc_id": context.doc_id,
                 "title": context.title,
                 "citation": context.citation,
+                "text": context.text,
             }
             for context in contexts
         ]
@@ -135,6 +136,7 @@ class OpenAICompatibleAnswerService:
                     "doc_id": context.doc_id,
                     "title": context.title,
                     "citation": context.citation,
+                    "text": context.text,
                 }
                 for context in contexts
             ],

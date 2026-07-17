@@ -249,8 +249,17 @@ class Pipe:
         """
         # Override llm_model dynamically from the selected model dropdown
         selected_model_id = body.get("model", "vietlegal_rag")
-        if "." in selected_model_id:
-            actual_model = selected_model_id.split(".", 1)[1]
+        actual_model = selected_model_id
+        has_override = False
+        while "." in actual_model:
+            parts = actual_model.split(".", 1)
+            if parts[0] == self.id:
+                actual_model = parts[1]
+                has_override = True
+            else:
+                break
+
+        if has_override:
             logger.info(f"Overriding RAG LLM model with selected option: {actual_model}")
             self.valves.llm_model = actual_model
 
