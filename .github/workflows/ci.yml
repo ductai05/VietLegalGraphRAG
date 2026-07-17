@@ -47,7 +47,7 @@ jobs:
 
       - name: Run Ruff
         run: |
-          ruff check src/backend/app src/backend/services src/infra/scripts tests
+          ruff check src/vietlegal_rag src/infra/scripts tests
 
       - name: Run Pytest
         run: |
