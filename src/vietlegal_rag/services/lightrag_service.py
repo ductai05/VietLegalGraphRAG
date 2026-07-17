@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import time
@@ -188,9 +189,7 @@ class LightRAGService:
         return [*limited[: max_context_chunks - 1], first_graph]
 
     def stream_answer(self, request: RetrievalRequest) -> dict[str, Any]:
-        started = time.perf_counter()
         retrieval_hits = self.retrieval_service.search(request)
-        retrieval_done = time.perf_counter()
         graph_context: GraphContext | None = None
         graph_payload: dict[str, Any] = {}
         graph_runtime_enabled = bool(getattr(self.graph_retriever, "enabled", True))
@@ -213,7 +212,7 @@ class LightRAGService:
             except Exception:
                 lightrag_enabled = False
                 lightrag_error = "graph.retrieval_failed"
-        graph_done = time.perf_counter()
+
 
         context_assembler = ContextAssembler(document_resolver=self.document_resolver)
         contexts = context_assembler.merge(retrieval_hits, graph_context)
@@ -232,7 +231,7 @@ class LightRAGService:
                     contexts,
                     request.llm.temperature,
                 )
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to initialize primary LLM stream, falling back to extractive")
                 yield from ExtractiveAnswerService().stream_answer(
                     request.query,
@@ -248,7 +247,7 @@ class LightRAGService:
                 first_token_retrieved = True
             except StopIteration:
                 return
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed on first chunk from primary LLM stream, falling back to extractive")
                 yield from ExtractiveAnswerService().stream_answer(
                     request.query,
@@ -262,7 +261,7 @@ class LightRAGService:
                 try:
                     for chunk in primary_stream:
                         yield chunk
-                except Exception as e:
+                except Exception:
                     logger.exception("Error during primary LLM stream iteration")
                     yield "\n⚠️ Đã xảy ra lỗi khi tạo câu trả lời từ mô hình ngôn ngữ."
 

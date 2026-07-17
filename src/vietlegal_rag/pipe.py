@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import os
 import sys
 import logging
@@ -263,7 +264,6 @@ class Pipe:
             logger.info(f"Overriding RAG LLM model with selected option: {actual_model}")
             self.valves.llm_model = actual_model
 
-        user_id = __user__.get("id", "anonymous")
         user_message = body["messages"][-1]["content"]
         status_queue: "queue.Queue[str]" = queue.Queue()
 
@@ -327,7 +327,7 @@ class Pipe:
                 result = services.lightrag_service.stream_answer(request)
             answer_stream = result["answer_stream"]
             citations = result["citations"]
-        except Exception as e:
+        except Exception:
             logger.exception("Error during retrieval / text processing phase")
             await _emit_status("Lỗi truy vấn", done=True)
             yield "⚠️ Đã xảy ra lỗi khi tìm kiếm ngữ cảnh pháp luật. Vui lòng thử lại sau."
@@ -340,7 +340,7 @@ class Pipe:
             await _drain_status_queue()
             async for token in self._stream_sync_generator(answer_stream, _drain_status_queue):
                 yield token
-        except Exception as e:
+        except Exception:
             logger.exception("LLM token streaming failed")
             await _emit_status("Lỗi tạo câu trả lời", done=True)
             yield "\n⚠️ Đã xảy ra lỗi khi tạo câu trả lời từ mô hình ngôn ngữ."
