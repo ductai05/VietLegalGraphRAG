@@ -608,3 +608,87 @@ def test_concurrent_runs_do_not_share_state(monkeypatch: Any) -> None:
 
     assert [cite["doc_id"] for cite in first["citations"]] == ["alpha"]
     assert [cite["doc_id"] for cite in second["citations"]] == ["beta"]
+
+
+# ----------------------------------------------------------------------
+# <think> block balancing
+#
+# Qwen3 inlines <think> in content and never sets reasoning_content, so the
+# tags stream through us untouched. If a block is left open, Open WebUI folds
+# the answer and the citations into the collapsed reasoning bubble.
+# ----------------------------------------------------------------------
+
+
+def _tool_call_event() -> tuple[str, tuple[Any, dict[str, Any]]]:
+    from langchain_core.messages import AIMessageChunk
+
+    chunk = AIMessageChunk(
+        content="",
+        tool_call_chunks=[
+            {"name": "retrieval_search", "args": '{"query": "x"}', "id": "1", "index": 0}
+        ],
+    )
+    return ("messages", (chunk, {}))
+
+
+def test_stream_closes_think_block_truncated_by_max_tokens(monkeypatch: Any) -> None:
+    """max_tokens can cut generation off mid-reasoning, so </think> never arrives."""
+    service = _build_service()
+    _patch_graph(
+        monkeypatch,
+        service,
+        _FakeCompiledGraph([_text_event("\n<think>\n"), _text_event("suy luận dở dang")]),
+        seed_hits=[_hit()],
+    )
+
+    text = "".join(service.stream_answer(_request())["answer_stream"])
+
+    assert text.count("<think>") == text.count("</think>") == 1
+    assert text.rstrip().endswith("</think>")
+
+
+def test_stream_does_not_double_close_a_well_formed_think_block(monkeypatch: Any) -> None:
+    service = _build_service()
+    _patch_graph(
+        monkeypatch,
+        service,
+        _FakeCompiledGraph(
+            [
+                # Tags arrive split across chunks, exactly as the endpoint sends them.
+                _text_event("\n<think>\nsuy luận\n</"),
+                _text_event("think>\n\n"),
+                _text_event("Câu trả lời."),
+            ]
+        ),
+        seed_hits=[_hit()],
+    )
+
+    text = "".join(service.stream_answer(_request())["answer_stream"])
+
+    assert text.count("</think>") == 1
+    assert text.endswith("Câu trả lời.")
+
+
+def test_stream_closes_think_block_left_open_by_a_tool_call(monkeypatch: Any) -> None:
+    """A turn ending in a tool call stops before </think>; the next turn reopens one."""
+    service = _build_service()
+    _patch_graph(
+        monkeypatch,
+        service,
+        _FakeCompiledGraph(
+            [
+                _text_event("\n<think>\ncần tra cứu"),
+                _tool_call_event(),
+                _text_event("\n<think>\nđã có kết quả\n</think>\n\n"),
+                _text_event("Câu trả lời cuối."),
+            ]
+        ),
+        seed_hits=[_hit()],
+    )
+
+    text = "".join(service.stream_answer(_request())["answer_stream"])
+
+    assert text.count("<think>") == text.count("</think>") == 2
+    # The answer must sit outside every reasoning block.
+    assert text.endswith("Câu trả lời cuối.")
+    assert "Câu trả lời cuối." not in text[: text.rfind("</think>")]

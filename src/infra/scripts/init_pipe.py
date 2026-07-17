@@ -17,7 +17,9 @@ ADMIN_PASSWORD = os.environ.get("WEBUI_ADMIN_PASSWORD", "VietLegalAdmin2026!")
 # Path to the pipe.py file that contains our Pipe class
 PIPE_PATH = Path("/app/vietlegal_rag/pipe.py")
 
-def wait_for_webui(max_retries=60, interval=2):
+# Cold starts load the ONNX embedding model before /ready flips, which has taken
+# ~4 minutes; at 60 retries this gave up first and left stale pipe code in the DB.
+def wait_for_webui(max_retries=240, interval=2):
     """Wait for Open WebUI to start and be responsive (using readiness check)."""
     for i in range(max_retries):
         try:
