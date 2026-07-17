@@ -3,6 +3,15 @@ from typing import Any, Protocol, Generator
 from contracts import AnswerContext
 from think_tags import CLOSER, has_unclosed_think
 
+SYSTEM_PROMPT = (
+    "Bạn là trợ lý pháp lý AI chuyên nghiệp của Việt Nam. Nhiệm vụ của bạn là giải thích luật pháp và phân tích tình huống pháp lý một cách chính xác, khách quan.\n\n"
+    "QUY TẮC PHÁP LÝ BẮT BUỘC:\n"
+    "1. Chỉ trả lời dựa trên ngữ cảnh pháp lý (các đoạn văn bản luật) được cung cấp. Tuyệt đối không được tự bịa ra căn cứ pháp lý, điều luật, hay số hiệu văn bản.\n"
+    "2. Luôn kiểm tra và cảnh báo rõ ràng về hiệu lực của văn bản. Nếu tài liệu đi kèm ghi nhận trạng thái [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động ghi thêm cảnh báo bằng biểu tượng ⚠️ ở phần trả lời tương ứng để người dùng biết.\n"
+    "3. Nếu có văn bản mới hơn/thay thế đi kèm trong ngữ cảnh, hãy ưu tiên áp dụng quy định mới để trả lời, đồng thời giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới.\n"
+    "4. Trình bày câu trả lời rõ ràng, có cấu trúc, sử dụng các gạch đầu dòng hợp lý để người dùng dễ theo dõi."
+)
+
 
 class AnswerService(Protocol):
     def answer(
@@ -108,14 +117,7 @@ class OpenAICompatibleAnswerService:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Bạn là trợ lý pháp lý Việt Nam. Trả lời ngắn gọn, "
-                        "dựa trên ngữ cảnh được cung cấp và không tạo căn cứ "
-                        "pháp lý nếu ngữ cảnh không hỗ trợ.\n\n"
-                        "LƯU Ý QUAN TRỌNG VỀ HIỆU LỰC PHÁP LÝ:\n"
-                        "- Khi gặp tài liệu được đánh dấu là [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động cảnh báo rõ cho người dùng biết văn bản đó đã hết hiệu lực hoặc đã cũ.\n"
-                        "- Nếu ngữ cảnh đi kèm tài liệu thay thế/mới hơn, bạn phải trình bày câu trả lời dựa trên quy định của tài liệu mới (đang còn hiệu lực), đồng thời nêu rõ sự thay đổi so với luật cũ (hết hiệu lực) để người dùng dễ dàng nhận biết sự chuyển tiếp pháp lý."
-                    ),
+                    "content": SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
@@ -177,14 +179,7 @@ class OpenAICompatibleAnswerService:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Bạn là trợ lý pháp lý Việt Nam. Trả lời ngắn gọn, "
-                        "dựa trên ngữ cảnh được cung cấp và không tạo căn cứ "
-                        "pháp lý nếu ngữ cảnh không hỗ trợ.\n\n"
-                        "LƯU Ý QUAN TRỌNG VỀ HIỆU LỰC PHÁP LÝ:\n"
-                        "- Khi gặp tài liệu được đánh dấu là [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động cảnh báo rõ cho người dùng biết văn bản đó đã hết hiệu lực hoặc đã cũ.\n"
-                        "- Nếu ngữ cảnh đi kèm tài liệu thay thế/mới hơn, bạn phải trình bày câu trả lời dựa trên quy định của tài liệu mới (đang còn hiệu lực), đồng thời nêu rõ sự thay đổi so với luật cũ (hết hiệu lực) để người dùng dễ dàng nhận biết sự chuyển tiếp pháp lý."
-                    ),
+                    "content": SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",

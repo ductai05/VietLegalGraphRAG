@@ -82,6 +82,7 @@ services:
       - ./credentials:/app/credentials:ro
       - ./hf-cache:/app/.cache/huggingface
       - ../../onnx_model:/app/onnx_model:ro
+      - ../../src/vietlegal_rag:/app/vietlegal_rag
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/ready"]
       interval: 30s
