@@ -149,15 +149,12 @@ def format_citations_block(citations: list[dict[str, Any]]) -> str:
             # Collapsible Details block, where the citation row is the summary itself
             rendered = (
                 f'<details class="citation-details group mt-2 pl-3 border-l-2 border-gray-200 dark:border-gray-800">\n'
-                f'  <summary class="cursor-pointer list-none select-none flex items-center gap-1.5">\n'
-                f'    <span class="text-xs font-semibold text-gray-400">[{len(lines) + 1}]</span>\n'
-                f'    <span class="truncate inline-block max-w-[70%] sm:max-w-[80%] font-medium text-gray-800 dark:text-gray-200 hover:text-blue-500 dark:hover:text-blue-400 transition-colors" title="{label}">{shortened_label}</span>\n'
-                f'    {source_link}\n'
-                f'  </summary>\n'
-                f'  <div class="mt-2 pl-2 border-l border-gray-100 dark:border-gray-900">\n'
-                f'    {metadata_html}\n'
-                f'    <div class="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{formatted_text}</div>\n'
-                f'  </div>\n'
+                f'<summary>[{len(lines) + 1}] {shortened_label}</summary>\n'
+                f'<div class="mt-2 pl-2 border-l border-gray-100 dark:border-gray-900">\n'
+                f'  {metadata_html}\n'
+                f'  <div class="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{formatted_text}</div>\n'
+                f'  {source_link}\n'
+                f'</div>\n'
                 f'</details>'
             )
             lines.append(rendered)
