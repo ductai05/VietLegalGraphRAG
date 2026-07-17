@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Open WebUI backend dependencies
 COPY src/open-webui/backend/requirements.txt ./requirements-webui.txt
-RUN pip install --no-cache-dir -r requirements-webui.txt
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --no-cache-dir -r requirements-webui.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Install VietLegal RAG package
 COPY src/vietlegal_rag/ /app/vietlegal_rag/
