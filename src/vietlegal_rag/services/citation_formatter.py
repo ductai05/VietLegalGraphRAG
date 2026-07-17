@@ -1,4 +1,4 @@
-"""Rendering helpers for the legal-basis block shown under every answer.
+"""Helpers for parsing and shortening legal citations emitted to Open WebUI.
 
 Serves both the static LightRAG path and the agent path, so every key beyond
 ``chunk_id`` / ``doc_id`` / ``title`` / ``citation`` must stay optional.
@@ -6,7 +6,6 @@ Serves both the static LightRAG path and the agent path, so every key beyond
 from __future__ import annotations
 
 import re
-from typing import Any
 
 # IntentDetector.DOCUMENT_NUMBER_PATTERN plus "Đ": its ASCII-only [A-Z0-9-]
 # class does not match the "NĐ-CP" in "15/2020/NĐ-CP", the most common decree
@@ -17,12 +16,6 @@ _CHUNK_ID_PREFIX = "chunk_id:"
 _TITLE_FALLBACK_WORDS = 8
 
 _CITATION_KEYS = ("document_number", "title", "section_path", "chunk_id")
-
-_EFFECT_MARKERS = {
-    "expired": " ⚠️ (Hết hiệu lực)",
-    "superseded": " ⚠️ (Đã có phiên bản mới)",
-}
-
 
 def parse_citation(citation: str) -> dict[str, str]:
     """Unpack the pipe-packed string built by ``elasticsearch_retriever.format_citation``.
@@ -83,92 +76,100 @@ def shorten_title(title: str) -> str:
     return text
 
 
-def format_citations_block(citations: list[dict[str, Any]]) -> str:
-    """Render the ``📚 Căn cứ pháp lý`` block, or ``""`` when nothing renders."""
+def format_citations_block(citations: list[dict]) -> str:
+    """Format a list of citations into a Markdown block with visual summaries.
+
+    Serves both the static path and the agent path.
+    """
     if not citations:
         return ""
 
-    import html
+    seen = set()
+    unique_entries = []
 
-    lines: list[str] = []
-    seen: set[tuple[str, str]] = set()
     for cite in citations:
-        parsed = parse_citation(cite.get("citation") or "")
-        section_path = parsed["section_path"]
-        title = cite.get("title") or parsed["title"]
+        if not isinstance(cite, dict):
+            continue
+
+        citation_str = cite.get("citation", "")
+        parsed = parse_citation(citation_str) if citation_str else {}
+
+        # Use title from cite dict or parsed dict
+        title = cite.get("title") or parsed.get("title", "")
         if not title:
             continue
 
-        dedup_key = (title, section_path)
-        if dedup_key in seen:
+        section_path = parsed.get("section_path", "")
+        short_title = shorten_title(title)
+
+        dedupe_key = (short_title, section_path)
+        if dedupe_key in seen:
             continue
-        seen.add(dedup_key)
+        seen.add(dedupe_key)
 
-        label = f"{section_path}, {title}" if section_path else title
-        shortened_label = f"{section_path}, {shorten_title(title)}" if section_path else shorten_title(title)
-        text = cite.get("text") or ""
-        url = cite.get("url")
+        unique_entries.append({
+            "cite": cite,
+            "parsed": parsed,
+            "short_title": short_title,
+            "section_path": section_path,
+        })
 
-        # Extract domain for cleaner URL display
-        source_link = ""
-        if url:
-            try:
-                from urllib.parse import urlparse
-                domain = urlparse(url).netloc
-                if domain.startswith("www."):
-                    domain = domain[4:]
-                source_link = f' <a href="{url}" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-500 hover:underline hover:text-blue-600">({domain})</a>'
-            except Exception:
-                source_link = f' <a href="{url}" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-500 hover:underline hover:text-blue-600">(Nguồn)</a>'
-
-        if text:
-            escaped_text = html.escape(text.strip())
-            formatted_text = escaped_text.replace("\n", "<br>")
-            
-            # Format expanded metadata section
-            metadata_lines = []
-            if title:
-                metadata_lines.append(f'<div class="mb-1 text-xs text-gray-500 font-semibold dark:text-gray-400">Văn bản: {html.escape(title)}</div>')
-            
-            metadata_badges = []
-            effect = cite.get("effect_verdict")
-            if effect == "expired":
-                metadata_badges.append('<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300">⚠️ Hết hiệu lực</span>')
-            elif effect == "superseded":
-                metadata_badges.append('<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300">⚠️ Đã có phiên bản mới</span>')
-            
-            summary = cite.get("summary")
-            if summary:
-                metadata_badges.append(f'<span class="text-xs text-gray-500 dark:text-gray-400">Tóm tắt: {html.escape(summary)}</span>')
-            
-            if metadata_badges:
-                metadata_lines.append(f'<div class="flex flex-wrap gap-2 mb-2">{" &bull; ".join(metadata_badges)}</div>')
-                
-            metadata_html = "".join(metadata_lines)
-
-            # Collapsible Details block, where the citation row is the summary itself
-            rendered = (
-                f'<details class="citation-details group mt-2 pl-3 border-l-2 border-gray-200 dark:border-gray-800">\n'
-                f'  <summary class="cursor-pointer list-none select-none flex items-center gap-1.5">\n'
-                f'    <span class="text-xs font-semibold text-gray-400">[{len(lines) + 1}]</span>\n'
-                f'    <span class="truncate inline-block max-w-[70%] sm:max-w-[80%] font-medium text-gray-800 dark:text-gray-200 hover:text-blue-500 dark:hover:text-blue-400 transition-colors" title="{label}">{shortened_label}</span>\n'
-                f'    {source_link}\n'
-                f'  </summary>\n'
-                f'  <div class="mt-2 pl-2 border-l border-gray-100 dark:border-gray-900">\n'
-                f'    {metadata_html}\n'
-                f'    <div class="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{formatted_text}</div>\n'
-                f'  </div>\n'
-                f'</details>'
-            )
-            lines.append(rendered)
-        else:
-            rendered = f"[{shortened_label}]({url})" if url else shortened_label
-            rendered += _EFFECT_MARKERS.get(cite.get("effect_verdict") or "", "")
-            summary = cite.get("summary")
-            if summary:
-                rendered += f" — {summary}"
-            lines.append(f"- **[{len(lines) + 1}]** {rendered}")
-
-    if not lines:
+    if not unique_entries:
         return ""
-    return "\n\n---\n**📚 Căn cứ pháp lý:**\n" + "\n".join(lines) + "\n"
+
+    lines = ["📚 Căn cứ pháp lý:\n"]
+    for i, entry in enumerate(unique_entries, start=1):
+        cite = entry["cite"]
+        short_title = entry["short_title"]
+        section_path = entry["section_path"]
+
+        url = cite.get("url")
+        effect_verdict = cite.get("effect_verdict")
+        summary = cite.get("summary")
+        text = cite.get("text")
+
+        if section_path:
+            link_text = f"{section_path}, {short_title}"
+        else:
+            link_text = short_title
+
+        # Check if text is present to determine if we render a <details> block
+        if text:
+            # Building summary link
+            if url:
+                summary_link = f'<a href="{url}">{link_text}</a>'
+            else:
+                summary_link = link_text
+
+            # Building verdict marker
+            verdict_span = ""
+            if effect_verdict == "expired":
+                verdict_span = ' <span class="effect-verdict">⚠️ Hết hiệu lực</span>'
+            elif effect_verdict == "superseded":
+                verdict_span = ' <span class="effect-verdict">⚠️ Đã có phiên bản mới</span>'
+
+            details_html = f'<details><summary>{summary_link}{verdict_span}</summary>'
+            if summary:
+                details_html += f'<p>Tóm tắt: {summary}</p>'
+            details_html += f'<p>{text}</p></details>'
+
+            lines.append(f"- **[{i}]** {details_html}")
+        else:
+            # Standard markdown format without <details>
+            if url:
+                link_part = f"[{link_text}]({url})"
+            else:
+                link_part = link_text
+
+            verdict_part = ""
+            if effect_verdict == "expired":
+                verdict_part = " ⚠️ (Hết hiệu lực)"
+            elif effect_verdict == "superseded":
+                verdict_part = " ⚠️ (Đã có phiên bản mới)"
+
+            summary_part = f" — {summary}" if summary else ""
+
+            lines.append(f"- **[{i}]** {link_part}{verdict_part}{summary_part}")
+
+    return "\n".join(lines)
+

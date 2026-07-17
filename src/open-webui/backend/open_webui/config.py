@@ -42,6 +42,96 @@ async def seed_registered_defaults():
     await Config.repair_flattened_dict_configs()
     await Config.seed_defaults(DEFAULT_CONFIG)
 
+    # Overwrite default English suggestions with Vietnamese suggestions if they are still the default ones
+    try:
+        suggestions = await Config.get('ui.prompt_suggestions')
+        if isinstance(suggestions, list):
+            has_english_defaults = any(
+                isinstance(s, dict) and any(
+                    isinstance(t, str) and ('Help me study' in t or 'Recommend a dish' in t or 'Create a personal' in t or 'Formulate a professional' in t)
+                    for t in s.get('title', [])
+                )
+                for s in suggestions
+            )
+            if has_english_defaults or not suggestions:
+                await Config.upsert({'ui.prompt_suggestions': DEFAULT_PROMPT_SUGGESTIONS})
+    except Exception as e:
+        log.exception(f'Error seeding Vietnamese prompt suggestions: {e}')
+
+    # Seed the model 'vietlegal_rag' with the default system prompt if it doesn't exist or doesn't have one
+    try:
+        from open_webui.models.models import Models, ModelForm, ModelMeta, ModelParams
+        model = await Models.get_model_by_id('vietlegal_rag')
+
+        OLD_VIETLEGAL_SYSTEM_PROMPT = (
+            "Bạn là trợ lý pháp lý AI chuyên nghiệp của Việt Nam. Nhiệm vụ của bạn là giải thích luật pháp và phân tích tình huống pháp lý một cách chính xác, khách quan.\n\n"
+            "QUY TẮC PHÁP LÝ BẮT BUỘC:\n"
+            "1. Chỉ trả lời dựa trên ngữ cảnh pháp lý (các đoạn văn bản luật) được cung cấp. Tuyệt đối không được tự bịa ra căn cứ pháp lý, điều luật, hay số hiệu văn bản.\n"
+            "2. Luôn kiểm tra và cảnh báo rõ ràng về hiệu lực của văn bản. Nếu tài liệu đi kèm ghi nhận trạng thái [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động ghi thêm cảnh báo bằng biểu tượng ⚠️ ở phần trả lời tương ứng để người dùng biết.\n"
+            "3. Nếu có văn bản mới hơn/thay thế đi kèm trong ngữ cảnh, hãy ưu tiên áp dụng quy định mới để trả lời, đồng thời giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới.\n"
+            "4. Trình bày câu trả lời rõ ràng, có cấu trúc, sử dụng các gạch đầu dòng hợp lý để người dùng dễ theo dõi."
+        )
+        
+        VIETLEGAL_SYSTEM_PROMPT = (
+            "Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên ngữ cảnh được cung cấp.\n\n"
+            "QUY TẮC PHÁP LÝ BẮT BUỘC:\n"
+            "1. Chỉ trả lời dựa trên ngữ cảnh pháp lý được cung cấp. Tuyệt đối không tự bịa căn cứ pháp lý, điều luật, số hiệu văn bản, mức phạt, thời hạn, thủ tục hoặc URL.\n"
+            "2. Mỗi nhận định pháp lý quan trọng phải có citation inline dạng [1], [2] khớp với số thứ tự đoạn ngữ cảnh. Đặt citation ngay sau câu hoặc mệnh đề được hỗ trợ bởi nguồn đó.\n"
+            "3. Không tự tạo mục 'Căn cứ pháp lý', 'Nguồn', danh sách tài liệu hoặc URL ở cuối câu trả lời. Open WebUI sẽ hiển thị chi tiết căn cứ trong Sources và citation modal.\n"
+            "4. Luôn kiểm tra và cảnh báo rõ ràng về hiệu lực của văn bản. Nếu tài liệu đi kèm ghi nhận trạng thái [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động ghi thêm cảnh báo bằng biểu tượng ⚠️ ở phần trả lời tương ứng.\n"
+            "5. Nếu có văn bản mới hơn hoặc văn bản thay thế trong ngữ cảnh, ưu tiên áp dụng quy định mới, đồng thời giải thích ngắn gọn điểm chuyển tiếp pháp lý từ văn bản cũ sang văn bản mới.\n"
+            "6. Nếu ngữ cảnh không đủ để trả lời chắc chắn, nói rõ phần chưa đủ căn cứ thay vì suy đoán. Không thay thế tư vấn pháp lý của luật sư trong vụ việc cụ thể.\n"
+            "7. Trình bày bằng tiếng Việt, rõ ràng, có cấu trúc, ưu tiên câu trả lời trực tiếp trước rồi mới giải thích."
+        )
+
+        admin_user_id = 'admin'
+        try:
+            from open_webui.models.users import Users
+            res = await Users.get_users(filter={'roles': ['admin']})
+            users = res.get('users', [])
+            if users:
+                admin_user_id = users[0].id
+            else:
+                res_all = await Users.get_users()
+                all_users = res_all.get('users', [])
+                if all_users:
+                    admin_user_id = all_users[0].id
+        except Exception:
+            pass
+
+        if not model:
+            form_data = ModelForm(
+                id='vietlegal_rag',
+                base_model_id=None,
+                name='VLGR ⚖️',
+                meta=ModelMeta(
+                    profile_image_url='/static/favicon.png',
+                    description='Trợ lý pháp lý AI chuyên nghiệp của Việt Nam, hỗ trợ tra cứu và giải thích pháp luật dựa trên GraphRAG.',
+                    capabilities={'file_context': True}
+                ),
+                params=ModelParams(
+                    system=VIETLEGAL_SYSTEM_PROMPT
+                )
+            )
+            await Models.insert_new_model(form_data, user_id=admin_user_id)
+            log.info("Successfully seeded 'vietlegal_rag' model with system prompt.")
+        current_system = getattr(model.params, 'system', None) if model and model.params else None
+        if model and (not current_system or current_system == OLD_VIETLEGAL_SYSTEM_PROMPT):
+            meta = ModelMeta(**(model.meta.model_dump() if model.meta else {}))
+            params_dict = model.params.model_dump() if model.params else {}
+            params_dict['system'] = VIETLEGAL_SYSTEM_PROMPT
+            form_data = ModelForm(
+                id=model.id,
+                base_model_id=model.base_model_id,
+                name=model.name,
+                meta=meta,
+                params=ModelParams(**params_dict)
+            )
+            await Models.update_model_by_id(model.id, form_data)
+            log.info("Successfully updated 'vietlegal_rag' model system prompt.")
+    except Exception as e:
+        log.exception(f"Error seeding vietlegal_rag model system prompt: {e}")
+
 
 async def async_reset_config():
     await Config.clear()

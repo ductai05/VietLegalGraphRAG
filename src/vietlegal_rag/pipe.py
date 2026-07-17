@@ -132,6 +132,10 @@ class Pipe:
             default=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
             description="Maximum tokens for LLM generation"
         )
+        llm_streaming: bool = Field(
+            default=True,
+            description="Stream response tokens dynamically or yield the full answer at once (safer for network drops)"
+        )
 
         # Agent Config
         agent_enabled: bool = Field(
@@ -204,8 +208,14 @@ class Pipe:
 
         def _worker() -> None:
             try:
-                for token in answer_stream:
-                    loop.call_soon_threadsafe(output_queue.put_nowait, token)
+                if self.valves.llm_streaming:
+                    for token in answer_stream:
+                        loop.call_soon_threadsafe(output_queue.put_nowait, token)
+                else:
+                    full_text = []
+                    for token in answer_stream:
+                        full_text.append(str(token))
+                    loop.call_soon_threadsafe(output_queue.put_nowait, "".join(full_text))
             except Exception as exc:
                 loop.call_soon_threadsafe(output_queue.put_nowait, exc)
             finally:
@@ -264,7 +274,29 @@ class Pipe:
             logger.info(f"Overriding RAG LLM model with selected option: {actual_model}")
             self.valves.llm_model = actual_model
 
-        user_message = body["messages"][-1]["content"]
+        def _message_content_to_text(content: Any) -> str:
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts: list[str] = []
+                for item in content:
+                    if isinstance(item, str):
+                        parts.append(item)
+                    elif isinstance(item, dict):
+                        if item.get("type") == "text":
+                            parts.append(str(item.get("text") or ""))
+                        elif "content" in item:
+                            parts.append(str(item.get("content") or ""))
+                return "\n".join(part for part in parts if part).strip()
+            return str(content or "")
+
+        messages = body.get("messages") or []
+        user_message = _message_content_to_text(messages[-1].get("content")) if messages else ""
+        system_prompt = "\n\n".join(
+            _message_content_to_text(message.get("content"))
+            for message in messages
+            if message.get("role") == "system"
+        ).strip()
         status_queue: "queue.Queue[str]" = queue.Queue()
 
         async def _emit_status(description: str, done: bool = False):
@@ -292,7 +324,6 @@ class Pipe:
 
         # 2. Build search request
         from vietlegal_rag.schemas import build_search_request
-        from vietlegal_rag.services.citation_formatter import format_citations_block
         from vietlegal_rag.services.retrieval_modes import RetrievalRequest
 
         search_model = build_search_request(
@@ -308,6 +339,7 @@ class Pipe:
             llm_max_tokens=self.valves.llm_max_tokens,
         )
         request = RetrievalRequest(**search_model.model_dump())
+        request.llm.system_prompt = system_prompt
 
 
         # 3. Stream pipeline phases
@@ -346,11 +378,42 @@ class Pipe:
             yield "\n⚠️ Đã xảy ra lỗi khi tạo câu trả lời từ mô hình ngôn ngữ."
             return
 
-        # 5. Yield citations at the end of the answer.
-        # The agent path fills `citations` in place while the stream drains,
-        # so this must run after the token loop.
-        citations_md = format_citations_block(citations)
-        if citations_md:
-            yield citations_md
+        # 5. Emit structured citations to Open-WebUI so inline references [1], [2] work interactively.
+        # Do not stream a separate legal-basis block into the message body; Open WebUI's
+        # Sources list and citation modal are the canonical citation UI.
+        if __event_emitter__ and citations:
+            from vietlegal_rag.services.citation_formatter import parse_citation, shorten_title
+            for cite in citations:
+                try:
+                    parsed = parse_citation(cite.get("citation") or "")
+                    section_path = parsed["section_path"]
+                    title = cite.get("title") or parsed["title"]
+                    
+                    label = f"{section_path}, {title}" if section_path else title
+                    shortened_label = f"{section_path}, {shorten_title(title)}" if section_path else shorten_title(title)
+                    
+                    text = cite.get("text") or ""
+                    url = cite.get("url") or "N/A"
+                    
+                    source_data = {
+                        "source": {
+                            "name": shortened_label,
+                            "url": url if url != "N/A" else None
+                        },
+                        "document": [text],
+                        "metadata": [
+                            {
+                                "source": url,
+                                "name": label
+                            }
+                        ]
+                    }
+                    
+                    await __event_emitter__({
+                        "type": "citation",
+                        "data": source_data
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to emit citation event: {e}")
 
         await _emit_status("Hoàn thành", done=True)
