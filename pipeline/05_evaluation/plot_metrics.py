@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument("--rerank-k30", type=Path, help="Path to rerank K=30 eval results JSON")
     parser.add_argument("--rerank-k40", type=Path, help="Path to rerank K=40 eval results JSON")
     parser.add_argument("--rerank-k50", type=Path, help="Path to rerank K=50 eval results JSON")
+    parser.add_argument("--graph", type=Path, help="Path to graph eval results JSON")
     parser.add_argument("--output-dir", type=Path, default=BASE_DIR / "output", help="Directory to save the output charts")
     return parser.parse_args()
 
@@ -36,6 +37,9 @@ def extract_metrics(report: dict, prefix: str = "", is_hybrid_file: bool = False
     """
     recall, mrr, ndcg = {}, {}, {}
     target_dict = report
+    if "summary" in report:
+        target_dict = report["summary"]
+        
     if use_rrf and "rrf_metrics" in report:
         target_dict = report["rrf_metrics"]
         prefix = "rrf_"
@@ -62,6 +66,8 @@ def plot_metric_chart(title, k_values, data_dict, labels, output_path):
     
     for i, label in enumerate(labels):
         values = data_dict[label]
+        if not values:
+            continue
         y_vals = [values.get(k, 0) for k in k_values]
         marker = markers[i % len(markers)]
         ax.plot(k_values, y_vals, marker=marker, linewidth=2, label=label)
@@ -128,56 +134,47 @@ def plot_reranker_k_tuning(rerank_configs, output_path):
 def main():
     args = parse_args()
     configs = []
-    
+
     if args.dense and args.dense.exists():
         with open(args.dense, "r", encoding="utf-8") as f:
             data = json.load(f)
             r, m, n = extract_metrics(data)
-            if r: configs.append(("Dense", r, m, n))
+            if r:
+                configs.append(("Dense", r, m, n))
 
     if args.sparse and args.sparse.exists():
         with open(args.sparse, "r", encoding="utf-8") as f:
             data = json.load(f)
             r, m, n = extract_metrics(data)
-            if r: configs.append(("Sparse", r, m, n))
+            if r:
+                configs.append(("Sparse", r, m, n))
 
     if args.hybrid and args.hybrid.exists():
         with open(args.hybrid, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if data.get("rerank_enabled"):
-                r, m, n = extract_metrics(data, use_rrf=True)
-                if r: configs.append(("Dense + Sparse", r, m, n))
-            else:
-                r, m, n = extract_metrics(data)
-                if r: configs.append(("Dense + Sparse", r, m, n))
+            r, m, n = extract_metrics(data, use_rrf=True)
+            if r:
+                configs.append(("Hybrid (RRF)", r, m, n))
 
     rerank_configs = {}
     for k_val in [20, 30, 40, 50]:
-        file_path = getattr(args, f"rerank_k{k_val}", None)
-        if file_path and file_path.exists():
-            with open(file_path, "r", encoding="utf-8") as f:
+        arg_name = f"rerank_k{k_val}"
+        path = getattr(args, arg_name, None)
+        if path and path.exists():
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 r, m, n = extract_metrics(data)
                 if r:
                     rerank_configs[k_val] = (r, m, n)
+                    if k_val == 50:
+                        configs.append(("Hybrid + Rerank", r, m, n))
 
-    best_k = None
-    best_avg = -1.0
-    for k_val, (r, m, n) in rerank_configs.items():
-        target_k = 10
-        if target_k not in r:
-            target_k = max(r.keys()) if r.keys() else None
-        
-        if target_k is not None:
-            avg_val = (r.get(target_k, 0) + m.get(target_k, 0) + n.get(target_k, 0)) / 3.0
-            if avg_val > best_avg:
-                best_avg = avg_val
-                best_k = k_val
-
-    if best_k is not None:
-        r, m, n = rerank_configs[best_k]
-        configs.append((f"Dense + Sparse + Reranker (K={best_k})", r, m, n))
-        print(f"Selected K={best_k} as the best reranker candidate pool size (avg score: {best_avg:.4f})")
+    if args.graph and args.graph.exists():
+        with open(args.graph, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            r, m, n = extract_metrics(data)
+            if r:
+                configs.append(("Hybrid + KG + Rerank", r, m, n))
 
     if not configs:
         print("No valid evaluation data found.")

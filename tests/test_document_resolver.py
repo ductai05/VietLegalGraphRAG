@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_SERVICES = ROOT / "src" / "backend" / "services"
+BACKEND_SERVICES = ROOT / "src" / "vietlegal_rag" / "services"
 if str(BACKEND_SERVICES) not in sys.path:
     sys.path.insert(0, str(BACKEND_SERVICES))
 

@@ -6,6 +6,7 @@ for _key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_prox
 import argparse
 import json
 import math
+import concurrent.futures
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,8 @@ def parse_args() -> argparse.Namespace:
                         help="List of k values for evaluation metrics")
     parser.add_argument("--chunks", type=Path, default=os.environ.get("CHUNKS_PATH"),
                         help="Path to chunks.parquet or sparse_base.parquet to resolve duplicate chunk texts")
+    parser.add_argument("--max-workers", type=int, default=10,
+                        help="Number of concurrent threads for Elasticsearch requests")
     parser.add_argument("--env-file", type=Path, default=PIPELINE_DIR / "03_embeddings" / "sparse" / "config.env",
                         help="Path to environment file")
     return parser.parse_args()
@@ -190,13 +193,23 @@ def main() -> None:
     print(f"Evaluating {len(rows)} queries on index '{args.index}' (top_k={args.top_k})...")
     
     try:
-        for idx, row in enumerate(rows):
+        def process_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             hits = retriever.search(
                 row["query"],
                 filters=row.get("filters"),
                 top_k=max(args.k_values)
             )
-            
+            return row, hits
+
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = lambda x, **kwargs: x
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+            results = list(tqdm(executor.map(process_row, rows), total=len(rows), desc="Evaluating Sparse Queries"))
+
+        for row, hits in results:
             metrics = {}
             for k in args.k_values:
                 rel = evaluate_hits_relevance(hits[:k], row)
@@ -222,9 +235,6 @@ def main() -> None:
                     "top_chunk_ids": [hit["chunk_id"] for hit in hits],
                 }
             )
-            
-            if (idx + 1) % 50 == 0:
-                print(f"Processed {idx + 1}/{len(rows)} queries...")
     finally:
         retriever.close()
         if gold_file != args.eval_questions:

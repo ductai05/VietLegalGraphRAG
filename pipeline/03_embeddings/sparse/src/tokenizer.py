@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 import functools
+import threading
 
 try:
     from src.normalizer import fold_vietnamese, text_value
@@ -11,6 +12,7 @@ except ModuleNotFoundError:
     from normalizer import fold_vietnamese, text_value
 
 _WORD_TOKENIZE = None
+_TOKENIZE_LOCK = threading.Lock()
 
 
 def _load_word_tokenize():
@@ -32,12 +34,13 @@ def tokenize_vi(value: Any) -> str:
     text = text_value(value)
     if not text:
         return ""
-    word_tokenize = _load_word_tokenize()
-    try:
-        return word_tokenize(text, format="text")
-    except TypeError:
-        tokens = word_tokenize(text)
-        return " ".join(str(token) for token in tokens)
+    with _TOKENIZE_LOCK:
+        word_tokenize = _load_word_tokenize()
+        try:
+            return word_tokenize(text, format="text")
+        except TypeError:
+            tokens = word_tokenize(text)
+            return " ".join(str(token) for token in tokens)
 
 
 def tokenize_section_path(value: Any) -> str:
