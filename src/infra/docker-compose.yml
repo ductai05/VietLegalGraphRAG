@@ -26,6 +26,10 @@ services:
       # Open WebUI Direct LLM Connection (for plain chat)
       - OPENAI_API_BASE_URL=${LLM_BASE_URL}
       - OPENAI_API_KEY=${LLM_API_KEY}
+      # Performance Tuning for Droplet VPS (Conserve RAM & CPU)
+      - ENABLE_OLLAMA=false
+      - RAG_EMBEDDING_ENGINE=
+      - RAG_RERANKING_ENGINE=
       # RAG service credentials / config passed to Pipe Valves
       - BACKEND_PORT
       - ELASTICSEARCH_URL
