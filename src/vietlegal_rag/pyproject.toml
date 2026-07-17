@@ -17,6 +17,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "langchain-core>=0.3.0",
     "langchain-openai>=0.2.0",
-    "langgraph>=0.2.0",
+    # Open WebUI's langchain pins langgraph<1.1.0, so we cannot move off 1.0.x.
+    # langgraph-prebuilt declares no langgraph lower bound, so pip pairs the
+    # newest prebuilt with it; >=1.0.9 imports langgraph.runtime.ExecutionInfo,
+    # which 1.0.x does not have, and create_react_agent fails to import.
+    "langgraph>=1.0.8,<1.1.0",
+    "langgraph-prebuilt>=1.0.2,<1.0.9",
     "exa-py>=1.0.0"
 ]

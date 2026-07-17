@@ -129,7 +129,7 @@ class Pipe:
             description="Maximum context chunks allowed in prompt template"
         )
         llm_max_tokens: int = Field(
-            default=2048,
+            default=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
             description="Maximum tokens for LLM generation"
         )
 
