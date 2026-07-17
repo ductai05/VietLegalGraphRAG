@@ -97,6 +97,19 @@ class LlmEvaluationTests(unittest.TestCase):
                 "citation_valid": True,
                 "cites_gold": True,
             },
+            {
+                "status": "ok",
+                "model": "m",
+                "setup": "hybrid_graph",
+                "question_id": "q1",
+                "question_type": "factual",
+                "correct": True,
+                "valid_json": True,
+                "latency_seconds": 2.5,
+                "retrieval_hit": True,
+                "citation_valid": True,
+                "cites_gold": True,
+            },
         ]
         result = summarize(rows)
         self.assertEqual(result["results"]["m"]["no_rag"]["accuracy"], 0.0)

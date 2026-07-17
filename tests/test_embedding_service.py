@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_APP = ROOT / "src" / "backend" / "app"
-BACKEND_SERVICES = ROOT / "src" / "backend" / "services"
+BACKEND_APP = ROOT / "src" / "vietlegal_rag"
+BACKEND_SERVICES = ROOT / "src" / "vietlegal_rag" / "services"
 for path in (BACKEND_APP, BACKEND_SERVICES):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
