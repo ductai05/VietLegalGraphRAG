@@ -1634,31 +1634,20 @@ except Exception as e:
 if default_prompt_suggestions == []:
     default_prompt_suggestions = [
         {
-            'title': ['Help me study', 'vocabulary for a college entrance exam'],
-            'content': "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
+            'title': ['Xử phạt nồng độ cồn', 'khi tham gia giao thông'],
+            'content': 'Mức phạt vi phạm nồng độ cồn đối với người điều khiển xe máy là bao nhiêu?',
         },
         {
-            'title': ['Give me ideas', "for what to do with my kids' art"],
-            'content': "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
+            'title': ['Thời gian thử việc', 'trong hợp đồng lao động'],
+            'content': 'Thời gian thử việc tối đa đối với người lao động có trình độ đại học theo quy định là bao lâu?',
         },
         {
-            'title': ['Tell me a fun fact', 'about the Roman Empire'],
-            'content': 'Tell me a random fun fact about the Roman Empire',
+            'title': ['Thủ tục cấp sổ đỏ', 'lần đầu theo luật mới'],
+            'content': 'Điều kiện để hộ gia đình, cá nhân được cấp Giấy chứng nhận quyền sử dụng đất (sổ đỏ) lần đầu là gì?',
         },
         {
-            'title': ['Show me a code snippet', "of a website's sticky header"],
-            'content': "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
-        },
-        {
-            'title': [
-                'Explain options trading',
-                "if I'm familiar with buying and selling stocks",
-            ],
-            'content': "Explain options trading in simple terms if I'm familiar with buying and selling stocks.",
-        },
-        {
-            'title': ['Overcome procrastination', 'give me tips'],
-            'content': 'Could you start by asking me about instances when I procrastinate the most and then give me some suggestions to overcome it?',
+            'title': ['Thành lập công ty', 'trách nhiệm hữu hạn'],
+            'content': 'Hồ sơ và thủ tục đăng ký doanh nghiệp đối với công ty TNHH hai thành viên trở lên gồm những gì?',
         },
     ]
 

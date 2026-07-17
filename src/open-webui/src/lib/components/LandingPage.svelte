@@ -508,19 +508,22 @@
         src="https://player.cloudinary.com/embed/?cloud_name=uy0kvjhp&public_id=video_ks63wd&autoplay=true&loop=true&muted=true&controls=false&playlist=video_ks63wd"
         allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
         allowFullScreen
-        class="w-full h-full border-0"
-        style="filter: brightness(0.55) saturate(0.7);"
+        class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border-0"
+        style="width: 100vw; height: 56.25vw; min-height: 100vh; min-width: 177.77vh; filter: brightness(0.65) saturate(0.8);"
         title="VietLegalGraphRAG hero video"
       />
     </div>
 
-    <!-- Navy overlay -->
-    <div class="absolute inset-0 z-5 pointer-events-none bg-[rgba(15,32,68,0.45)]" />
+    <!-- Dark oval overlay behind the text on the left to separate it from the video background -->
+    <div 
+      class="absolute left-0 bottom-0 z-20 pointer-events-none w-full max-w-[55rem] h-full" 
+      style="background: radial-gradient(circle at 10% 75%, rgba(15,32,68,0.92) 0%, rgba(15,32,68,0.7) 40%, rgba(15,32,68,0.2) 75%, transparent 100%); filter: blur(15px);" 
+    />
 
     <!-- Progressive blur + gradient rising from bottom -->
-    <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none" style="height: 65%; background: linear-gradient(to top, #F2F3F7 0%, #F2F3F7 18%, rgba(242,243,247,0.85) 35%, rgba(242,243,247,0.5) 55%, rgba(242,243,247,0.15) 75%, transparent 100%);" />
-    <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none" style="height: 20%; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); mask-image: linear-gradient(to top, black 0%, transparent 100%); -webkit-mask-image: linear-gradient(to top, black 0%, transparent 100%);" />
-    <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none" style="height: 38%; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); mask-image: linear-gradient(to top, black 0%, transparent 100%); -webkit-mask-image: linear-gradient(to top, black 0%, transparent 100%);" />
+    <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none" style="height: 40%; background: linear-gradient(to top, #F2F3F7 0%, #F2F3F7 18%, rgba(242,243,247,0.85) 35%, rgba(242,243,247,0.5) 55%, rgba(242,243,247,0.15) 75%, transparent 100%);" />
+    <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none" style="height: 15%; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); mask-image: linear-gradient(to top, black 0%, transparent 100%); -webkit-mask-image: linear-gradient(to top, black 0%, transparent 100%);" />
+    <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none" style="height: 25%; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); mask-image: linear-gradient(to top, black 0%, transparent 100%); -webkit-mask-image: linear-gradient(to top, black 0%, transparent 100%);" />
 
     <div class="h-20" />
 
@@ -539,7 +542,7 @@
 
       <!-- Title -->
       <h1
-        class="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-light text-[#0F2044] leading-[1.0] tracking-tight mb-10 font-sans"
+        class="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-light text-white leading-[1.0] tracking-tight mb-10 font-sans"
         style="opacity: {heroReady ? 1 : 0}; filter: {heroReady ? 'blur(0px)' : 'blur(24px)'}; transform: {heroReady ? 'translateY(0px)' : 'translateY(32px)'}; transition: opacity 1s cubic-bezier(0.16,1,0.3,1) 60ms, filter 1s cubic-bezier(0.16,1,0.3,1) 60ms, transform 1s cubic-bezier(0.16,1,0.3,1) 60ms;"
       >
         Hiểu luật.<br />
@@ -557,8 +560,8 @@
           <div
             style="opacity: {heroReady ? 1 : 0}; filter: {heroReady ? 'blur(0px)' : 'blur(16px)'}; transform: {heroReady ? 'translateY(0px)' : 'translateY(20px)'}; transition: opacity 0.8s cubic-bezier(0.16,1,0.3,1) {160 + i * 80}ms, filter 0.8s cubic-bezier(0.16,1,0.3,1) {160 + i * 80}ms, transform 0.8s cubic-bezier(0.16,1,0.3,1) {160 + i * 80}ms;"
           >
-            <div class="text-xl sm:text-2xl text-[#0F2044] font-medium tracking-tight">{stat.value}</div>
-            <div class="text-[10px] text-[#0F2044]/45 tracking-widest uppercase mt-1">{stat.label}</div>
+            <div class="text-xl sm:text-2xl text-white font-medium tracking-tight">{stat.value}</div>
+            <div class="text-[10px] text-slate-300/80 tracking-widest uppercase mt-1">{stat.label}</div>
           </div>
         {/each}
       </div>
@@ -568,10 +571,10 @@
         class="mt-8 flex flex-wrap gap-3"
         style="opacity: {heroReady ? 1 : 0}; transform: {heroReady ? 'translateY(0px)' : 'translateY(16px)'}; transition: opacity 0.8s cubic-bezier(0.16,1,0.3,1) 400ms, transform 0.8s cubic-bezier(0.16,1,0.3,1) 400ms;"
       >
-        <a href={tryNowLink} class="px-6 py-3 rounded-xl bg-[#0F2044] text-white text-sm font-medium tracking-wide hover:bg-[#1A3260] transition-colors">
+        <a href={tryNowLink} class="px-6 py-3 rounded-xl bg-white text-[#0F2044] text-sm font-medium tracking-wide hover:bg-slate-100 transition-colors">
           Dùng thử miễn phí
         </a>
-        <a href="#contact" class="px-6 py-3 rounded-xl border border-[#0F2044]/20 text-[#0F2044] text-sm font-medium tracking-wide hover:border-[#0F2044]/40 hover:bg-[#0F2044]/[0.04] transition-all">
+        <a href="#contact" class="px-6 py-3 rounded-xl border border-white/30 text-white text-sm font-medium tracking-wide hover:border-white/60 hover:bg-white/[0.08] transition-all">
           Liên hệ chuyên gia
         </a>
       </div>

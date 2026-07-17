@@ -134,8 +134,9 @@ def test_format_citations_block_static_path_renders_plain_text() -> None:
     block = format_citations_block([cite])
 
     assert "📚 Căn cứ pháp lý" in block
-    assert '<span title="Noi dung phap ly">' in block
-    assert "Điều 101" in block
+    assert "Điều 101, Nghị định 15/2020/NĐ-CP" in block
+    assert "<details" in block
+    assert "Noi dung phap ly" in block
 
 
 def test_format_citations_block_static_path_fallback_without_text() -> None:
@@ -172,9 +173,10 @@ def test_format_citations_block_agent_path_renders_link_marker_and_summary() -> 
 
     block = format_citations_block([cite])
 
-    assert '<a href="https://vanban.chinhphu.vn/nd15" title="Noi dung phap ly"' in block
-    assert "⚠️ (Hết hiệu lực)" in block
-    assert "— Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội." in block
+    assert 'href="https://vanban.chinhphu.vn/nd15"' in block
+    assert "Noi dung phap ly" in block
+    assert "⚠️ Hết hiệu lực" in block
+    assert "Tóm tắt: Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội." in block
 
 
 def test_format_citations_block_agent_path_fallback_without_text() -> None:
@@ -191,7 +193,7 @@ def test_format_citations_block_agent_path_fallback_without_text() -> None:
 
     block = format_citations_block([cite])
 
-    assert "[Điều 101, Nghị định 15/2020/NĐ-CP quy định xử phạt vi phạm hành chính" in block
+    assert "[Điều 101, Nghị định 15/2020/NĐ-CP]" in block
     assert "https://vanban.chinhphu.vn/nd15" in block
     assert "⚠️ (Hết hiệu lực)" in block
 
