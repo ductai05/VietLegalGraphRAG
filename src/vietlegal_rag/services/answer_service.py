@@ -1,6 +1,7 @@
 from typing import Any, Protocol, Generator
 
 from contracts import AnswerContext
+from think_tags import CLOSER, has_unclosed_think
 
 
 class AnswerService(Protocol):
@@ -197,11 +198,15 @@ class OpenAICompatibleAnswerService:
         )
         
         in_thinking = False
+        # Models that inline <think> in content never set reasoning_content, so
+        # `in_thinking` stays False for them; track the raw text to catch a block
+        # the model opened but never closed (e.g. cut off by max_tokens).
+        streamed_content = ""
         for chunk in response:
             if not getattr(chunk, "choices", None):
                 continue
             delta = chunk.choices[0].delta
-            
+
             # Check for reasoning_content (e.g. from DeepSeek R1 or Qwen reasoning endpoints)
             reasoning = getattr(delta, "reasoning_content", None)
             if reasoning:
@@ -211,15 +216,16 @@ class OpenAICompatibleAnswerService:
                 yield reasoning
             else:
                 if in_thinking:
-                    yield "\n</think>\n\n"
+                    yield CLOSER
                     in_thinking = False
-                
+
                 # Yield standard text content
                 if delta.content:
+                    streamed_content += delta.content
                     yield delta.content
-                    
-        if in_thinking:
-            yield "\n</think>\n\n"
+
+        if in_thinking or has_unclosed_think(streamed_content):
+            yield CLOSER
 
 
 

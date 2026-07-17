@@ -20,6 +20,7 @@ from agent_tools import (
     make_web_search_tool,
 )
 from citation_formatter import shorten_title
+from think_tags import CLOSER, has_unclosed_think
 from context_assembler import ContextAssembler
 from document_resolver import DocumentResolver
 from lightrag_service import LightRAGService
@@ -83,6 +84,23 @@ def _final_answer_text(messages: list[Any]) -> str:
         if text:
             return text
     return ""
+
+
+def _close_dangling_think(thinking: dict[str, Any]) -> Generator[str, None, None]:
+    """Close a ``<think>`` block the model left open, if there is one.
+
+    Covers both shapes: a block we opened around ``reasoning_content``, and one
+    the model inlined in its content stream but never closed. Left open, Open
+    WebUI folds the answer and the citations into the reasoning bubble.
+    """
+    if thinking["open"]:
+        thinking["open"] = False
+        thinking["content"] = ""
+        yield CLOSER
+        return
+    if has_unclosed_think(thinking["content"]):
+        thinking["content"] = ""
+        yield CLOSER
 
 
 def _safe_status(on_status: Callable[[str], None] | None, description: str) -> None:
@@ -342,7 +360,7 @@ class AgentService:
                 yield from _fallback("agent.stream_failed")
                 return
 
-            thinking = {"open": False}
+            thinking: dict[str, Any] = {"open": False, "content": ""}
             produced_answer = False
             try:
                 for event in itertools.chain([first_event], iterator):
@@ -358,8 +376,9 @@ class AgentService:
                 _finalize()
                 return
 
-            if thinking["open"]:
-                yield "\n</think>\n\n"
+            # Runs before the safety-net warning and before pipe.py appends the
+            # citations block, so neither ends up inside the reasoning bubble.
+            yield from _close_dangling_think(thinking)
             if not produced_answer:
                 yield from _fallback("agent.no_answer")
                 return
@@ -399,6 +418,10 @@ class AgentService:
             return
         # Tool-call arguments are not answer text.
         if getattr(chunk, "tool_call_chunks", None):
+            # A turn that ends in a tool call stops before emitting </think>, and
+            # the next turn opens a fresh <think>. Close it here so the blocks do
+            # not nest across turns and swallow the final answer.
+            yield from _close_dangling_think(thinking)
             return
 
         reasoning = (getattr(chunk, "additional_kwargs", None) or {}).get(
@@ -415,8 +438,9 @@ class AgentService:
         if not text:
             return
         if thinking["open"]:
-            yield "\n</think>\n\n"
+            yield CLOSER
             thinking["open"] = False
+        thinking["content"] += text
         yield text
 
     @staticmethod
