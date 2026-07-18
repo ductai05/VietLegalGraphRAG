@@ -35,15 +35,14 @@ from retrieval_modes import RetrievalRequest
 
 logger = logging.getLogger("vietlegal_rag.services.agent_service")
 
-AGENT_SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên thông tin tra cứu thực tế.
+_AGENT_SYSTEM_PROMPT_TEMPLATE = """Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên thông tin tra cứu thực tế.
 
 QUY TRÌNH BẮT BUỘC:
 1. Luôn gọi `retrieval_search` trước tiên để tìm văn bản pháp luật liên quan. Hãy viết lại câu hỏi của người dùng thành truy vấn giàu từ khoá pháp lý.
 2. Với MỌI văn bản bạn định trích dẫn, bắt buộc gọi `graph_validate` với `doc_id` của văn bản đó (lấy từ kết quả `retrieval_search`, không dùng tiêu đề) trước khi trích dẫn.
 3. Nếu `effect_verdict` là `expired` hoặc `superseded`, bạn PHẢI chủ động ghi thêm cảnh báo rõ ràng bằng biểu tượng ⚠️ ở câu trả lời tương ứng, đồng thời dựa câu trả lời trên văn bản mới hơn (gọi thêm `retrieval_search` để lấy nội dung văn bản thay thế nếu cần) và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới.
-4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn. Tuyệt đối không tự bịa URL.
-
-GIỚI HẠN: tối đa 8 lượt gọi công cụ. Nếu các công cụ không trả về thông tin hữu ích, hãy nói rõ rằng bạn không tìm được đủ căn cứ pháp lý thay vì suy đoán.
+{web_step}
+GIỚI HẠN: tối đa {max_iterations} lượt gọi công cụ. Nếu các công cụ không trả về thông tin hữu ích, hãy nói rõ rằng bạn không tìm được đủ căn cứ pháp lý thay vì suy đoán.
 
 CÂU TRẢ LỜI CUỐI CÙNG:
 1. Trả lời bằng tiếng Việt, rõ ràng, có cấu trúc, ưu tiên kết luận trực tiếp trước rồi mới giải thích.
@@ -53,6 +52,10 @@ CÂU TRẢ LỜI CUỐI CÙNG:
 
 _WEB_STEP = """4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn — tuyệt đối không tự bịa URL.
 """
+
+# Backward-compatible static rendering (web step on, default 8-turn budget) used by
+# the external-prompt merge path in AgentService._system_prompt.
+AGENT_SYSTEM_PROMPT = _AGENT_SYSTEM_PROMPT_TEMPLATE.format(web_step=_WEB_STEP, max_iterations=8)
 
 
 def _system_prompt(web_search_enabled: bool, max_iterations: int) -> str:
