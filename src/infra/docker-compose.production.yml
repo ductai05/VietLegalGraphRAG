@@ -9,9 +9,7 @@ name: vietlegal-app
 services:
   open-webui:
     container_name: vietlegal-webui
-    build:
-      context: ../..
-      dockerfile: src/infra/Dockerfile.openwebui
+    image: ghcr.io/ductai05/vietlegal-webui:latest
     environment:
       # Open WebUI admin auto-provisioning
       - WEBUI_ADMIN_EMAIL
@@ -22,6 +20,10 @@ services:
       # Open WebUI Direct LLM Connection (for plain chat)
       - OPENAI_API_BASE_URL=${LLM_BASE_URL}
       - OPENAI_API_KEY=${LLM_API_KEY}
+      # Performance Tuning for Droplet VPS (Conserve RAM & CPU)
+      - ENABLE_OLLAMA=false
+      - RAG_EMBEDDING_ENGINE=
+      - RAG_RERANKING_ENGINE=
       # RAG service credentials / config passed to Pipe Valves
       - BACKEND_PORT=8000
       - ELASTICSEARCH_URL

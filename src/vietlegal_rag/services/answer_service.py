@@ -3,6 +3,18 @@ from typing import Any, Protocol, Generator
 from contracts import AnswerContext
 from think_tags import CLOSER, has_unclosed_think
 
+SYSTEM_PROMPT = (
+    "Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên ngữ cảnh được cung cấp.\n\n"
+    "QUY TẮC PHÁP LÝ BẮT BUỘC:\n"
+    "1. Chỉ trả lời dựa trên ngữ cảnh pháp lý được cung cấp. Tuyệt đối không tự bịa căn cứ pháp lý, điều luật, số hiệu văn bản, mức phạt, thời hạn, thủ tục hoặc URL.\n"
+    "2. Mỗi nhận định pháp lý quan trọng phải có citation inline dạng [1], [2] khớp với số thứ tự đoạn ngữ cảnh. Đặt citation ngay sau câu hoặc mệnh đề được hỗ trợ bởi nguồn đó.\n"
+    "3. Không tự tạo mục 'Căn cứ pháp lý', 'Nguồn', danh sách tài liệu hoặc URL ở cuối câu trả lời. Open WebUI sẽ hiển thị chi tiết căn cứ trong Sources và citation modal.\n"
+    "4. Luôn kiểm tra và cảnh báo rõ ràng về hiệu lực của văn bản. Nếu tài liệu đi kèm ghi nhận trạng thái [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động ghi thêm cảnh báo bằng biểu tượng ⚠️ ở phần trả lời tương ứng.\n"
+    "5. Nếu có văn bản mới hơn hoặc văn bản thay thế trong ngữ cảnh, ưu tiên áp dụng quy định mới, đồng thời giải thích ngắn gọn điểm chuyển tiếp pháp lý từ văn bản cũ sang văn bản mới.\n"
+    "6. Nếu ngữ cảnh không đủ để trả lời chắc chắn, nói rõ phần chưa đủ căn cứ thay vì suy đoán. Không thay thế tư vấn pháp lý của luật sư trong vụ việc cụ thể.\n"
+    "7. Trình bày bằng tiếng Việt, rõ ràng, có cấu trúc, ưu tiên câu trả lời trực tiếp trước rồi mới giải thích."
+)
+
 
 class AnswerService(Protocol):
     def answer(
@@ -10,6 +22,7 @@ class AnswerService(Protocol):
         query: str,
         contexts: list[AnswerContext],
         temperature: float,
+        system_prompt: str | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -18,6 +31,7 @@ class AnswerService(Protocol):
         query: str,
         contexts: list[AnswerContext],
         temperature: float,
+        system_prompt: str | None = None,
     ) -> Generator[str, None, None]:
         ...
 
@@ -42,6 +56,7 @@ class ExtractiveAnswerService:
         query: str,
         contexts: list[AnswerContext],
         temperature: float,
+        system_prompt: str | None = None,
     ) -> dict[str, Any]:
         if not contexts:
             return {
@@ -68,6 +83,7 @@ class ExtractiveAnswerService:
                 "doc_id": context.doc_id,
                 "title": context.title,
                 "citation": context.citation,
+                "text": context.text,
             }
             for context in contexts
         ]
@@ -78,6 +94,7 @@ class ExtractiveAnswerService:
         query: str,
         contexts: list[AnswerContext],
         temperature: float,
+        system_prompt: str | None = None,
     ) -> Generator[str, None, None]:
         res = self.answer(query, contexts, temperature)
         yield res.get("answer", "")
@@ -95,6 +112,7 @@ class OpenAICompatibleAnswerService:
         query: str,
         contexts: list[AnswerContext],
         temperature: float,
+        system_prompt: str | None = None,
     ) -> dict[str, Any]:
         if not contexts:
             return ExtractiveAnswerService().answer(query, contexts, temperature)
@@ -122,21 +140,14 @@ class OpenAICompatibleAnswerService:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Bạn là trợ lý pháp lý Việt Nam. Trả lời ngắn gọn, "
-                        "dựa trên ngữ cảnh được cung cấp và không tạo căn cứ "
-                        "pháp lý nếu ngữ cảnh không hỗ trợ.\n\n"
-                        "LƯU Ý QUAN TRỌNG VỀ HIỆU LỰC PHÁP LÝ:\n"
-                        "- Khi gặp tài liệu được đánh dấu là [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động cảnh báo rõ cho người dùng biết văn bản đó đã hết hiệu lực hoặc đã cũ.\n"
-                        "- Nếu ngữ cảnh đi kèm tài liệu thay thế/mới hơn, bạn phải trình bày câu trả lời dựa trên quy định của tài liệu mới (đang còn hiệu lực), đồng thời nêu rõ sự thay đổi so với luật cũ (hết hiệu lực) để người dùng dễ dàng nhận biết sự chuyển tiếp pháp lý."
-                    ),
+                    "content": self._system_prompt(system_prompt),
                 },
                 {
                     "role": "user",
                     "content": (
                         f"Câu hỏi: {query}\n\n"
                         f"Ngữ cảnh:\n{context_text}\n\n"
-                        "Hãy trả lời bằng tiếng Việt, nêu rõ căn cứ liên quan và cảnh báo hiệu lực văn bản nếu có."
+                        "Hãy trả lời bằng tiếng Việt. Dùng citation inline dạng [1], [2] theo số thứ tự trong ngữ cảnh; không tạo mục căn cứ hoặc nguồn riêng ở cuối câu trả lời."
                     ),
                 },
             ],
@@ -151,6 +162,7 @@ class OpenAICompatibleAnswerService:
                     "doc_id": context.doc_id,
                     "title": context.title,
                     "citation": context.citation,
+                    "text": context.text,
                 }
                 for context in contexts
             ],
@@ -161,6 +173,7 @@ class OpenAICompatibleAnswerService:
         query: str,
         contexts: list[AnswerContext],
         temperature: float,
+        system_prompt: str | None = None,
     ) -> Generator[str, None, None]:
         if not contexts:
             for chunk in ExtractiveAnswerService().stream_answer(query, contexts, temperature):
@@ -190,21 +203,14 @@ class OpenAICompatibleAnswerService:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Bạn là trợ lý pháp lý Việt Nam. Trả lời ngắn gọn, "
-                        "dựa trên ngữ cảnh được cung cấp và không tạo căn cứ "
-                        "pháp lý nếu ngữ cảnh không hỗ trợ.\n\n"
-                        "LƯU Ý QUAN TRỌNG VỀ HIỆU LỰC PHÁP LÝ:\n"
-                        "- Khi gặp tài liệu được đánh dấu là [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động cảnh báo rõ cho người dùng biết văn bản đó đã hết hiệu lực hoặc đã cũ.\n"
-                        "- Nếu ngữ cảnh đi kèm tài liệu thay thế/mới hơn, bạn phải trình bày câu trả lời dựa trên quy định của tài liệu mới (đang còn hiệu lực), đồng thời nêu rõ sự thay đổi so với luật cũ (hết hiệu lực) để người dùng dễ dàng nhận biết sự chuyển tiếp pháp lý."
-                    ),
+                    "content": self._system_prompt(system_prompt),
                 },
                 {
                     "role": "user",
                     "content": (
                         f"Câu hỏi: {query}\n\n"
                         f"Ngữ cảnh:\n{context_text}\n\n"
-                        "Hãy trả lời bằng tiếng Việt, nêu rõ căn cứ liên quan và cảnh báo hiệu lực văn bản nếu có."
+                        "Hãy trả lời bằng tiếng Việt. Dùng citation inline dạng [1], [2] theo số thứ tự trong ngữ cảnh; không tạo mục căn cứ hoặc nguồn riêng ở cuối câu trả lời."
                     ),
                 },
             ],
@@ -242,5 +248,7 @@ class OpenAICompatibleAnswerService:
         if in_thinking or has_unclosed_think(streamed_content):
             yield CLOSER
 
-
+    @staticmethod
+    def _system_prompt(system_prompt: str | None = None) -> str:
+        return (system_prompt or "").strip() or SYSTEM_PROMPT
 

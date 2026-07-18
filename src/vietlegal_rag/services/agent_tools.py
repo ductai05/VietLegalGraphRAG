@@ -140,9 +140,13 @@ def make_retrieval_tool(
             return _dumps({"error": "retrieval_failed"})
 
         state.add_hits(list(hits))
+        source_index_by_chunk = {
+            hit.chunk_id: index for index, hit in enumerate(state.hits, start=1)
+        }
         return _dumps(
             [
                 {
+                    "source_index": source_index_by_chunk.get(hit.chunk_id),
                     "chunk_id": hit.chunk_id,
                     "doc_id": hit.doc_id,
                     "title": hit.title,

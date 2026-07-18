@@ -20,24 +20,28 @@ TEXT_FIELDS = {"title", "procedure_name"}
 
 
 def resolve_credentials(
-    cloud_id: str | None,
-    api_key: str | None,
-) -> tuple[str, str]:
-    """Resolve Elastic Cloud credentials without persisting them."""
+    cloud_id: str | None = None,
+    api_key: str | None = None,
+    url: str | None = None,
+) -> tuple[str | None, str | None, str]:
+    """Resolve Elastic Cloud ID or URL credentials and API key."""
     resolved_cloud_id = cloud_id or os.environ.get("ELASTIC_CLOUD_ID")
-    resolved_api_key = api_key or os.environ.get("ELASTIC_API_KEY")
-    missing = []
-    if not resolved_cloud_id:
-        missing.append("ELASTIC_CLOUD_ID")
-    if not resolved_api_key:
-        missing.append("ELASTIC_API_KEY")
-    if missing:
+    resolved_url = url or os.environ.get("ELASTICSEARCH_URL") or os.environ.get("ELASTIC_URL")
+    resolved_api_key = (
+        api_key
+        or os.environ.get("ELASTICSEARCH_API_KEY")
+        or os.environ.get("ELASTIC_API_KEY")
+    )
+    if not resolved_cloud_id and not resolved_url:
         raise ValueError(
-            "Missing Elasticsearch credentials: "
-            + ", ".join(missing)
-            + ". Pass CLI arguments or set environment variables."
+            "Missing Elasticsearch credentials: Provide cloud_id or url "
+            "(or set ELASTIC_CLOUD_ID or ELASTICSEARCH_URL environment variables)."
         )
-    return resolved_cloud_id, resolved_api_key
+    if not resolved_api_key:
+        raise ValueError(
+            "Missing Elasticsearch API key: Pass CLI arguments or set ELASTICSEARCH_API_KEY or ELASTIC_API_KEY."
+        )
+    return resolved_cloud_id, resolved_url, resolved_api_key
 
 
 def _keyword_mapping() -> dict[str, Any]:

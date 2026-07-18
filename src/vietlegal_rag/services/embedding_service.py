@@ -68,8 +68,14 @@ class LocalONNXEmbedder:
         if self._session is None:
             import onnxruntime as ort
 
+            sess_options = ort.SessionOptions()
+            sess_options.intra_op_num_threads = 1
+            sess_options.inter_op_num_threads = 1
+            sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
             self._session = ort.InferenceSession(
                 str(self._model_path),
+                sess_options=sess_options,
                 providers=["CPUExecutionProvider"],
             )
         return self._session
@@ -154,8 +160,14 @@ class _ONNXEncoder:
         if self._session is None:
             import onnxruntime as ort
 
+            sess_options = ort.SessionOptions()
+            sess_options.intra_op_num_threads = 1
+            sess_options.inter_op_num_threads = 1
+            sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
             self._session = ort.InferenceSession(
                 str(self.model_path),
+                sess_options=sess_options,
                 providers=["CPUExecutionProvider"],
             )
         return self._session

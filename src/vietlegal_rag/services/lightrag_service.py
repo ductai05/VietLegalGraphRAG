@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import time
@@ -65,7 +66,9 @@ class LightRAGService:
         self.retrieval_service = retrieval_service
         self.graph_retriever = graph_retriever
         self.answer_service = answer_service
-        self.context_assembler = context_assembler or ContextAssembler()
+        self.document_resolver = (
+            context_assembler.document_resolver if context_assembler else None
+        )
 
     def answer(self, request: RetrievalRequest) -> dict[str, Any]:
         started = time.perf_counter()
@@ -95,7 +98,8 @@ class LightRAGService:
                 lightrag_error = "graph.retrieval_failed"
         graph_done = time.perf_counter()
 
-        contexts = self.context_assembler.merge(retrieval_hits, graph_context)
+        context_assembler = ContextAssembler(document_resolver=self.document_resolver)
+        contexts = context_assembler.merge(retrieval_hits, graph_context)
         contexts = self._limit_contexts(
             contexts,
             graph_context,
@@ -108,6 +112,7 @@ class LightRAGService:
                 request.query,
                 contexts,
                 request.llm.temperature,
+                request.llm.system_prompt,
             )
         except Exception:
             answer_error = "llm.answer_failed"
@@ -115,6 +120,7 @@ class LightRAGService:
                 request.query,
                 contexts,
                 request.llm.temperature,
+                request.llm.system_prompt,
             )
         answer_done = time.perf_counter()
 
@@ -141,7 +147,7 @@ class LightRAGService:
             trace["answer_error"] = answer_error
 
         # Include document resolution info in trace.
-        resolved = self.context_assembler.last_resolved
+        resolved = context_assembler.last_resolved
         if resolved is not None:
             if resolved.warnings:
                 trace["resolution_warnings"] = resolved.warnings
@@ -185,9 +191,7 @@ class LightRAGService:
         return [*limited[: max_context_chunks - 1], first_graph]
 
     def stream_answer(self, request: RetrievalRequest) -> dict[str, Any]:
-        started = time.perf_counter()
         retrieval_hits = self.retrieval_service.search(request)
-        retrieval_done = time.perf_counter()
         graph_context: GraphContext | None = None
         graph_payload: dict[str, Any] = {}
         graph_runtime_enabled = bool(getattr(self.graph_retriever, "enabled", True))
@@ -210,9 +214,10 @@ class LightRAGService:
             except Exception:
                 lightrag_enabled = False
                 lightrag_error = "graph.retrieval_failed"
-        graph_done = time.perf_counter()
 
-        contexts = self.context_assembler.merge(retrieval_hits, graph_context)
+
+        context_assembler = ContextAssembler(document_resolver=self.document_resolver)
+        contexts = context_assembler.merge(retrieval_hits, graph_context)
         contexts = self._limit_contexts(
             contexts,
             graph_context,
@@ -227,13 +232,15 @@ class LightRAGService:
                     request.query,
                     contexts,
                     request.llm.temperature,
+                    request.llm.system_prompt,
                 )
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to initialize primary LLM stream, falling back to extractive")
                 yield from ExtractiveAnswerService(degraded=True).stream_answer(
                     request.query,
                     contexts,
                     request.llm.temperature,
+                    request.llm.system_prompt,
                 )
                 return
 
@@ -244,12 +251,13 @@ class LightRAGService:
                 first_token_retrieved = True
             except StopIteration:
                 return
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed on first chunk from primary LLM stream, falling back to extractive")
                 yield from ExtractiveAnswerService(degraded=True).stream_answer(
                     request.query,
                     contexts,
                     request.llm.temperature,
+                    request.llm.system_prompt,
                 )
                 return
 
@@ -258,7 +266,7 @@ class LightRAGService:
                 try:
                     for chunk in primary_stream:
                         yield chunk
-                except Exception as e:
+                except Exception:
                     logger.exception("Error during primary LLM stream iteration")
                     yield "\n⚠️ Đã xảy ra lỗi khi tạo câu trả lời từ mô hình ngôn ngữ."
 
@@ -278,7 +286,7 @@ class LightRAGService:
         if lightrag_error:
             trace["lightrag_error"] = lightrag_error
 
-        resolved = self.context_assembler.last_resolved
+        resolved = context_assembler.last_resolved
         if resolved is not None:
             if resolved.warnings:
                 trace["resolution_warnings"] = resolved.warnings
@@ -293,6 +301,7 @@ class LightRAGService:
                 "doc_id": context.doc_id,
                 "title": context.title,
                 "citation": context.citation,
+                "text": context.text,
             }
             for context in contexts
         ]
@@ -304,4 +313,3 @@ class LightRAGService:
             "graph_context": graph_payload,
             "retrieval_trace": trace,
         }
-

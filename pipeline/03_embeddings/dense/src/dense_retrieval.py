@@ -103,24 +103,22 @@ class DenseRetriever:
         faiss_nprobe: int = 32,
         faiss_oversample: int = 20,
         elastic_cloud_id: str | None = None,
+        elastic_url: str | None = None,
         elastic_api_key: str | None = None,
         elastic_index: str = COLLECTION_NAME,
         elastic_num_candidates: int | None = None,
     ) -> None:
-        if storage_dir is not None or url is not None:
+        if storage_dir is not None:
             raise ValueError(
-                "Qdrant targets are no longer supported in the MVP dense "
-                "retriever. Use --elastic-cloud-id for Elasticsearch."
+                "Qdrant storage_dir is no longer supported. "
+                "Use --faiss-dir, --elastic-cloud-id, or --elastic-url."
             )
-        if api_key is not None:
-            raise ValueError(
-                "Qdrant api_key is no longer supported. Use elastic_api_key "
-                "with Elasticsearch."
-            )
-        targets = (faiss_dir, elastic_cloud_id)
+        target_url = elastic_url or url
+        target_api_key = elastic_api_key or api_key
+        targets = (faiss_dir, elastic_cloud_id, target_url)
         if sum(value is not None for value in targets) != 1:
             raise ValueError(
-                "Provide exactly one of faiss_dir or elastic_cloud_id"
+                "Provide exactly one of faiss_dir, elastic_cloud_id, or elastic_url"
             )
         self.client = None
         self.elasticsearch_client: Any | None = None
@@ -132,21 +130,29 @@ class DenseRetriever:
         self.elastic_num_candidates = elastic_num_candidates
         if faiss_dir is not None:
             self._load_faiss(faiss_dir, faiss_nprobe)
-        elif elastic_cloud_id is not None:
+        elif elastic_cloud_id is not None or target_url is not None:
             if Elasticsearch is None:
                 raise ModuleNotFoundError(
                     "Elasticsearch retrieval requires the elasticsearch client. "
                     "Install it with `python -m pip install elasticsearch`."
                 )
-            resolved_cloud_id, resolved_api_key = resolve_credentials(
-                elastic_cloud_id,
-                elastic_api_key,
+            resolved_cloud_id, resolved_url, resolved_api_key = resolve_credentials(
+                cloud_id=elastic_cloud_id,
+                api_key=target_api_key,
+                url=target_url,
             )
-            self.elasticsearch_client = Elasticsearch(
-                cloud_id=resolved_cloud_id,
-                api_key=resolved_api_key,
-                request_timeout=60,
-            )
+            if resolved_cloud_id:
+                self.elasticsearch_client = Elasticsearch(
+                    cloud_id=resolved_cloud_id,
+                    api_key=resolved_api_key,
+                    request_timeout=60,
+                )
+            else:
+                self.elasticsearch_client = Elasticsearch(
+                    hosts=[resolved_url],
+                    api_key=resolved_api_key,
+                    request_timeout=60,
+                )
             if not self.elasticsearch_client.indices.exists(index=elastic_index):
                 self.elasticsearch_client.close()
                 raise RuntimeError(

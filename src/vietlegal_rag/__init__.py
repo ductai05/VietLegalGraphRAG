@@ -2,6 +2,7 @@ import sys
 import os
 import threading
 from pathlib import Path
+from typing import Any
 
 # Add package directories to sys.path to allow legacy absolute imports
 _PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -15,7 +16,7 @@ if str(_PACKAGE_ROOT) not in sys.path:
 # Lock for building services to avoid race conditions during concurrent startup
 _build_lock = threading.Lock()
 
-def build_services(valves):
+def build_services(valves: Any):
     """
     Map Valves attributes to environment variables, clear config cache,
     and build service dependency graph.
@@ -39,6 +40,7 @@ def build_services(valves):
             "LLM_BASE_URL": valves.llm_base_url,
             "LLM_API_KEY": valves.llm_api_key,
             "LLM_MODEL": valves.llm_model,
+            "LLM_MAX_TOKENS": valves.llm_max_tokens,
             "AGENT_ENABLED": valves.agent_enabled,
             "AGENT_MAX_ITERATIONS": valves.agent_max_iterations,
             "WEB_SEARCH_PROVIDER": valves.web_search_provider,
@@ -53,8 +55,10 @@ def build_services(valves):
         from config import get_settings
         from dependencies import get_runtime_services
         
-        # Clear config cache so new environment variables are loaded
+        # Clear both caches so changed Open WebUI Valves rebuild the dependency
+        # graph instead of reusing clients configured for older values.
         get_settings.cache_clear()
+        get_runtime_services.cache_clear()
         
         # Build and return the services namespace
         return get_runtime_services()

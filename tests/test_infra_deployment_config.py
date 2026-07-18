@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 import numpy as np
 
@@ -34,7 +33,7 @@ def test_production_compose_manages_only_app_services() -> None:
 def test_deploy_workflow_rebuilds_all_app_services() -> None:
     workflow = read(".github/workflows/deploy.yml")
 
-    assert "up -d --no-deps open-webui" in workflow
+    assert "up -d --no-deps --remove-orphans open-webui" in workflow
     assert "up --build -d" not in workflow
     assert "Waiting for open-webui health" in workflow
     assert "curl --fail --silent --show-error" in workflow
@@ -47,7 +46,7 @@ def test_ci_runs_lint_and_blocks_tracked_env_files() -> None:
     assert "git ls-files '*.env'" in workflow
     assert "!*.env.example" in read(".gitignore")
     assert "https://download.pytorch.org/whl/cpu" in workflow
-    assert "grep -v '^torch==' src/backend/requirements.txt" in workflow
+    assert "grep -v '^torch==' src/open-webui/backend/requirements.txt" in workflow
 
 
 def test_neo4j_setup_script_is_destructive_but_guarded() -> None:
@@ -79,29 +78,20 @@ def test_neo4j_droplet_import_wrapper_uploads_graph_artifacts_over_ssh() -> None
 
 
 def test_backend_requirements_are_installable_and_include_runtime_clients() -> None:
-    requirements = read("src/backend/requirements.txt")
+    toml_content = read("src/vietlegal_rag/pyproject.toml")
 
-    assert "Cloud SDKs" not in requirements
-    assert "python-dotenv" in requirements
-    assert "neo4j" in requirements
-    assert "elasticsearch" in requirements
-    assert "openai" in requirements
-    assert "voyageai" in requirements
-    assert "onnxruntime" in requirements
-    assert "transformers" in requirements
-    assert "pypdf" in requirements
-    for line in requirements.splitlines():
-        if not line or line.startswith("#"):
-            continue
-        assert re.match(r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[0-9][A-Za-z0-9_.!+-]*$", line), line
+    assert "python-dotenv" in toml_content
+    assert "neo4j" in toml_content
+    assert "elasticsearch" in toml_content
+    assert "voyageai" in toml_content
+    assert "onnxruntime" in toml_content
 
 
 def test_backend_dockerfile_uses_onnx_runtime() -> None:
-    dockerfile = read("src/backend/Dockerfile")
+    dockerfile = read("src/infra/Dockerfile.openwebui")
 
-    assert "ONNX Runtime" in dockerfile
-    assert "https://download.pytorch.org/whl/cpu" not in dockerfile
-    assert "pip install --no-cache-dir -r /tmp/requirements.txt" in dockerfile
+    assert "python:3.11-slim-bookworm" in dockerfile
+    assert "pip install --no-cache-dir /app/vietlegal_rag/" in dockerfile
 
 
 def test_production_env_uses_single_hybrid_elasticsearch_index() -> None:

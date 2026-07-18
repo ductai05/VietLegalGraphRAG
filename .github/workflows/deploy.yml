@@ -5,14 +5,49 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  deploy:
-    name: Deploy to DigitalOcean Droplet
+  build-and-deploy:
+    name: Build Image and Deploy to Droplet
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Free Disk Space (Ubuntu)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/infra/Dockerfile.openwebui
+          push: true
+          tags: ghcr.io/ductai05/vietlegal-webui:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Copy files to Droplet
         uses: appleboy/scp-action@v0.1.7
@@ -46,14 +81,23 @@ jobs:
               exit 1
             fi
 
+            # Source env file to get PORT environment variables if defined
+            set -a
+            [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+            set +a
+
             docker network inspect vietlegal_net >/dev/null 2>&1 || docker network create vietlegal_net
 
-            echo "Building open-webui"
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build open-webui
-            echo "Starting open-webui"
-            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps open-webui
+            echo "Logging in to GHCR on Droplet..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            echo "Waiting for open-webui health"
+            echo "Pulling latest open-webui image..."
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull open-webui
+
+            echo "Starting open-webui..."
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps --remove-orphans open-webui
+
+            echo "Waiting for open-webui health..."
             for attempt in $(seq 1 30); do
               if curl --fail --silent --show-error http://127.0.0.1:${FRONTEND_PORT:-80}/ready >/dev/null; then
                 break

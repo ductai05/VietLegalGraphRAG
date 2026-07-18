@@ -1,9 +1,10 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,10 +21,10 @@ sys.path.insert(0, VIETLEGAL_RAG_SERVICES)
 for mod_name in ["lightrag_service", "answer_service"]:
     sys.modules.pop(mod_name, None)
 
-from contracts import AnswerContext, GraphContext, RetrievalHit
+from contracts import AnswerContext, RetrievalHit
 from retrieval_modes import RetrievalRequest
 from lightrag_service import LightRAGService
-from answer_service import OpenAICompatibleAnswerService, ExtractiveAnswerService
+from answer_service import OpenAICompatibleAnswerService
 
 
 class LlmFallbackTests(unittest.TestCase):

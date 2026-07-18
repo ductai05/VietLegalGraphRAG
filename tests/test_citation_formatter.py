@@ -129,12 +129,24 @@ def _static_path_citation() -> dict[str, str]:
 def test_format_citations_block_static_path_renders_plain_text() -> None:
     from citation_formatter import format_citations_block
 
+    cite = _static_path_citation()
+    cite["text"] = "Noi dung phap ly"
+    block = format_citations_block([cite])
+
+    assert "📚 Căn cứ pháp lý" in block
+    assert "Điều 101, Nghị định 15/2020/NĐ-CP" in block
+    assert "<details" in block
+    assert "Noi dung phap ly" in block
+
+
+def test_format_citations_block_static_path_fallback_without_text() -> None:
+    from citation_formatter import format_citations_block
+
     block = format_citations_block([_static_path_citation()])
 
     assert "📚 Căn cứ pháp lý" in block
-    assert "- **[1]** Điều 101, Nghị định 15/2020/NĐ-CP" in block
-    # No url: must not become a markdown link.
-    assert "](" not in block
+    assert "Điều 101" in block
+    assert "<span" not in block
 
 
 def test_format_citations_block_never_leaks_chunk_id() -> None:
@@ -155,14 +167,35 @@ def test_format_citations_block_agent_path_renders_link_marker_and_summary() -> 
             "url": "https://vanban.chinhphu.vn/nd15",
             "effect_verdict": "expired",
             "summary": "Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội.",
+            "text": "Noi dung phap ly",
         }
     )
 
     block = format_citations_block([cite])
 
-    assert "[Điều 101, Nghị định 15/2020/NĐ-CP](https://vanban.chinhphu.vn/nd15)" in block
+    assert 'href="https://vanban.chinhphu.vn/nd15"' in block
+    assert "Noi dung phap ly" in block
+    assert "⚠️ Hết hiệu lực" in block
+    assert "Tóm tắt: Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội." in block
+
+
+def test_format_citations_block_agent_path_fallback_without_text() -> None:
+    from citation_formatter import format_citations_block
+
+    cite = _static_path_citation()
+    cite.update(
+        {
+            "url": "https://vanban.chinhphu.vn/nd15",
+            "effect_verdict": "expired",
+            "summary": "Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội.",
+        }
+    )
+
+    block = format_citations_block([cite])
+
+    assert "[Điều 101, Nghị định 15/2020/NĐ-CP]" in block
+    assert "https://vanban.chinhphu.vn/nd15" in block
     assert "⚠️ (Hết hiệu lực)" in block
-    assert "— Quy định về trách nhiệm sử dụng dịch vụ mạng xã hội." in block
 
 
 def test_format_citations_block_superseded_marker() -> None:

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import sys
 import re
 import time
 from collections import defaultdict
@@ -24,19 +25,85 @@ from groq import (
     Groq,
     RateLimitError,
 )
+import httpx
+
+
+class _SimpleNamespace:
+    """Attribute-accessible dict wrapper for API response parsing."""
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                setattr(self, key, _SimpleNamespace(**value))
+            elif isinstance(value, list):
+                setattr(self, key, [
+                    _SimpleNamespace(**item) if isinstance(item, dict) else item
+                    for item in value
+                ])
+            else:
+                setattr(self, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+class HttpxLLMClient:
+    """Thin OpenAI-compatible client using httpx directly.
+
+    Avoids both Groq SDK (wrong path) and OpenAI SDK (injects
+    enable_thinking) issues when calling third-party endpoints.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, timeout: float = 90) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._http = httpx.Client(timeout=timeout)
+        self.chat = self  # duck-type: client.chat.completions.create()
+        self.completions = self
+
+    def create(self, **kwargs: Any) -> _SimpleNamespace:
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self._base_url}/chat/completions"
+        resp = self._http.post(url, json=kwargs, headers=headers)
+        if resp.status_code == 429:
+            exc = RateLimitError.__new__(RateLimitError)
+            exc.response = resp
+            exc.status_code = 429
+            raise exc
+        if resp.status_code != 200:
+            exc = APIStatusError.__new__(APIStatusError)
+            exc.response = resp
+            exc.status_code = resp.status_code
+            exc.message = resp.text
+            raise exc
+        # Response may have streaming suffix "data: [DONE]".
+        # Parse only the first JSON object from the body.
+        raw = resp.text.strip()
+        # Find end of the first JSON object by trying incremental parse.
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # Strip trailing non-JSON lines (e.g. "data: [DONE]")
+            first_line = raw.split("\n")[0].strip()
+            data = json.loads(first_line)
+        return _SimpleNamespace(**data)
 
 DEFAULT_MODELS = (
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "qwen/qwen3-32b",
+    "groq/llama-3.3-70b-versatile",
+    "groq/llama-3.1-8b-instant",
+    "groq/qwen/qwen3-32b",
+    "groq/qwen/qwen3.6-27b",
 )
-DEFAULT_SETUPS = ("no_rag", "hybrid_rerank")
-ANSWER_RE = re.compile(r"\b([ABCD])\b", re.IGNORECASE)
+DEFAULT_SETUPS = ("no_rag", "hybrid_rerank", "hybrid_graph")
+ANSWER_RE = re.compile(r"\b([ABCDE])\b", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path, default=Path("output/eval_questions.json"))
+    parser.add_argument("--gold", type=Path, default=Path("output/eval_questions_gold.jsonl"))
     parser.add_argument(
         "--retrieval",
         type=Path,
@@ -47,9 +114,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--setups", nargs="+", choices=DEFAULT_SETUPS, default=list(DEFAULT_SETUPS))
     parser.add_argument("--sparse-index", default="vietlegal_chunks_sparse_current")
+    parser.add_argument("--neo4j-uri", default=os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687"))
+    parser.add_argument("--neo4j-user", default=os.environ.get("NEO4J_USER", "neo4j"))
+    parser.add_argument("--neo4j-password", default=os.environ.get("NEO4J_PASSWORD", "password"))
+    parser.add_argument("--neo4j-database", default=os.environ.get("NEO4J_DATABASE", "neo4j"))
+    parser.add_argument("--max-hops", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-context-chars", type=int, default=4_000)
-    parser.add_argument("--max-completion-tokens", type=int, default=192)
+    parser.add_argument("--max-completion-tokens", type=int, default=512)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--max-retries", type=int, default=30)
@@ -77,6 +149,18 @@ def load_questions(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+
+def load_gold_mapping(path: Path) -> dict[str, set[str]]:
+    if not path.exists():
+        return {}
+    mapping = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip(): continue
+            row = json.loads(line)
+            mapping[normalize_query(row["query"])] = set(row.get("relevant_chunk_ids", []))
+    return mapping
+
 def load_retrieval(path: Path) -> dict[str, dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     details = payload.get("details")
@@ -92,18 +176,20 @@ def normalize_query(value: str) -> str:
 def load_env(path: Path) -> None:
     if path.exists():
         load_dotenv(path, override=False)
-    groq_keys = [
-        value
-        for name, value in {**dotenv_values(path), **os.environ}.items()
-        if name.startswith("GROQ_API_KEY") and value
-    ]
-    missing = [
-        name
-        for name in ("ELASTIC_CLOUD_ID", "ELASTIC_API_KEY")
-        if not os.environ.get(name)
-    ]
-    if not groq_keys:
-        missing.append("GROQ_API_KEY*")
+    
+    env_vars = {**dotenv_values(path), **os.environ}
+    missing = []
+    
+    # Elasticsearch credentials
+    if not env_vars.get("ELASTICSEARCH_URL") and not (env_vars.get("ELASTIC_CLOUD_ID") and env_vars.get("ELASTIC_API_KEY")):
+        missing.append("ELASTICSEARCH_URL or (ELASTIC_CLOUD_ID + ELASTIC_API_KEY)")
+        
+    # LLM credentials
+    if not env_vars.get("LLM_API_KEY"):
+        groq_keys = [value for name, value in env_vars.items() if name.startswith("GROQ_API_KEY") and value]
+        if not groq_keys:
+            missing.append("LLM_API_KEY or GROQ_API_KEY*")
+
     if missing:
         raise ValueError(
             "Missing credentials: "
@@ -136,14 +222,18 @@ class GroqKeyPool:
             **{str(key): value for key, value in dotenv_values(self.env_file).items()},
             **os.environ,
         }
-        candidates = sorted(
-            (
-                (name, str(value))
-                for name, value in values.items()
-                if name.startswith("GROQ_API_KEY") and value
-            ),
-            key=lambda item: key_sort_value(item[0]),
-        )
+        
+        if "LLM_API_KEY" in values and values["LLM_API_KEY"]:
+            candidates = [("LLM_API_KEY", str(values["LLM_API_KEY"]))]
+        else:
+            candidates = sorted(
+                (
+                    (name, str(value))
+                    for name, value in values.items()
+                    if name.startswith("GROQ_API_KEY") and value
+                ),
+                key=lambda item: key_sort_value(item[0]),
+            )
         unique: list[tuple[str, str]] = []
         seen_values: set[str] = set()
         for name, value in candidates:
@@ -159,7 +249,7 @@ class GroqKeyPool:
                 self.disabled.discard(name)
                 self.cooldown_until.pop(name, None)
         if not self.keys:
-            raise ValueError(f"No GROQ_API_KEY* values found in {self.env_file}")
+            raise ValueError(f"No LLM_API_KEY or GROQ_API_KEY* values found in {self.env_file}")
         if initial:
             self.index = self.offset % len(self.keys)
         elif old_name:
@@ -177,10 +267,22 @@ class GroqKeyPool:
     def active_name(self) -> str:
         return self.keys[self.index][0]
 
-    def client(self) -> Groq:
+    def client(self) -> Groq | HttpxLLMClient:
         name, key = self.keys[self.index]
         if name not in self.clients:
-            self.clients[name] = Groq(api_key=key, max_retries=0, timeout=90)
+            values = {**dotenv_values(self.env_file), **os.environ}
+            base_url = values.get("LLM_BASE_URL")
+            if base_url and name == "LLM_API_KEY":
+                # Use httpx directly for non-Groq endpoints.
+                # Groq SDK hardcodes wrong path; OpenAI SDK injects
+                # enable_thinking which Groq rejects.
+                self.clients[name] = HttpxLLMClient(
+                    api_key=key,
+                    base_url=base_url,
+                    timeout=90,
+                )
+            else:
+                self.clients[name] = Groq(api_key=key, max_retries=0, timeout=90)
         return self.clients[name]
 
     def disable_active(self) -> None:
@@ -276,6 +378,80 @@ def hydrate_contexts(
     return chunks
 
 
+def hydrate_graph_contexts(
+    elastic: Elasticsearch,
+    driver: Any,
+    neo4j_database: str,
+    questions: list[dict[str, Any]],
+    retrieval: dict[str, dict[str, Any]],
+    chunks: dict[str, dict[str, Any]],
+    *,
+    index: str,
+    top_k: int,
+    max_hops: int,
+) -> dict[str, list[str]]:
+    """Perform graph expansion for each question and hydrate the neighbor chunks."""
+    backend_path = str(Path(__file__).resolve().parent.parent.parent / "src" / "backend")
+    services_path = str(Path(__file__).resolve().parent.parent.parent / "src" / "backend" / "services")
+    if backend_path not in sys.path:
+        sys.path.append(backend_path)
+    if services_path not in sys.path:
+        sys.path.append(services_path)
+    try:
+        from services.graph_retriever import GraphRetriever
+        from services.elasticsearch_retriever import ElasticsearchGraphChunkFetcher
+    except ImportError:
+        raise RuntimeError("Failed to import GraphRetriever. Ensure src/backend is reachable.")
+
+    fetcher = ElasticsearchGraphChunkFetcher(elastic, index=index, per_doc_size=1)
+    retriever = GraphRetriever(driver, database=neo4j_database, chunk_fetcher=fetcher)
+
+    query_graph_chunk_ids: dict[str, list[str]] = {}
+
+    for q in questions:
+        q_id = q["question_id"]
+        query_text = q["question"]
+        row = retrieval.get(normalize_query(query_text))
+        if not row:
+            continue
+        
+        top_ids = [str(cid) for cid in row["top_chunk_ids"][:top_k]]
+        base_doc_ids = []
+        for cid in top_ids:
+            if cid in chunks and chunks[cid].get("doc_id"):
+                base_doc_ids.append(str(chunks[cid]["doc_id"]))
+        
+        expanded_chunks = []
+        seen_chunk_ids = set(top_ids)
+        for doc_id in set(base_doc_ids):
+            graph_context = retriever.get_document_neighbors(doc_id, depth=max_hops)
+            related_docs = []
+            for node in graph_context.nodes:
+                node_doc_id = node.properties.get("doc_id") if hasattr(node, "properties") else None
+                if not node_doc_id and hasattr(node, "id") and str(node.id).startswith("doc:"):
+                    node_doc_id = str(node.id).split(":", 1)[1]
+                if node_doc_id:
+                    related_docs.append({"doc_id": str(node_doc_id)})
+            
+            answer_contexts = fetcher(query=query_text, related_documents=related_docs)
+            for ac in answer_contexts:
+                cid = str(ac.chunk_id)
+                if cid not in seen_chunk_ids:
+                    seen_chunk_ids.add(cid)
+                    chunks[cid] = {
+                        "chunk_id": cid,
+                        "chunk_text": ac.text,
+                        "doc_id": ac.doc_id,
+                        "title": ac.title,
+                        "citation": ac.citation,
+                    }
+                    expanded_chunks.append(cid)
+                    
+        query_graph_chunk_ids[q_id] = expanded_chunks
+
+    return query_graph_chunk_ids
+
+
 def build_context(
     chunk_ids: list[str],
     chunks: dict[str, dict[str, Any]],
@@ -342,13 +518,17 @@ def build_prompt(
     context: str = "",
     valid_chunk_ids: list[str] | None = None,
 ) -> str:
+    choices_str = choices_text(question)
+    if setup != "no_rag":
+        choices_str += "\nE. Không đủ thông tin trong tài liệu tham khảo"
+        
     common = (
         "Trả lời câu hỏi trắc nghiệm pháp luật Việt Nam dưới đây. "
-        "Chỉ chọn một đáp án A, B, C hoặc D. "
+        f"Chỉ chọn một đáp án {'A, B, C, D hoặc E' if setup != 'no_rag' else 'A, B, C hoặc D'}. "
         "Không giải thích dài dòng. Trả về đúng một JSON object có dạng "
         '{"answer":"A","cited_chunk_ids":[]}.\n\n'
         f"Câu hỏi: {question['question']}\n"
-        f"{choices_text(question)}"
+        f"{choices_str}"
     )
     if setup == "no_rag":
         return (
@@ -360,22 +540,52 @@ def build_prompt(
         common
         + "\n\nChỉ dựa trên các nguồn truy xuất bên dưới. "
         "cited_chunk_ids phải chứa chunk_id của nguồn trực tiếp hỗ trợ đáp án, "
-        "và chỉ được dùng ID trong danh sách cho phép. Nếu nguồn không đủ, vẫn "
-        "chọn đáp án hợp lý nhất.\n"
+        "và chỉ được dùng ID trong danh sách cho phép.\n"
+        "Nếu các nguồn truy xuất KHÔNG chứa đủ thông tin để trả lời câu hỏi, bạn BẮT BUỘC phải chọn đáp án E thay vì cố đoán.\n\n"
         f"Chunk ID cho phép: {allowed}\n\nNguồn truy xuất:\n{context}"
     )
 
 
 def parse_response(content: str) -> tuple[str | None, list[str], bool]:
     text = (content or "").strip()
+
+    # Remove <think>...</think> block if present
+    # We use re.sub with re.DOTALL to match across newlines
+    # If the response was truncated and missing </think>, we try to remove everything after <think>
+    if "<think>" in text:
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        if "<think>" in text:  # Unclosed tag
+            text = text.split("<think>")[0].strip()
+
+    json_str = text
+    json_match = re.search(r'```(?:json)?(.*?)```', text, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1).strip()
+    else:
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end >= start:
+            json_str = text[start:end+1]
+
     try:
-        payload = json.loads(text)
+        payload = json.loads(json_str)
         answer = str(payload.get("answer", "")).strip().upper()
         citations = payload.get("cited_chunk_ids") or []
-        if answer in {"A", "B", "C", "D"} and isinstance(citations, list):
+        if answer in {"A", "B", "C", "D", "E"} and isinstance(citations, list):
             return answer, [str(value) for value in citations], True
     except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+        # try to find a valid JSON object within the text using regex
+        json_objs = re.findall(r'\{[^{}]*\"answer\"\s*:[^{}]*\}', text)
+        if json_objs:
+            try:
+                payload = json.loads(json_objs[-1])
+                answer = str(payload.get("answer", "")).strip().upper()
+                citations = payload.get("cited_chunk_ids") or []
+                if answer in {"A", "B", "C", "D", "E"} and isinstance(citations, list):
+                    return answer, [str(value) for value in citations], True
+            except Exception:
+                pass
+
     match = ANSWER_RE.search(text)
     return (match.group(1).upper() if match else None), [], False
 
@@ -394,37 +604,40 @@ def request_completion(
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "max_completion_tokens": max_completion_tokens,
-        "response_format": {"type": "json_object"},
         "seed": seed,
     }
-    if model == "qwen/qwen3-32b":
-        kwargs["reasoning_effort"] = "none"
-        kwargs["reasoning_format"] = "hidden"
+    if "qwen3.6-27b" in model.lower():
+        kwargs["max_completion_tokens"] = max(max_completion_tokens, 4096)
+    # Groq's Qwen3 thinking models reject response_format:json_object
+    # and reasoning_format/reasoning_effort. Use plain text and parse.
+    if "qwen3" not in model.lower():
+        kwargs["response_format"] = {"type": "json_object"}
     json_fallback_used = False
     for attempt in range(max_retries + 1):
         try:
             key_name = key_pool.active_name
             response = key_pool.client().chat.completions.create(**kwargs)
             return response, attempt, key_name
-        except (RateLimitError, APIConnectionError, APITimeoutError, APIStatusError) as exc:
+        except (RateLimitError, APIConnectionError, APITimeoutError, APIStatusError, httpx.HTTPError) as exc:
             if attempt >= max_retries:
                 raise
+            status_code = getattr(exc, "status_code", None)
             if (
-                isinstance(exc, APIStatusError)
-                and exc.status_code == 400
+                isinstance(exc, (APIStatusError, httpx.HTTPStatusError))
+                and status_code == 400
                 and "json_validate_failed" in str(exc)
                 and not json_fallback_used
             ):
                 logging.warning(
-                    "Groq JSON mode failed for %s; retrying once in plain text mode",
+                    "JSON mode failed for %s; retrying once in plain text mode",
                     model,
                 )
                 kwargs.pop("response_format", None)
                 json_fallback_used = True
                 continue
-            if isinstance(exc, APIStatusError) and 400 <= exc.status_code < 500:
-                if exc.status_code == 401:
-                    logging.warning("Disabling rejected Groq key variable %s", key_pool.active_name)
+            if isinstance(exc, (APIStatusError, httpx.HTTPStatusError)) and status_code is not None and 400 <= status_code < 500:
+                if status_code == 401:
+                    logging.warning("Disabling rejected API key variable %s", key_pool.active_name)
                     key_pool.disable_active()
                     next_name, wait = key_pool.rotate()
                     logging.warning("Rotated to %s after authentication failure", next_name)
@@ -432,10 +645,10 @@ def request_completion(
                         time.sleep(wait)
                     continue
                 if not isinstance(exc, RateLimitError):
-                    raise
+                    logging.warning("APIError status %s for %s, retrying anyway...", status_code, model)
             if (
-                isinstance(exc, APIStatusError)
-                and exc.status_code == 413
+                isinstance(exc, (APIStatusError, httpx.HTTPStatusError))
+                and status_code == 413
                 and "Request too large" in str(exc)
             ):
                 raise
@@ -460,7 +673,7 @@ def request_completion(
             else:
                 delay += random.random()
                 logging.warning(
-                    "Groq request failed for %s (attempt %d/%d); retrying in %.1fs",
+                    "LLM request failed for %s (attempt %d/%d); retrying in %.1fs",
                     model,
                     attempt + 1,
                     max_retries,
@@ -548,7 +761,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "completion_tokens": sum(row.get("completion_tokens", 0) for row in subset),
             "by_question_type": by_type,
         }
-        if setup == "hybrid_rerank":
+        if setup in ("hybrid_rerank", "hybrid_graph"):
             item.update(
                 {
                     "retrieval_hit_rate": safe_mean(
@@ -574,6 +787,26 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
                             if not row["retrieval_hit"]
                         ]
                     ),
+                    "refusal_rate": safe_mean(
+                        [
+                            1.0 if row.get("predicted_answer") == "E" else 0.0
+                            for row in subset
+                        ]
+                    ),
+                    "refusal_when_retrieval_miss": safe_mean(
+                        [
+                            1.0 if row.get("predicted_answer") == "E" else 0.0
+                            for row in subset
+                            if not row["retrieval_hit"]
+                        ]
+                    ),
+                    "hallucination_when_retrieval_miss": safe_mean(
+                        [
+                            1.0 if row.get("predicted_answer") in {"A", "B", "C", "D"} and not row["correct"] else 0.0
+                            for row in subset
+                            if not row["retrieval_hit"]
+                        ]
+                    ),
                 }
             )
         results.setdefault(model, {})[setup] = item
@@ -592,21 +825,37 @@ def usage_value(usage: Any, name: str) -> int:
 
 def main() -> None:
     args = parse_args()
+    if not args.env_file.exists() and Path("env").exists():
+        args.env_file = Path("env")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.top_k <= 0 or args.max_context_chars <= 0:
         raise ValueError("--top-k and --max-context-chars must be positive")
     load_env(args.env_file)
     questions = load_questions(args.questions)
     retrieval = load_retrieval(args.retrieval)
+    gold_mapping = load_gold_mapping(args.gold) if getattr(args, "gold", None) else {}
     selected = questions[args.start_index :]
     if args.limit is not None:
         selected = selected[: args.limit]
+        
+    models_to_run = args.models
 
-    elastic = Elasticsearch(
-        cloud_id=os.environ["ELASTIC_CLOUD_ID"],
-        api_key=os.environ["ELASTIC_API_KEY"],
-        request_timeout=60,
-    )
+    es_url = os.environ.get("ELASTICSEARCH_URL")
+    if es_url:
+        es_api_key = os.environ.get("ELASTICSEARCH_API_KEY") or os.environ.get("ELASTIC_API_KEY")
+        elastic = Elasticsearch(
+            hosts=[es_url],
+            api_key=es_api_key,
+            verify_certs=os.environ.get("ELASTICSEARCH_VERIFY_CERTS", "true").lower() == "true",
+            request_timeout=60,
+        )
+    else:
+        elastic = Elasticsearch(
+            cloud_id=os.environ["ELASTIC_CLOUD_ID"],
+            api_key=os.environ["ELASTIC_API_KEY"],
+            request_timeout=60,
+        )
+    query_graph_chunk_ids: dict[str, list[str]] = {}
     try:
         chunks = hydrate_contexts(
             elastic,
@@ -614,35 +863,65 @@ def main() -> None:
             index=args.sparse_index,
             top_k=args.top_k,
         )
+        if "hybrid_graph" in args.setups:
+            from neo4j import GraphDatabase
+            driver = GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, args.neo4j_password))
+            try:
+                logging.info("Hydrating graph contexts...")
+                query_graph_chunk_ids = hydrate_graph_contexts(
+                    elastic=elastic,
+                    driver=driver,
+                    neo4j_database=args.neo4j_database,
+                    questions=selected,
+                    retrieval=retrieval,
+                    chunks=chunks,
+                    index=args.sparse_index,
+                    top_k=args.top_k,
+                    max_hops=args.max_hops,
+                )
+            finally:
+                driver.close()
     finally:
         elastic.close()
 
     contexts_path = args.output_dir / "contexts.jsonl"
     contexts_path.parent.mkdir(parents=True, exist_ok=True)
-    context_rows: dict[str, dict[str, Any]] = {}
+    context_rows: dict[tuple[str, str], dict[str, Any]] = {}
     for question in questions:
         row = retrieval.get(normalize_query(question["question"]))
-        if row is None:
-            raise RuntimeError(f"No retrieval result for {question['question_id']}")
-        top_ids = [str(value) for value in row["top_chunk_ids"][: args.top_k]]
-        text, included_ids, truncated = build_context(
-            top_ids,
-            chunks,
-            max_chars=args.max_context_chars,
-        )
-        context_rows[question["question_id"]] = {
-            "question_id": question["question_id"],
-            "top_chunk_ids": top_ids,
-            "included_chunk_ids": included_ids,
-            "context": text,
-            "truncated": truncated,
-        }
+        if not row:
+            logging.warning(f"No retrieval result for {question['question_id']}. Skipping.")
+            continue
+        for setup in args.setups:
+            if setup == "no_rag":
+                continue
+            
+            top_ids = [str(value) for value in row["top_chunk_ids"][: args.top_k]]
+            if setup == "hybrid_graph":
+                top_ids.extend(query_graph_chunk_ids.get(question["question_id"], []))
+                
+            text, included_ids, truncated = build_context(
+                top_ids,
+                chunks,
+                max_chars=args.max_context_chars,
+            )
+            context_rows[(setup, question["question_id"])] = {
+                "question_id": question["question_id"],
+                "top_chunk_ids": top_ids,
+                "included_chunk_ids": included_ids,
+                "context": text,
+                "truncated": truncated,
+            }
+    
     with contexts_path.open("w", encoding="utf-8") as handle:
         for question in questions:
-            handle.write(
-                json.dumps(context_rows[question["question_id"]], ensure_ascii=False)
-                + "\n"
-            )
+            for setup in args.setups:
+                if setup == "no_rag":
+                    continue
+                row_data = context_rows.get((setup, question["question_id"]))
+                if not row_data:
+                    continue
+                handle.write(json.dumps({"setup": setup, **row_data}, ensure_ascii=False) + "\n")
     logging.info("Wrote hydrated contexts to %s", contexts_path)
     if args.hydrate_only:
         return
@@ -650,21 +929,30 @@ def main() -> None:
     results_path = args.output_dir / "responses.jsonl"
     completed = set() if args.no_resume else existing_keys(results_path)
     key_pool = GroqKeyPool(args.env_file, offset=args.groq_key_offset)
-    total = len(selected) * len(args.models) * len(args.setups)
+    total = len(selected) * len(models_to_run) * len(args.setups)
     done = 0
-    for model in args.models:
+    for model in models_to_run:
         for setup in args.setups:
             for question in selected:
                 key = (question["question_id"], model, setup)
                 done += 1
                 if key in completed:
                     continue
-                context_row = context_rows[question["question_id"]]
+                if setup == "no_rag":
+                    context_str = ""
+                    included_ids_list = []
+                else:
+                    context_row = context_rows.get((setup, question["question_id"]))
+                    if not context_row:
+                        continue
+                    context_str = context_row["context"]
+                    included_ids_list = context_row["included_chunk_ids"]
+
                 prompt = build_prompt(
                     question,
                     setup,
-                    context_row["context"] if setup == "hybrid_rerank" else "",
-                    context_row["included_chunk_ids"] if setup == "hybrid_rerank" else [],
+                    context_str,
+                    included_ids_list,
                 )
                 started = time.perf_counter()
                 base = {
@@ -688,8 +976,11 @@ def main() -> None:
                     )
                     content = response.choices[0].message.content or ""
                     answer, cited_ids, valid_json = parse_response(content)
-                    allowed_ids = set(context_row["included_chunk_ids"])
-                    gold_ids = set(question.get("evidence", {}).get("chunk_ids") or [])
+                    allowed_ids = set(included_ids_list)
+                    norm_q = normalize_query(question.get("question", ""))
+                    gold_ids = gold_mapping.get(norm_q)
+                    if not gold_ids:
+                        gold_ids = set(question.get("evidence", {}).get("chunk_ids") or [])
                     retrieval_hit = bool(allowed_ids & gold_ids)
                     usage = getattr(response, "usage", None)
                     result = {
@@ -700,17 +991,17 @@ def main() -> None:
                         "cited_chunk_ids": cited_ids,
                         "valid_json": valid_json,
                         "citation_valid": (
-                            setup == "hybrid_rerank"
+                            setup in ("hybrid_rerank", "hybrid_graph")
                             and bool(cited_ids)
                             and set(cited_ids).issubset(allowed_ids)
                         ),
                         "cites_gold": (
-                            setup == "hybrid_rerank"
+                            setup in ("hybrid_rerank", "hybrid_graph")
                             and bool(set(cited_ids) & gold_ids)
                         ),
                         "retrieval_hit": retrieval_hit,
-                        "included_chunk_ids": context_row["included_chunk_ids"],
-                        "context_truncated": context_row["truncated"],
+                        "included_chunk_ids": included_ids_list,
+                        "context_truncated": context_row["truncated"] if setup != "no_rag" else False,
                         "latency_seconds": round(time.perf_counter() - started, 4),
                         "prompt_tokens": usage_value(usage, "prompt_tokens"),
                         "completion_tokens": usage_value(usage, "completion_tokens"),
@@ -742,7 +1033,7 @@ def main() -> None:
     rows = load_jsonl(results_path)
     summary = summarize(rows)
     summary["configuration"] = {
-        "models": args.models,
+        "models": models_to_run,
         "setups": args.setups,
         "top_k": args.top_k,
         "max_context_chars": args.max_context_chars,

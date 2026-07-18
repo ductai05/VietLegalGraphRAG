@@ -29,12 +29,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f src/backend/requirements.txt ]; then
-            grep -v '^torch==' src/backend/requirements.txt > /tmp/backend-requirements-no-torch.txt
-            pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+          if [ -f src/open-webui/backend/requirements.txt ]; then
+            grep -v '^torch==' src/open-webui/backend/requirements.txt > /tmp/backend-requirements-no-torch.txt
+            pip install --index-url https://download.pytorch.org/whl/cpu torch
             pip install -r /tmp/backend-requirements-no-torch.txt
           fi
+          pip install -e src/vietlegal_rag
           pip install pytest pytest-asyncio anyio httpx ruff
+
+      - name: Create backward-compatible paths for tests
+        run: |
+          mkdir -p src/backend
+          ln -s ../vietlegal_rag src/backend/app
+          ln -s ../vietlegal_rag/services src/backend/services
 
       - name: Block tracked env files
         run: |
@@ -47,7 +54,7 @@ jobs:
 
       - name: Run Ruff
         run: |
-          ruff check src/backend/app src/backend/services src/infra/scripts tests
+          ruff check src/vietlegal_rag src/infra/scripts tests
 
       - name: Run Pytest
         run: |

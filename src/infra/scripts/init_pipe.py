@@ -10,7 +10,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("init_pipe")
 
-WEBUI_URL = "http://localhost:8080"
+WEBUI_URL = os.environ.get("WEBUI_URL", "http://localhost:8080").rstrip("/")
 ADMIN_EMAIL = os.environ.get("WEBUI_ADMIN_EMAIL", "admin@vietlegal.local")
 ADMIN_PASSWORD = os.environ.get("WEBUI_ADMIN_PASSWORD", "VietLegalAdmin2026!")
 
@@ -61,13 +61,10 @@ def upsert_function(token: str):
     payload = {
         "id": "vietlegal_rag",
         "name": "VietLegal RAG",
-        "type": "pipe",
         "content": code_content,
         "meta": {
             "description": "Vietnamese Legal RAG with Graph-enhanced retrieval"
         },
-        "is_active": True,
-        "is_global": True,
     }
     
     # Try updating the existing function first
@@ -94,6 +91,42 @@ def upsert_function(token: str):
         logger.info("Pipe function registered successfully.")
     except Exception as e:
         logger.error(f"Failed to register pipe function: {e}")
+        raise
+
+def get_function_state(token: str) -> dict:
+    """Fetch the registered function state from Open WebUI."""
+    headers = {"Authorization": f"Bearer {token}"}
+    state_url = f"{WEBUI_URL}/api/v1/functions/id/vietlegal_rag"
+    r = requests.get(state_url, headers=headers, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def ensure_function_enabled(token: str):
+    """Activate and globalize the function through Open WebUI REST APIs."""
+    headers = {"Authorization": f"Bearer {token}"}
+    state = get_function_state(token)
+
+    if not state.get("is_active"):
+        toggle_url = f"{WEBUI_URL}/api/v1/functions/id/vietlegal_rag/toggle"
+        logger.info("Pipe function is inactive; activating via REST API...")
+        r = requests.post(toggle_url, headers=headers, timeout=10)
+        r.raise_for_status()
+        state = r.json()
+
+    if not state.get("is_global"):
+        global_url = f"{WEBUI_URL}/api/v1/functions/id/vietlegal_rag/toggle/global"
+        logger.info("Pipe function is not global; enabling global visibility via REST API...")
+        r = requests.post(global_url, headers=headers, timeout=10)
+        r.raise_for_status()
+        state = r.json()
+
+    verified = get_function_state(token)
+    if not verified.get("is_active") or not verified.get("is_global"):
+        raise RuntimeError(
+            "Pipe function verification failed: "
+            f"is_active={verified.get('is_active')}, is_global={verified.get('is_global')}"
+        )
+    logger.info("Pipe function verified active and global.")
 
 if __name__ == "__main__":
     wait_for_webui()
@@ -116,19 +149,9 @@ if __name__ == "__main__":
         logger.error("Could not obtain admin token. Auto-registration aborted.")
         sys.exit(1)
         
-    upsert_function(token)
-
-    # Force enable the function in SQLite to ensure is_active and is_global are 1 (True)
     try:
-        import sqlite3
-        db_path = '/app/backend/data/webui.db'
-        if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE function SET is_active = 1, is_global = 1 WHERE id = 'vietlegal_rag'")
-            conn.commit()
-            logger.info(f"Forced function activation in SQLite. Rows updated: {cursor.rowcount}")
-            conn.close()
+        upsert_function(token)
+        ensure_function_enabled(token)
     except Exception as e:
-        logger.error(f"Failed to force enable function in SQLite database: {e}")
-
+        logger.error(f"Pipe registration/setup failed: {e}")
+        sys.exit(1)
