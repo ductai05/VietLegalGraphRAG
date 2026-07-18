@@ -85,10 +85,15 @@ services:
       - ../../src/vietlegal_rag:/app/vietlegal_rag
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/ready"]
-      interval: 30s
+      # Boot takes ~2 min (heavy Python import graph + embedding model load)
+      # before Uvicorn accepts connections. start_period covers that window so
+      # failing checks during boot don't flip the container to (unhealthy);
+      # the first passing check flips it to (healthy) immediately, which is what
+      # `docker compose up --wait` blocks on.
+      interval: 10s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 6
+      start_period: 180s
 
 volumes:
   webui-data:
