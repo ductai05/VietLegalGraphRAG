@@ -55,7 +55,7 @@
 <div class="space-y-1 text-xs pb-safe-bottom">
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Retrieval mode used by VietLegal RAG: dense, sparse, or hybrid.')}
+			content={$i18n.t('Retrieval mode used by VietLegal RAG: dense, sparse, or hybrid.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -67,7 +67,7 @@
 					on:click={() => toggleParam('retrieval_mode')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.retrieval_mode ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.retrieval_mode ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -89,7 +89,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Number of corpus chunks retrieved before answer generation.')}
+			content={$i18n.t('Number of corpus chunks retrieved before answer generation.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -101,7 +101,7 @@
 					on:click={() => toggleParam('top_k')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.top_k ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.top_k ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -133,7 +133,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Enable or disable reranking for retrieved legal chunks.')}
+			content={$i18n.t('Enable or disable reranking for retrieved legal chunks.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -145,7 +145,7 @@
 					on:click={() => toggleParam('rerank_enabled')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.rerank_enabled ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.rerank_enabled ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -154,7 +154,7 @@
 		{#if (params?.rerank_enabled ?? null) !== null}
 			<div class="flex justify-between items-center mt-0.5">
 				<div class="text-xs text-gray-500">
-					{params.rerank_enabled ? i18n.t('Enabled') : i18n.t('Disabled')}
+					{params.rerank_enabled ? $i18n.t('Enabled') : $i18n.t('Disabled')}
 				</div>
 				<div class="pr-2">
 					<Switch bind:state={params.rerank_enabled} />
@@ -165,7 +165,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Reranker model identifier passed to the retrieval request.')}
+			content={$i18n.t('Reranker model identifier passed to the retrieval request.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -177,7 +177,7 @@
 					on:click={() => toggleParam('rerank_model')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.rerank_model ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.rerank_model ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -196,7 +196,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Enable or disable Neo4j graph traversal for this request.')}
+			content={$i18n.t('Enable or disable Neo4j graph traversal for this request.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -208,7 +208,7 @@
 					on:click={() => toggleParam('graph_enabled')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.graph_enabled ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.graph_enabled ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -217,7 +217,7 @@
 		{#if (params?.graph_enabled ?? null) !== null}
 			<div class="flex justify-between items-center mt-0.5">
 				<div class="text-xs text-gray-500">
-					{params.graph_enabled ? i18n.t('Enabled') : i18n.t('Disabled')}
+					{params.graph_enabled ? $i18n.t('Enabled') : $i18n.t('Disabled')}
 				</div>
 				<div class="pr-2">
 					<Switch bind:state={params.graph_enabled} />
@@ -228,7 +228,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t(
+			content={$i18n.t(
 				'Maximum graph traversal hops. VietLegal RAG currently validates this from 0 to 2.'
 			)}
 			placement="top-start"
@@ -242,7 +242,7 @@
 					on:click={() => toggleParam('max_hops')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.max_hops ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.max_hops ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -274,7 +274,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('LLM generation temperature used by VietLegal RAG.')}
+			content={$i18n.t('LLM generation temperature used by VietLegal RAG.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -286,7 +286,7 @@
 					on:click={() => toggleParam('llm_temperature')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.llm_temperature ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.llm_temperature ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -318,7 +318,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Maximum context chunks allowed in the answer prompt.')}
+			content={$i18n.t('Maximum context chunks allowed in the answer prompt.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -330,7 +330,7 @@
 					on:click={() => toggleParam('max_context_chunks')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.max_context_chunks ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.max_context_chunks ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -362,7 +362,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Maximum output tokens for LLM answer generation.')}
+			content={$i18n.t('Maximum output tokens for LLM answer generation.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -374,7 +374,7 @@
 					on:click={() => toggleParam('llm_max_tokens')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.llm_max_tokens ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.llm_max_tokens ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -405,7 +405,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t('Stream response tokens from VietLegal RAG when available.')}
+			content={$i18n.t('Stream response tokens from VietLegal RAG when available.')}
 			placement="top-start"
 			className="inline-tooltip"
 		>
@@ -417,7 +417,7 @@
 					on:click={() => toggleParam('llm_streaming')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.llm_streaming ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.llm_streaming ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -426,7 +426,7 @@
 		{#if (params?.llm_streaming ?? null) !== null}
 			<div class="flex justify-between items-center mt-0.5">
 				<div class="text-xs text-gray-500">
-					{params.llm_streaming ? i18n.t('Enabled') : i18n.t('Disabled')}
+					{params.llm_streaming ? $i18n.t('Enabled') : $i18n.t('Disabled')}
 				</div>
 				<div class="pr-2">
 					<Switch bind:state={params.llm_streaming} />
@@ -437,7 +437,7 @@
 
 	<div class="py-0.5 w-full justify-between">
 		<Tooltip
-			content={i18n.t(
+			content={$i18n.t(
 				'Use the LangGraph agent path if the service is configured. This can disable agent mode per chat, but cannot enable it if the backend service was not initialized.'
 			)}
 			placement="top-start"
@@ -451,7 +451,7 @@
 					on:click={() => toggleParam('agent_enabled')}
 				>
 					<span class="ml-2 self-center">
-						{(params?.agent_enabled ?? null) === null ? i18n.t('Default') : i18n.t('Custom')}
+						{(params?.agent_enabled ?? null) === null ? $i18n.t('Default') : $i18n.t('Custom')}
 					</span>
 				</button>
 			</div>
@@ -460,7 +460,7 @@
 		{#if (params?.agent_enabled ?? null) !== null}
 			<div class="flex justify-between items-center mt-0.5">
 				<div class="text-xs text-gray-500">
-					{params.agent_enabled ? i18n.t('Enabled') : i18n.t('Disabled')}
+					{params.agent_enabled ? $i18n.t('Enabled') : $i18n.t('Disabled')}
 				</div>
 				<div class="pr-2">
 					<Switch bind:state={params.agent_enabled} />

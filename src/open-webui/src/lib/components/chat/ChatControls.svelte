@@ -60,6 +60,7 @@
 	let dragged = false;
 	let minSize = 0;
 	let paneReady = false;
+	let openedForShow = false;
 
 	// Tab state for Controls+Files panel
 	let activeTab = savedTab;
@@ -158,14 +159,17 @@
 	};
 
 	export const openPane = () => {
-		if (parseInt(localStorage?.chatControlsSize)) {
-			const container = document.getElementById('chat-container');
-			let size = Math.floor(
-				(parseInt(localStorage?.chatControlsSize) / container.clientWidth) * 100
-			);
-			pane.resize(size);
+		if (!pane) return;
+
+		const container = document.getElementById('chat-container');
+		const fallbackSize = minSize || 25;
+		const savedWidth = parseInt(localStorage?.chatControlsSize);
+
+		if (savedWidth && container?.clientWidth) {
+			const size = Math.floor((savedWidth / container.clientWidth) * 100);
+			pane.resize(Math.max(size, fallbackSize));
 		} else {
-			pane.resize(minSize);
+			pane.resize(fallbackSize);
 		}
 	};
 
@@ -267,7 +271,23 @@
 		if ($showCallOverlay) showCallOverlay.set(false);
 	};
 
-	$: if (paneReady && !chatId) closeHandler();
+	// A new chat has no chatId yet, but users still need Controls to set
+	// system prompt, valves, and advanced params before sending the first message.
+	// Only reset chat-scoped overlays here; keep the controls pane itself open.
+	$: if (paneReady && !chatId) {
+		showArtifacts.set(false);
+		showEmbeds.set(false);
+		if ($showCallOverlay) showCallOverlay.set(false);
+	}
+
+	$: if (!$showControls) {
+		openedForShow = false;
+	}
+
+	$: if (largeScreen && paneReady && pane && $showControls && !openedForShow) {
+		openedForShow = true;
+		openPane();
+	}
 
 	// Helper: is a "special" full-screen panel active?
 	$: specialPanel = $showCallOverlay || $showArtifacts || $showEmbeds;

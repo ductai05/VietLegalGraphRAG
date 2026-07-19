@@ -392,27 +392,33 @@ class AgentService:
         from langgraph.prebuilt import create_react_agent
 
         web_enabled = self._web_search_enabled()
-        system_prompt = _system_prompt(web_enabled, self.max_iterations)
+        base_system_prompt = _system_prompt(web_enabled, self.max_iterations)
         tools = [
             make_retrieval_tool(self.retrieval_service, request, state),
             make_graph_validate_tool(self.graph_retriever, self.document_resolver, state),
         ]
         if web_enabled:
             tools.append(make_web_search_tool(self.web_search, state))
+        system_prompt = self._system_prompt(request, base_system_prompt)
         budget = self._prompt_budget(request, tools, system_prompt)
         return create_react_agent(
-            self._request_llm(request), tools, prompt=self._system_prompt(request)
+            lambda s, _runtime: self._model_for_state(s, request, tools),
+            tools,
+            prompt=system_prompt,
+            pre_model_hook=lambda s: self._pre_model_hook(s, budget),
         )
 
     @staticmethod
-    def _system_prompt(request: RetrievalRequest) -> str:
+    def _system_prompt(
+        request: RetrievalRequest, system_prompt: str = AGENT_SYSTEM_PROMPT
+    ) -> str:
         external_prompt = (request.llm.system_prompt or "").strip()
         if not external_prompt:
-            return AGENT_SYSTEM_PROMPT
+            return system_prompt
         return (
             f"{external_prompt}\n\n"
             "QUY TRÌNH RAG BẮT BUỘC CỦA HỆ THỐNG:\n"
-            f"{AGENT_SYSTEM_PROMPT}"
+            f"{system_prompt}"
         )
 
     def _graph_config(self) -> dict[str, Any]:
