@@ -161,7 +161,7 @@ def test_retrieval_tool_clamps_top_k_to_candidate_k_instead_of_raising() -> None
     service = _FakeRetrievalService()
     tool = make_retrieval_tool(service, base, AgentRunState())
 
-    tool.invoke({"query": "xử phạt", "top_k": 20})
+    tool.invoke({"query": "xử phạt", "top_k": 8})
 
     # dataclasses.replace re-runs __post_init__, which rejects top_k > candidate_k.
     assert service.requests[0].top_k == 6
