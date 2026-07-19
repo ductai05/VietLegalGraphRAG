@@ -152,3 +152,4 @@ def test_missing_file_is_skipped():
     )
     assert out == ""
     assert ocr.calls == []
+
