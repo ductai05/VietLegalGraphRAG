@@ -68,3 +68,4 @@ src/infra/hf-cache/
 /src/open-webui/backend/.venv/
 /src/open-webui/backend/venv/
 
+.superpowers/

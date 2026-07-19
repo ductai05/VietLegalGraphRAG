@@ -31,7 +31,7 @@ class RerankConfigModel(BaseModel):
 class LLMConfigModel(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     max_context_chunks: int = Field(default=8, gt=0, le=32)
-    max_tokens: int = Field(default=2048, gt=0, le=16384)
+    max_tokens: int = Field(default=16384, gt=0)
 
 
 class GraphConfigModel(BaseModel):
@@ -75,7 +75,7 @@ def build_search_request(
     max_hops: int,
     llm_temperature: float,
     max_context_chunks: int,
-    llm_max_tokens: int = 2048,
+    llm_max_tokens: int = 16384,
 ) -> SearchRequestModel:
     # Ensure candidate_k is >= top_k to avoid validation error
     candidate_k = max(top_k * 4, 20)
@@ -101,4 +101,3 @@ def build_search_request(
             max_tokens=llm_max_tokens,
         ),
     )
-

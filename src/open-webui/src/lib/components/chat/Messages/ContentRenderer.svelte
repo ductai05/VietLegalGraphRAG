@@ -118,7 +118,7 @@
 				}
 			}
 		}
-		sourceIds = [...new Set(result)];
+		sourceIds = result;
 	};
 
 	/** @param {string} messageContent */

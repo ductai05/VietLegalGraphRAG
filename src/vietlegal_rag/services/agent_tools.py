@@ -23,7 +23,11 @@ from retrieval_modes import RetrievalRequest
 
 logger = logging.getLogger("vietlegal_rag.services.agent_tools")
 
-MAX_TOOL_TEXT_CHARS = 1500
+# Per-chunk excerpt cap. Sized so a 5-hit result (~3500 chars, ~1750 Vietnamese
+# tokens) leaves room for a second search plus the answer inside the agent's prompt
+# budget; at 1500 a single result filled the budget on its own and every follow-up
+# search forced the previous one to be elided.
+MAX_TOOL_TEXT_CHARS = 700
 
 # DocumentResolver.ResolutionInfo.action -> effect_verdict (§4.3).
 _ACTION_TO_VERDICT = {
@@ -54,11 +58,27 @@ class AgentRunState:
     iterations: int = 0
     # "none" | "agent_tool" | "post_hoc" — see the §4.6 safety net.
     graph_validation: str = "none"
+    # Tool calls already served this run, keyed by (tool_name, normalised args).
+    seen_calls: set[tuple[str, str]] = field(default_factory=set)
 
     def record(self, tool_name: str) -> None:
         self.tool_calls += 1
         if tool_name not in self.tools_used:
             self.tools_used.append(tool_name)
+
+    def is_repeat(self, tool_name: str, key: str) -> bool:
+        """True when this exact call was already served.
+
+        The 27B model re-issues an identical search instead of moving on, burning
+        the iteration budget on a result it already has until the run dies at the
+        recursion limit. Re-running the query cannot produce new information, so
+        the caller answers from cache and tells the model to stop.
+        """
+        dedup_key = (tool_name, key.strip().lower())
+        if dedup_key in self.seen_calls:
+            return True
+        self.seen_calls.add(dedup_key)
+        return False
 
     def add_hits(self, hits: list[RetrievalHit]) -> None:
         known = {hit.chunk_id for hit in self.hits if hit.chunk_id}
@@ -81,7 +101,9 @@ class RetrievalSearchInput(BaseModel):
             "keyword-rich query."
         )
     )
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to return.")
+    # Capped at 8, not 20: every hit is spent from the agent's prompt budget, and a
+    # single 20-hit result would exceed it on its own and starve the answer.
+    top_k: int = Field(default=3, ge=1, le=8, description="Number of chunks to return.")
 
 
 def make_retrieval_tool(
@@ -91,8 +113,18 @@ def make_retrieval_tool(
 ) -> StructuredTool:
     """Tool 1: retrieval_search — hybrid ES search over legal chunks."""
 
-    def _run(query: str, top_k: int = 5) -> str:
+    def _run(query: str, top_k: int = 3) -> str:
         state.record("retrieval_search")
+        if state.is_repeat("retrieval_search", query):
+            return _dumps(
+                {
+                    "note": (
+                        "Bạn đã tìm với truy vấn này rồi và kết quả nằm ở trên. "
+                        "ĐỪNG tìm lại. Hãy dùng kết quả đã có để trả lời NGAY, "
+                        "hoặc gọi `graph_validate` nếu cần kiểm tra hiệu lực."
+                    )
+                }
+            )
         try:
             # dataclasses.replace re-runs __post_init__, which rejects
             # top_k > candidate_k while reranking.
@@ -140,11 +172,14 @@ def make_retrieval_tool(
         args_schema=RetrievalSearchInput,
     )
 
-
 class GraphValidateInput(BaseModel):
-    doc_id: str = Field(
+    # list[str | int] | str | int, not list[str]: doc_ids like "477975" can be emitted
+    # as bare numbers or single values by the model. Providers validate tool args
+    # against this schema; this ensures Pydantic parses them successfully.
+    doc_ids: list[str | int] | str | int = Field(
         description=(
-            "A doc_id returned by retrieval_search — not a free-text document title."
+            "doc_ids returned by retrieval_search — not free-text titles. Pass "
+            "ALL documents you intend to cite in one call."
         )
     )
     depth: int = Field(default=1, ge=1, le=2, description="Graph traversal depth.")
@@ -155,10 +190,13 @@ def make_graph_validate_tool(
     document_resolver: DocumentResolver,
     state: AgentRunState,
 ) -> StructuredTool:
-    """Tool 2: graph_validate — neighbours + legal-effect verdict for one document."""
+    """Tool 2: graph_validate — neighbours + legal-effect verdict per document.
 
-    def _run(doc_id: str, depth: int = 1) -> str:
-        state.record("graph_validate")
+    Batched: validates every doc_id in one call so the agent needs a single
+    tool step for all cited documents instead of one per document.
+    """
+
+    def _validate_one(doc_id: str, depth: int = 1) -> dict[str, Any]:
         try:
             clamped_depth = max(1, min(int(depth), 2))
             graph_context = graph_retriever.get_document_neighbors(
@@ -173,14 +211,12 @@ def make_graph_validate_tool(
             resolved = document_resolver.resolve(contexts, graph_context)
         except Exception:
             logger.exception("graph_validate tool failed for doc_id=%s", doc_id)
-            return _dumps(
-                {
-                    "doc_id": doc_id,
-                    "effect_verdict": "unknown",
-                    "available": False,
-                    "error": "graph_validate_failed",
-                }
-            )
+            return {
+                "doc_id": doc_id,
+                "effect_verdict": "unknown",
+                "available": False,
+                "error": "graph_validate_failed",
+            }
 
         verdict = "unknown"
         replacement_doc_id: str | None = None
@@ -208,34 +244,49 @@ def make_graph_validate_tool(
         state.verdicts[clean_doc_id] = verdict
         state.graph_validation = "agent_tool"
 
-        return _dumps(
-            {
-                "doc_id": doc_id,
-                "center": graph_context.center.to_dict() if available else None,
-                "relations": [
-                    {
-                        "source": edge.source,
-                        "target": edge.target,
-                        "type": edge.type,
-                        "raw_label": edge.raw_label,
-                        "direction": edge.direction,
-                    }
-                    for edge in graph_context.edges
-                ],
-                "effect_verdict": verdict,
-                "replacement_doc_id": replacement_doc_id,
-                "reason": reason,
-                "available": available,
-            }
-        )
+        return {
+            "doc_id": doc_id,
+            "center": graph_context.center.to_dict() if available else None,
+            "relations": [
+                {
+                    "source": edge.source,
+                    "target": edge.target,
+                    "type": edge.type,
+                    "raw_label": edge.raw_label,
+                    "direction": edge.direction,
+                }
+                for edge in graph_context.edges
+            ],
+            "effect_verdict": verdict,
+            "replacement_doc_id": replacement_doc_id,
+            "reason": reason,
+            "available": available,
+        }
+
+    def _run(doc_ids: list[str | int] | str | int, depth: int = 1) -> str:
+        state.record("graph_validate")
+        # Tolerate a single string/int in case the model ignores the list schema.
+        if not isinstance(doc_ids, list):
+            doc_ids = [doc_ids]
+        seen: set[str] = set()
+        results = []
+        for doc_id in doc_ids:
+            doc_id_str = str(doc_id)
+            key = DocumentResolver._clean_id(doc_id_str)
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(_validate_one(doc_id_str, depth))
+        return _dumps(results)
 
     return StructuredTool.from_function(
         func=_run,
         name="graph_validate",
         description=(
-            "Kiểm tra hiệu lực pháp lý và các quan hệ của một văn bản trong đồ thị tri "
-            "thức. Bắt buộc gọi cho mọi doc_id trước khi trích dẫn. Trả về "
-            "effect_verdict ∈ {in_force, superseded, expired, unknown} và văn bản thay thế nếu có."
+            "Kiểm tra hiệu lực pháp lý và quan hệ của các văn bản trong đồ thị tri thức. "
+            "Gọi MỘT LẦN với danh sách tất cả doc_id bạn định trích dẫn. Trả về danh sách "
+            "JSON, mỗi phần tử có effect_verdict ∈ {in_force, superseded, expired, unknown} "
+            "và văn bản thay thế nếu có."
         ),
         args_schema=GraphValidateInput,
     )

@@ -11,7 +11,14 @@ import logging
 import time
 from typing import Any, Callable, Generator
 
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.messages.utils import count_tokens_approximately
 
 from agent_tools import (
     AgentRunState,
@@ -28,21 +35,40 @@ from retrieval_modes import RetrievalRequest
 
 logger = logging.getLogger("vietlegal_rag.services.agent_service")
 
-AGENT_SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên thông tin tra cứu thực tế.
+_AGENT_SYSTEM_PROMPT_TEMPLATE = """Bạn là trợ lý pháp lý AI chuyên nghiệp cho pháp luật Việt Nam. Nhiệm vụ của bạn là tra cứu, giải thích văn bản pháp luật và phân tích tình huống pháp lý một cách chính xác, khách quan dựa trên thông tin tra cứu thực tế.
 
 QUY TRÌNH BẮT BUỘC:
 1. Luôn gọi `retrieval_search` trước tiên để tìm văn bản pháp luật liên quan. Hãy viết lại câu hỏi của người dùng thành truy vấn giàu từ khoá pháp lý.
-2. Với MỌI văn bản bạn định trích dẫn, bắt buộc gọi `graph_validate` với `doc_id` của văn bản đó (lấy từ kết quả `retrieval_search`, không dùng tiêu đề) trước khi trích dẫn.
-3. Nếu `effect_verdict` là `expired` hoặc `superseded`, bạn PHẢI chủ động ghi thêm cảnh báo rõ ràng bằng biểu tượng ⚠️ ở câu trả lời tương ứng, đồng thời dựa câu trả lời trên văn bản mới hơn (gọi thêm `retrieval_search` để lấy nội dung văn bản thay thế nếu cần) và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới.
-4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn. Tuyệt đối không tự bịa URL.
-
-GIỚI HẠN: tối đa 8 lượt gọi công cụ. Nếu các công cụ không trả về thông tin hữu ích, hãy nói rõ rằng bạn không tìm được đủ căn cứ pháp lý thay vì suy đoán.
+2. Sau khi có kết quả `retrieval_search`, gọi `graph_validate` MỘT LẦN DUY NHẤT với danh sách `doc_ids` gồm tất cả văn bản bạn định trích dẫn (lấy `doc_id` từ kết quả `retrieval_search`, không dùng tiêu đề) trước khi trích dẫn. Không gọi `graph_validate` riêng lẻ từng văn bản.
+3. Cảnh báo hiệu lực CHỈ áp dụng cho văn bản bạn thực sự dùng làm căn cứ. Nếu `effect_verdict` là `expired` hoặc `superseded` VÀ bạn dựa vào văn bản đó để trả lời, ghi cảnh báo ⚠️ ngay tại nhận định tương ứng, đồng thời dựa câu trả lời trên văn bản mới hơn (gọi thêm `retrieval_search` để lấy nội dung văn bản thay thế nếu cần) và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới. TUYỆT ĐỐI không cảnh báo về văn bản hết hiệu lực mà bạn không dùng đến hoặc không liên quan tới câu hỏi.
+{web_step}
+GIỚI HẠN: tối đa {max_iterations} lượt gọi công cụ. Nếu các công cụ không trả về thông tin hữu ích, hãy nói rõ rằng bạn không tìm được đủ căn cứ pháp lý thay vì suy đoán.
 
 CÂU TRẢ LỜI CUỐI CÙNG:
 1. Trả lời bằng tiếng Việt, rõ ràng, có cấu trúc, ưu tiên kết luận trực tiếp trước rồi mới giải thích.
 2. Mỗi nhận định pháp lý quan trọng phải có citation inline dạng [n], trong đó n là `source_index` của kết quả `retrieval_search` đã hỗ trợ nhận định đó.
 3. Không tự tạo mục 'Căn cứ pháp lý', 'Nguồn', danh sách tài liệu hoặc URL ở cuối câu trả lời. Open WebUI sẽ hiển thị chi tiết căn cứ trong Sources và citation modal.
 4. Nếu chưa đủ căn cứ, nói rõ phần chưa đủ căn cứ thay vì suy đoán. Không thay thế tư vấn pháp lý của luật sư trong vụ việc cụ thể."""
+
+_WEB_STEP = """4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn — tuyệt đối không tự bịa URL.
+"""
+
+# Backward-compatible static rendering (web step on, default 8-turn budget) used by
+# the external-prompt merge path in AgentService._system_prompt.
+AGENT_SYSTEM_PROMPT = _AGENT_SYSTEM_PROMPT_TEMPLATE.format(web_step=_WEB_STEP, max_iterations=8)
+
+
+def _system_prompt(web_search_enabled: bool, max_iterations: int) -> str:
+    """Build the prompt for the tools actually registered this run.
+
+    The web step is omitted when web search is disabled: NoopWebSearch can only ever
+    return [], so mandating a call per cited document spends the iteration budget on
+    guaranteed-empty results and the model runs out of turns before it answers.
+    """
+    return _AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+        web_step=_WEB_STEP if web_search_enabled else "",
+        max_iterations=max_iterations,
+    )
 
 EXPIRY_WARNING = (
     "⚠️ Lưu ý: một số căn cứ được trích dẫn có thể đã hết hiệu lực "
@@ -60,6 +86,58 @@ _TOOL_STATUS = {
 }
 
 _WARNING_ACTIONS = {"replaced", "expired_warning", "superseded"}
+
+# count_tokens_approximately defaults to 4 chars/token, which is an English ratio.
+# Vietnamese legal text measures ~2.1 (tiktoken counts 980 tokens where the default
+# estimates 514), and an underestimate here spends budget we do not have — the whole
+# point is to stay under a hard provider limit, so estimate against Vietnamese.
+_CHARS_PER_TOKEN = 2.0
+
+# Floor for the prompt budget: below this the newest tool result cannot survive and
+# the agent is useless anyway. Misconfiguration surfaces as a provider error rather
+# than as silently blanked context.
+_MIN_PROMPT_TOKENS = 512
+
+# Every token count here is an estimate, and the provider's is authoritative: budget
+# to exactly the limit and a small underestimate is still a rejected request. Give
+# the estimate room to be wrong.
+_SAFETY_MARGIN_TOKENS = 400
+
+# Prompt ceiling for the forced final answer. The model's chain of thought scales
+# with how much clutter it is handed: on a 45-token prompt it concludes in ~1400
+# tokens, but given a full run's worth of tool results it reasons past max_tokens
+# and returns nothing at all. The final turn needs the best few results, not all of
+# them, so it is trimmed hard and spends what is left on the answer.
+_FORCED_ANSWER_PROMPT_TOKENS = 1500
+
+# Sent on the forced turn. Without it the model reasons about the tool call it would
+# like to make next, finds no tools bound, and stops mid-thought — terminating the
+# run but answering nothing. It has to be told the tools are gone for good.
+_FORCE_ANSWER_DIRECTIVE = (
+    "DỪNG gọi công cụ — không còn công cụ nào khả dụng và bạn sẽ không được gọi thêm. "
+    "Dựa HOÀN TOÀN vào các kết quả đã có ở trên, hãy viết NGAY câu trả lời cuối cùng "
+    "bằng tiếng Việt cho câu hỏi của người dùng: nêu mức phạt/quy định cùng căn cứ "
+    "(tên văn bản, điều khoản) và cảnh báo hiệu lực nếu có. Nếu căn cứ chưa đầy đủ, "
+    "hãy nói rõ phần nào còn thiếu thay vì suy đoán."
+)
+
+# Stands in for an older tool result dropped from the prompt. Elided results stay
+# in AgentRunState, so citations still resolve from hits the LLM can no longer see.
+# It must not invite a retry: an earlier version suggested calling the tool again,
+# and the model obliged, re-fetched a result that was elided again, and looped until
+# the recursion limit. Tell it to move on instead.
+_ELIDED_TOOL_CONTENT = (
+    '{"note": "Kết quả này đã được lược bỏ để tiết kiệm ngữ cảnh. '
+    'ĐỪNG gọi lại công cụ cho nội dung này — hãy dùng các kết quả còn lại '
+    'và trả lời ngay."}'
+)
+
+
+# Marks a tool result cut mid-JSON so the model treats it as incomplete rather than
+# as the full result set.
+_TRUNCATION_SUFFIX = (
+    ' ... [KẾT QUẢ BỊ CẮT BỚT do giới hạn ngữ cảnh. Hãy dùng phần đã có để trả lời.]'
+)
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -126,6 +204,7 @@ class AgentService:
         llm: Any,
         fallback_service: LightRAGService | None = None,
         max_iterations: int = 8,
+        max_request_tokens: int = 8000,
     ) -> None:
         self.retrieval_service = retrieval_service
         self.graph_retriever = graph_retriever
@@ -134,6 +213,7 @@ class AgentService:
         self.llm = llm
         self.fallback_service = fallback_service
         self.max_iterations = max_iterations
+        self.max_request_tokens = max_request_tokens
 
     # ------------------------------------------------------------------
     # Graph construction
@@ -142,42 +222,213 @@ class AgentService:
     def _request_llm(self, request: RetrievalRequest) -> Any:
         """Rebind the injected chat model to this request's LLM settings."""
         try:
-            return self.llm.model_copy(
-                update={
-                    "temperature": request.llm.temperature,
-                    "max_tokens": request.llm.max_tokens,
-                }
-            )
+            model = (request.llm.model or "").strip()
+            update_dict: dict[str, Any] = {
+                "temperature": request.llm.temperature,
+                "max_tokens": request.llm.max_tokens,
+            }
+            # Per-request model override (dropdown). The ChatOpenAI field is `model_name`
+            # (alias `model`). Overriding model_name directly in model_copy avoids the
+            # LangChain RunnableBinding delegation bug where calling bind_tools() 
+            # drops keys bound via llm.bind().
+            if model:
+                update_dict["model_name"] = model
+
+            return self.llm.model_copy(update=update_dict)
         except Exception:
             logger.warning("Could not rebind LLM per request; using defaults", exc_info=True)
             return self.llm
 
+    def _prompt_budget(
+        self, request: RetrievalRequest, tools: list[Any], system_prompt: str
+    ) -> int:
+        """Tokens left for the prompt once output and fixed overhead are paid for.
+
+        Providers count reserved output against the same limit as the prompt, so a
+        4096-token ``max_tokens`` spends half of Groq's 8000 before a single word of
+        context is sent. The system prompt and tool schemas ride along with every
+        request but never appear in ``state["messages"]``, so they are measured here
+        rather than trimmed later.
+        """
+        overhead = count_tokens_approximately(
+            [SystemMessage(content=system_prompt)],
+            tools=tools,
+            chars_per_token=_CHARS_PER_TOKEN,
+        )
+        budget = (
+            self.max_request_tokens
+            - request.llm.max_tokens
+            - overhead
+            - _SAFETY_MARGIN_TOKENS
+        )
+        return max(budget, _MIN_PROMPT_TOKENS)
+
+    def _trim_for_model(self, messages: list[Any], budget: int) -> list[Any]:
+        """Cap the prompt at ``budget`` by eliding the oldest tool results.
+
+        Tool results accumulate every iteration, so an 8-step run can outgrow the
+        provider's request limit (HTTP 413). Only ToolMessage content is shrunk,
+        never dropped: removing a ToolMessage would orphan the tool_calls on the
+        AIMessage before it and the provider rejects that outright. Newest results
+        are kept because those are what the model is currently reasoning about —
+        older ones are elided wholesale, and the newest is truncated only if it
+        blows the budget on its own (the model may ask for a large top_k).
+        """
+        def cost(message: Any) -> int:
+            return count_tokens_approximately(
+                [message], chars_per_token=_CHARS_PER_TOKEN
+            )
+
+        # Start from the cheapest legal prompt — every tool result elided — then buy
+        # back the newest results while the budget allows. Sizing each message as we
+        # walk instead would let the newest result claim the whole budget and push
+        # the total over it, since the messages around it still have to be sent.
+        result = [
+            message.model_copy(update={"content": _ELIDED_TOOL_CONTENT})
+            if isinstance(message, ToolMessage)
+            else message
+            for message in messages
+        ]
+        used = sum(cost(message) for message in result)
+
+        for index in range(len(messages) - 1, -1, -1):
+            original = messages[index]
+            if not isinstance(original, ToolMessage):
+                continue
+            elided_cost = cost(result[index])
+            if used - elided_cost + cost(original) <= budget:
+                used += cost(original) - elided_cost
+                result[index] = original
+                continue
+            # Does not fit whole: give the newest result whatever is left rather than
+            # nothing, and leave everything older elided.
+            truncated = self._truncate_tool_message(original, budget - used + elided_cost)
+            if truncated is not None and used - elided_cost + cost(truncated) <= budget:
+                used += cost(truncated) - elided_cost
+                result[index] = truncated
+            break
+
+        return result
+
+    @staticmethod
+    def _truncate_tool_message(message: ToolMessage, allowance: int) -> ToolMessage | None:
+        """Cut a tool result down to ``allowance`` tokens, or None if it cannot fit.
+
+        The result is measured rather than derived from the character count: a
+        message also pays for its name and envelope, so chars/_CHARS_PER_TOKEN alone
+        overshoots the allowance and the caller then rejects the message outright,
+        eliding a result that could have partly fit.
+        """
+        if allowance <= 0:
+            return None
+        content = str(message.content or "")
+        keep_chars = int(allowance * _CHARS_PER_TOKEN) - len(_TRUNCATION_SUFFIX)
+        while keep_chars > 0:
+            if len(content) <= keep_chars:
+                return message
+            candidate = message.model_copy(
+                update={"content": content[:keep_chars] + _TRUNCATION_SUFFIX}
+            )
+            if (
+                count_tokens_approximately([candidate], chars_per_token=_CHARS_PER_TOKEN)
+                <= allowance
+            ):
+                return candidate
+            keep_chars -= 64
+        return None
+
+    def _pre_model_hook(self, state: dict[str, Any], budget: int) -> dict[str, Any]:
+        messages = state["messages"]
+        forcing = self._iterations_used(messages) >= self.max_iterations
+        if forcing:
+            budget = min(budget, _FORCED_ANSWER_PROMPT_TOKENS)
+        try:
+            trimmed = self._trim_for_model(list(messages), budget)
+        except Exception:
+            # Never fail the run over trimming; an oversized prompt still has the
+            # fallback path behind it, a raised hook has nothing.
+            logger.warning("Agent prompt trimming failed; sending untrimmed", exc_info=True)
+            trimmed = list(messages)
+        if forcing:
+            trimmed.append(HumanMessage(content=_FORCE_ANSWER_DIRECTIVE))
+        return {"llm_input_messages": trimmed}
+
+    def _web_search_enabled(self) -> bool:
+        from web_search_service import NoopWebSearch
+
+        return self.web_search is not None and not isinstance(self.web_search, NoopWebSearch)
+
+    @staticmethod
+    def _iterations_used(messages: Any) -> int:
+        """Tool-calling turns taken so far."""
+        return sum(
+            1
+            for message in messages
+            if isinstance(message, AIMessage) and message.tool_calls
+        )
+
+    def _model_for_state(
+        self, state: Any, request: RetrievalRequest, tools: list[Any]
+    ) -> Any:
+        """Bind tools only while the iteration budget lasts, then force an answer.
+
+        The 27B model does not stop on instruction: told the budget was spent, or
+        handed a "you already searched this" note, it re-issues the same call until
+        the graph dies at the recursion limit and the whole run is thrown away.
+        Unbinding the tools removes the option — with nothing to call, the only move
+        left is the final answer, and the run always terminates.
+        """
+        llm = self._request_llm(request)
+        messages = state["messages"] if isinstance(state, dict) else state.messages
+        if self._iterations_used(messages) >= self.max_iterations:
+            logger.info(
+                "Agent hit its %d-iteration budget; forcing a final answer",
+                self.max_iterations,
+            )
+            return llm
+        return llm.bind_tools(tools)
+
     def _build_graph(self, request: RetrievalRequest, state: AgentRunState) -> Any:
         from langgraph.prebuilt import create_react_agent
 
+        web_enabled = self._web_search_enabled()
+        base_system_prompt = _system_prompt(web_enabled, self.max_iterations)
         tools = [
             make_retrieval_tool(self.retrieval_service, request, state),
             make_graph_validate_tool(self.graph_retriever, self.document_resolver, state),
-            make_web_search_tool(self.web_search, state),
         ]
+        if web_enabled:
+            tools.append(make_web_search_tool(self.web_search, state))
+        system_prompt = self._system_prompt(request, base_system_prompt)
+        budget = self._prompt_budget(request, tools, system_prompt)
         return create_react_agent(
-            self._request_llm(request), tools, prompt=self._system_prompt(request)
+            lambda s, _runtime: self._model_for_state(s, request, tools),
+            tools,
+            prompt=system_prompt,
+            pre_model_hook=lambda s: self._pre_model_hook(s, budget),
         )
 
     @staticmethod
-    def _system_prompt(request: RetrievalRequest) -> str:
+    def _system_prompt(
+        request: RetrievalRequest, system_prompt: str = AGENT_SYSTEM_PROMPT
+    ) -> str:
         external_prompt = (request.llm.system_prompt or "").strip()
         if not external_prompt:
-            return AGENT_SYSTEM_PROMPT
+            return system_prompt
         return (
             f"{external_prompt}\n\n"
             "QUY TRÌNH RAG BẮT BUỘC CỦA HỆ THỐNG:\n"
-            f"{AGENT_SYSTEM_PROMPT}"
+            f"{system_prompt}"
         )
 
     def _graph_config(self) -> dict[str, Any]:
-        # Each tool-calling iteration costs a model step plus a tool step.
-        return {"recursion_limit": 2 * self.max_iterations + 3}
+        # Each tool-calling iteration costs three node executions: the pre_model_hook
+        # that trims the prompt, the model, then the tool. Budgeting two per
+        # iteration exhausts the recursion limit around iteration 6, before
+        # _model_for_state can unbind the tools and force the final answer — the run
+        # would die at the limit instead of answering. The +4 covers the forced
+        # answer turn (hook + model) plus headroom.
+        return {"recursion_limit": 3 * self.max_iterations + 4}
 
     @staticmethod
     def _graph_input(request: RetrievalRequest) -> dict[str, Any]:
@@ -226,7 +477,9 @@ class AgentService:
             trace["resolutions"] = list(state.resolutions)
         return trace
 
-    def _run_safety_net(self, request: RetrievalRequest, state: AgentRunState) -> str:
+    def _run_safety_net(
+        self, request: RetrievalRequest, state: AgentRunState, answer_text: str = ""
+    ) -> str:
         """§4.6: the ReAct agent may skip graph_validate — resolve deterministically.
 
         Returns the warning line to append to the answer, or "".
@@ -254,7 +507,22 @@ class AgentService:
         if resolved is None:
             return ""
         state.resolutions.extend(item.to_dict() for item in resolved.resolutions)
-        if any(item.action in _WARNING_ACTIONS for item in resolved.resolutions):
+        # Relevance gate: don't duplicate a warning the model already wrote inline,
+        # and only fire for a warned doc among the top-3 hits — a tangential expired
+        # doc lower in the ranking must not trigger the blanket footer.
+        if "⚠️" in answer_text:
+            return ""
+        top_ids = {
+            DocumentResolver._clean_id(hit.doc_id)
+            for hit in state.hits[:3]
+            if hit.doc_id
+        }
+        relevant_warning = any(
+            item.action in _WARNING_ACTIONS
+            and DocumentResolver._clean_id(item.original_doc_id or "") in top_ids
+            for item in resolved.resolutions
+        )
+        if relevant_warning:
             return "\n\n" + EXPIRY_WARNING
         return ""
 
@@ -281,7 +549,7 @@ class AgentService:
             logger.exception("Agent run failed; falling back to the static flow")
             return self._fallback_answer(request, "agent.invoke_failed")
 
-        answer_text += self._run_safety_net(request, state)
+        answer_text += self._run_safety_net(request, state, answer_text)
         return {
             "answer": answer_text,
             "citations": self._citations(state),
@@ -399,7 +667,7 @@ class AgentService:
                 yield from _fallback("agent.no_answer")
                 return
 
-            warning = self._run_safety_net(request, state)
+            warning = self._run_safety_net(request, state, thinking["content"])
             if warning:
                 yield warning
             _finalize()

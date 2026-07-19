@@ -10,6 +10,15 @@
 
 	export let onClick: Function = () => {};
 
+	function getSourceNumber(id): string {
+		if (typeof id === 'number') {
+			return String(id);
+		}
+
+		const match = String(id ?? '').match(/^\d+/);
+		return match ? match[0] : '';
+	}
+
 	// Helper function to return only the domain from a URL
 	function getDomain(url: string): string {
 		const domain = url.replace('http://', '').replace('https://', '').split(/[/?#]/)[0];
@@ -39,16 +48,17 @@
 </script>
 
 {#if title !== 'N/A'}
+	{@const sourceNumber = getSourceNumber(id)}
 	<button
 		title={decodeString(title)}
 		aria-label={$i18n.t('View source: {{title}}', { title: formattedTitle(decodeString(title)) })}
-		class="text-[10px] w-fit translate-y-[2px] px-2 py-0.5 dark:bg-white/5 dark:text-white/80 dark:hover:text-white bg-gray-50 text-black/80 hover:text-black transition rounded-xl"
+		class="text-[10px] w-fit translate-y-[2px] px-1.5 py-0.5 dark:bg-white/5 dark:text-white/80 dark:hover:text-white bg-gray-50 text-black/80 hover:text-black transition rounded-xl"
 		on:click={() => {
 			onClick(id);
 		}}
 	>
-		<span class="line-clamp-1">
-			{getDisplayTitle(formattedTitle(decodeString(title)))}
+		<span class="whitespace-nowrap font-medium tabular-nums">
+			{sourceNumber || getDisplayTitle(formattedTitle(decodeString(title)))}
 		</span>
 	</button>
 {/if}

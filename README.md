@@ -130,6 +130,8 @@ VietLegalGraphRAG/
   pyproject.toml
 ```
 
+Bộ dữ liệu và model ONNX được đính kèm tại: https://drive.google.com/drive/folders/1m6yT2irl6zHuwGDwTdcdesHTpstWys4Y?usp=sharing
+
 ## Yêu cầu hệ thống
 
 Khuyến nghị cho môi trường phát triển:

@@ -161,7 +161,7 @@ def test_retrieval_tool_clamps_top_k_to_candidate_k_instead_of_raising() -> None
     service = _FakeRetrievalService()
     tool = make_retrieval_tool(service, base, AgentRunState())
 
-    tool.invoke({"query": "xử phạt", "top_k": 20})
+    tool.invoke({"query": "xử phạt", "top_k": 8})
 
     # dataclasses.replace re-runs __post_init__, which rejects top_k > candidate_k.
     assert service.requests[0].top_k == 6
@@ -210,7 +210,7 @@ def test_graph_validate_maps_each_resolution_action(action: str, expected_verdic
     resolver = _StubResolver([{"action": action, "reason": "lý do", "replacement_doc_id": "nd50"}])
     tool = make_graph_validate_tool(_FakeGraphRetriever(_graph_context()), resolver, state)
 
-    payload = json.loads(tool.invoke({"doc_id": "nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15"]}))[0]
 
     assert payload["effect_verdict"] == expected_verdict
     assert payload["available"] is True
@@ -231,7 +231,7 @@ def test_graph_validate_takes_most_severe_verdict_on_disagreement() -> None:
     )
     tool = make_graph_validate_tool(_FakeGraphRetriever(_graph_context()), resolver, state)
 
-    payload = json.loads(tool.invoke({"doc_id": "nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15"]}))[0]
 
     assert payload["effect_verdict"] == "expired"
 
@@ -245,7 +245,7 @@ def test_graph_validate_downgrades_in_force_to_unknown_without_a_graph() -> None
     # center is None: NoopGraphRetriever's degradation path.
     tool = make_graph_validate_tool(_FakeGraphRetriever(_graph_context(center_id=None)), resolver, state)
 
-    payload = json.loads(tool.invoke({"doc_id": "nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15"]}))[0]
 
     assert payload["available"] is False
     assert payload["effect_verdict"] == "unknown"
@@ -261,7 +261,7 @@ def test_graph_validate_returns_unknown_when_no_context_matches() -> None:
         _FakeGraphRetriever(_graph_context()), DocumentResolver(), state
     )
 
-    payload = json.loads(tool.invoke({"doc_id": "nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15"]}))[0]
 
     assert payload["effect_verdict"] == "unknown"
 
@@ -276,7 +276,7 @@ def test_graph_validate_matches_doc_id_ignoring_the_doc_prefix() -> None:
         _FakeGraphRetriever(_graph_context()), DocumentResolver(), state
     )
 
-    payload = json.loads(tool.invoke({"doc_id": "doc:nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["doc:nd15"]}))[0]
 
     assert payload["effect_verdict"] == "in_force"
 
@@ -291,7 +291,7 @@ def test_graph_validate_uses_real_resolver_for_expired_status() -> None:
         _FakeGraphRetriever(_graph_context()), DocumentResolver(), state
     )
 
-    payload = json.loads(tool.invoke({"doc_id": "nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15"]}))[0]
 
     assert payload["effect_verdict"] == "expired"
     # The resolver's own Vietnamese wording is passed through verbatim.
@@ -308,10 +308,30 @@ def test_graph_validate_never_raises_when_the_graph_errors() -> None:
         AgentRunState(),
     )
 
-    payload = json.loads(tool.invoke({"doc_id": "nd15"}))
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15"]}))[0]
 
     assert payload["effect_verdict"] == "unknown"
     assert payload["available"] is False
+
+
+def test_graph_validate_batches_multiple_doc_ids_in_one_call() -> None:
+    from agent_tools import AgentRunState, make_graph_validate_tool
+    from document_resolver import DocumentResolver
+
+    state = AgentRunState()
+    state.hits = [
+        _hit(doc_id="nd15", chunk_id="chunk:nd15:1"),
+        _hit(doc_id="nd50", chunk_id="chunk:nd50:1"),
+    ]
+    tool = make_graph_validate_tool(
+        _FakeGraphRetriever(_graph_context()), DocumentResolver(), state
+    )
+
+    payload = json.loads(tool.invoke({"doc_ids": ["nd15", "nd50", "nd15"]}))
+
+    # One tool step validates every (deduplicated) doc_id.
+    assert [entry["doc_id"] for entry in payload] == ["nd15", "nd50"]
+    assert state.tool_calls == 1
 
 
 # ----------------------------------------------------------------------
@@ -561,6 +581,43 @@ def test_safety_net_warns_when_the_agent_skipped_graph_validate(monkeypatch: Any
     assert text.endswith(EXPIRY_WARNING)
     assert result["retrieval_trace"]["graph_validation"] == "post_hoc"
     assert result["retrieval_trace"]["resolutions"][0]["action"] == "expired_warning"
+
+
+def test_safety_net_suppresses_footer_when_the_answer_already_warns(monkeypatch: Any) -> None:
+    service = _build_service(graph_retriever=_FakeGraphRetriever(_graph_context()))
+    _patch_graph(
+        monkeypatch,
+        service,
+        _FakeCompiledGraph([_text_event("Văn bản này ⚠️ đã hết hiệu lực.")]),
+        seed_hits=[_hit(effect_status="Hết hiệu lực")],
+    )
+
+    text = "".join(service.stream_answer(_request())["answer_stream"])
+
+    from agent_service import EXPIRY_WARNING
+
+    # Model already warned inline — no duplicated blanket footer.
+    assert EXPIRY_WARNING not in text
+
+
+def test_safety_net_ignores_an_expired_doc_outside_the_top_three_hits(monkeypatch: Any) -> None:
+    service = _build_service(graph_retriever=_FakeGraphRetriever(_graph_context()))
+    seed_hits = [
+        _hit(doc_id="a", chunk_id="chunk:a:1"),
+        _hit(doc_id="b", chunk_id="chunk:b:1"),
+        _hit(doc_id="c", chunk_id="chunk:c:1"),
+        _hit(doc_id="d", chunk_id="chunk:d:1", effect_status="Hết hiệu lực"),
+    ]
+    _patch_graph(
+        monkeypatch, service, _FakeCompiledGraph([_text_event("Trả lời.")]), seed_hits=seed_hits
+    )
+
+    text = "".join(service.stream_answer(_request())["answer_stream"])
+
+    from agent_service import EXPIRY_WARNING
+
+    # The only expired doc is ranked 4th — tangential, so no footer.
+    assert EXPIRY_WARNING not in text
 
 
 def test_safety_net_is_silent_when_every_document_is_in_force(monkeypatch: Any) -> None:

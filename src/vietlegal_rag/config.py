@@ -82,6 +82,7 @@ class Settings:
     llm_max_tokens: int
     agent_enabled: bool
     agent_max_iterations: int
+    agent_max_request_tokens: int
     web_search_provider: str
     exa_api_key: str | None
     web_search_domains: tuple[str, ...]
@@ -153,10 +154,16 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL"),
         llm_api_key=os.getenv("LLM_API_KEY"),
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        llm_max_tokens=_getenv_int("LLM_MAX_TOKENS", 2048),
+        llm_max_tokens=_getenv_int("LLM_MAX_TOKENS", 16384),
         # LangGraph ReAct agent: off by default, static LightRAG flow stays the fallback.
         agent_enabled=_getenv_bool("AGENT_ENABLED", False),
         agent_max_iterations=_getenv_int("AGENT_MAX_ITERATIONS", 8),
+        # Ceiling on a whole agent request: prompt + reserved output + tool schemas.
+        # Providers bill reserved output (llm_max_tokens) against the same budget as
+        # the prompt, so the agent derives its prompt budget by subtracting that from
+        # this number. Set it to the model's per-request/TPM limit — Groq's on-demand
+        # tier is 8000, which HTTP 413 reports as "Limit 8000".
+        agent_max_request_tokens=_getenv_int("AGENT_MAX_REQUEST_TOKENS", 8000),
         # Web search backs the agent's source-link tool: "exa" or "none".
         web_search_provider=os.getenv("WEB_SEARCH_PROVIDER", "none") or "none",
         exa_api_key=os.getenv("EXA_API_KEY") or None,

@@ -113,10 +113,12 @@ class LightRAGService:
                 contexts,
                 request.llm.temperature,
                 request.llm.system_prompt,
+                request.llm.model,
+                request.llm.max_tokens,
             )
         except Exception:
             answer_error = "llm.answer_failed"
-            answer_payload = ExtractiveAnswerService().answer(
+            answer_payload = ExtractiveAnswerService(degraded=True).answer(
                 request.query,
                 contexts,
                 request.llm.temperature,
@@ -233,10 +235,12 @@ class LightRAGService:
                     contexts,
                     request.llm.temperature,
                     request.llm.system_prompt,
+                    request.llm.model,
+                    request.llm.max_tokens,
                 )
             except Exception:
                 logger.exception("Failed to initialize primary LLM stream, falling back to extractive")
-                yield from ExtractiveAnswerService().stream_answer(
+                yield from ExtractiveAnswerService(degraded=True).stream_answer(
                     request.query,
                     contexts,
                     request.llm.temperature,
@@ -253,7 +257,7 @@ class LightRAGService:
                 return
             except Exception:
                 logger.exception("Failed on first chunk from primary LLM stream, falling back to extractive")
-                yield from ExtractiveAnswerService().stream_answer(
+                yield from ExtractiveAnswerService(degraded=True).stream_answer(
                     request.query,
                     contexts,
                     request.llm.temperature,
