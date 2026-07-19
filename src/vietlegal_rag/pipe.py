@@ -72,6 +72,31 @@ async def _ocr_one(
     return (result.get("text") or "").strip()
 
 
+def _collect_file_ids(body: dict) -> list[str]:
+    buckets: list[Any] = []
+    meta = body.get("metadata")
+    if isinstance(meta, dict):
+        buckets.append(meta.get("files"))
+    buckets.append(body.get("files"))
+    messages = body.get("messages") or []
+    if messages and isinstance(messages[-1], dict):
+        buckets.append(messages[-1].get("files"))
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for bucket in buckets:
+        if not isinstance(bucket, list):
+            continue
+        for entry in bucket:
+            if not isinstance(entry, dict):
+                continue
+            file_id = entry.get("id") or (entry.get("file") or {}).get("id")
+            if file_id and file_id not in seen:
+                seen.add(file_id)
+                ids.append(file_id)
+    return ids
+
+
 async def _extract_ocr_text(
     body: dict,
     ocr_service: Any,
@@ -87,7 +112,24 @@ async def _extract_ocr_text(
         )
         if text:
             parts.append(text)
-    # Attached files handled in Task 2.
+    if file_loader is not None:
+        for file_id in _collect_file_ids(body):
+            try:
+                loaded = await file_loader(file_id)
+            except Exception:
+                logger.warning("OCR file load failed for %s", file_id, exc_info=True)
+                continue
+            if not loaded:
+                continue
+            content, mime, extracted = loaded
+            if (extracted or "").strip():
+                continue  # OWUI already extracted usable text; don't re-OCR.
+            text = await _ocr_one(
+                ocr_service, content, mime,
+                allowed_mimes=allowed_mimes, max_file_bytes=max_file_bytes,
+            )
+            if text:
+                parts.append(text)
     return "\n\n".join(parts)
 
 # Ensure legacy imports work by adding package directories if not present

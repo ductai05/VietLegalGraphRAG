@@ -100,3 +100,55 @@ def test_no_attachments_yields_empty_string():
     )
     assert out == ""
     assert ocr.calls == []
+
+
+def _body_with_file_ids(*ids: str) -> dict:
+    return {
+        "messages": [{"role": "user", "content": "Xem tài liệu đính kèm"}],
+        "metadata": {"files": [{"type": "file", "id": i} for i in ids]},
+    }
+
+
+def _loader(mapping):
+    async def _load(file_id):
+        return mapping.get(file_id)  # (bytes, mime, extracted_text) or None
+    return _load
+
+
+def test_scanned_pdf_with_empty_owui_text_is_ocred():
+    ocr = _FakeOcr("Điều 1. Phạm vi điều chỉnh")
+    loader = _loader({"f1": (b"%PDF-fake", "application/pdf", "   ")})
+    out = _run(
+        _extract_ocr_text(
+            _body_with_file_ids("f1"), ocr, loader,
+            allowed_mimes=_ALLOWED, max_file_bytes=10 * 1024 * 1024,
+        )
+    )
+    assert "Phạm vi điều chỉnh" in out
+    assert ocr.calls and ocr.calls[0][1] == "application/pdf"
+
+
+def test_pdf_with_existing_owui_text_skips_ocr():
+    ocr = _FakeOcr()
+    loader = _loader({"f1": (b"%PDF", "application/pdf", "Đã có nội dung trích")})
+    out = _run(
+        _extract_ocr_text(
+            _body_with_file_ids("f1"), ocr, loader,
+            allowed_mimes=_ALLOWED, max_file_bytes=10 * 1024 * 1024,
+        )
+    )
+    assert out == ""
+    assert ocr.calls == []
+
+
+def test_missing_file_is_skipped():
+    ocr = _FakeOcr()
+    loader = _loader({})  # loader returns None
+    out = _run(
+        _extract_ocr_text(
+            _body_with_file_ids("nope"), ocr, loader,
+            allowed_mimes=_ALLOWED, max_file_bytes=10 * 1024 * 1024,
+        )
+    )
+    assert out == ""
+    assert ocr.calls == []
