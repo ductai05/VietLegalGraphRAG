@@ -142,9 +142,10 @@ def make_retrieval_tool(
 
 
 class GraphValidateInput(BaseModel):
-    doc_id: str = Field(
+    doc_ids: list[str] = Field(
         description=(
-            "A doc_id returned by retrieval_search — not a free-text document title."
+            "doc_ids returned by retrieval_search — not free-text titles. Pass "
+            "ALL documents you intend to cite in one call."
         )
     )
     depth: int = Field(default=1, ge=1, le=2, description="Graph traversal depth.")
@@ -155,10 +156,13 @@ def make_graph_validate_tool(
     document_resolver: DocumentResolver,
     state: AgentRunState,
 ) -> StructuredTool:
-    """Tool 2: graph_validate — neighbours + legal-effect verdict for one document."""
+    """Tool 2: graph_validate — neighbours + legal-effect verdict per document.
 
-    def _run(doc_id: str, depth: int = 1) -> str:
-        state.record("graph_validate")
+    Batched: validates every doc_id in one call so the agent needs a single
+    tool step for all cited documents instead of one per document.
+    """
+
+    def _validate_one(doc_id: str, depth: int = 1) -> dict[str, Any]:
         try:
             clamped_depth = max(1, min(int(depth), 2))
             graph_context = graph_retriever.get_document_neighbors(
@@ -173,14 +177,12 @@ def make_graph_validate_tool(
             resolved = document_resolver.resolve(contexts, graph_context)
         except Exception:
             logger.exception("graph_validate tool failed for doc_id=%s", doc_id)
-            return _dumps(
-                {
-                    "doc_id": doc_id,
-                    "effect_verdict": "unknown",
-                    "available": False,
-                    "error": "graph_validate_failed",
-                }
-            )
+            return {
+                "doc_id": doc_id,
+                "effect_verdict": "unknown",
+                "available": False,
+                "error": "graph_validate_failed",
+            }
 
         verdict = "unknown"
         replacement_doc_id: str | None = None
@@ -208,34 +210,48 @@ def make_graph_validate_tool(
         state.verdicts[clean_doc_id] = verdict
         state.graph_validation = "agent_tool"
 
-        return _dumps(
-            {
-                "doc_id": doc_id,
-                "center": graph_context.center.to_dict() if available else None,
-                "relations": [
-                    {
-                        "source": edge.source,
-                        "target": edge.target,
-                        "type": edge.type,
-                        "raw_label": edge.raw_label,
-                        "direction": edge.direction,
-                    }
-                    for edge in graph_context.edges
-                ],
-                "effect_verdict": verdict,
-                "replacement_doc_id": replacement_doc_id,
-                "reason": reason,
-                "available": available,
-            }
-        )
+        return {
+            "doc_id": doc_id,
+            "center": graph_context.center.to_dict() if available else None,
+            "relations": [
+                {
+                    "source": edge.source,
+                    "target": edge.target,
+                    "type": edge.type,
+                    "raw_label": edge.raw_label,
+                    "direction": edge.direction,
+                }
+                for edge in graph_context.edges
+            ],
+            "effect_verdict": verdict,
+            "replacement_doc_id": replacement_doc_id,
+            "reason": reason,
+            "available": available,
+        }
+
+    def _run(doc_ids: list[str] | str, depth: int = 1) -> str:
+        state.record("graph_validate")
+        # Tolerate a single string in case the model ignores the list schema.
+        if isinstance(doc_ids, str):
+            doc_ids = [doc_ids]
+        seen: set[str] = set()
+        results = []
+        for doc_id in doc_ids:
+            key = DocumentResolver._clean_id(doc_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(_validate_one(doc_id, depth))
+        return _dumps(results)
 
     return StructuredTool.from_function(
         func=_run,
         name="graph_validate",
         description=(
-            "Kiểm tra hiệu lực pháp lý và các quan hệ của một văn bản trong đồ thị tri "
-            "thức. Bắt buộc gọi cho mọi doc_id trước khi trích dẫn. Trả về "
-            "effect_verdict ∈ {in_force, superseded, expired, unknown} và văn bản thay thế nếu có."
+            "Kiểm tra hiệu lực pháp lý và quan hệ của các văn bản trong đồ thị tri thức. "
+            "Gọi MỘT LẦN với danh sách tất cả doc_id bạn định trích dẫn. Trả về danh sách "
+            "JSON, mỗi phần tử có effect_verdict ∈ {in_force, superseded, expired, unknown} "
+            "và văn bản thay thế nếu có."
         ),
         args_schema=GraphValidateInput,
     )

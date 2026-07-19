@@ -32,8 +32,8 @@ AGENT_SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên nghiệp cho p
 
 QUY TRÌNH BẮT BUỘC:
 1. Luôn gọi `retrieval_search` trước tiên để tìm văn bản pháp luật liên quan. Hãy viết lại câu hỏi của người dùng thành truy vấn giàu từ khoá pháp lý.
-2. Với MỌI văn bản bạn định trích dẫn, bắt buộc gọi `graph_validate` với `doc_id` của văn bản đó (lấy từ kết quả `retrieval_search`, không dùng tiêu đề) trước khi trích dẫn.
-3. Nếu `effect_verdict` là `expired` hoặc `superseded`, bạn PHẢI chủ động ghi thêm cảnh báo rõ ràng bằng biểu tượng ⚠️ ở câu trả lời tương ứng, đồng thời dựa câu trả lời trên văn bản mới hơn (gọi thêm `retrieval_search` để lấy nội dung văn bản thay thế nếu cần) và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới.
+2. Sau khi có kết quả `retrieval_search`, gọi `graph_validate` MỘT LẦN DUY NHẤT với danh sách `doc_ids` gồm tất cả văn bản bạn định trích dẫn (lấy `doc_id` từ kết quả `retrieval_search`, không dùng tiêu đề) trước khi trích dẫn. Không gọi `graph_validate` riêng lẻ từng văn bản.
+3. Cảnh báo hiệu lực CHỈ áp dụng cho văn bản bạn thực sự dùng làm căn cứ. Nếu `effect_verdict` là `expired` hoặc `superseded` VÀ bạn dựa vào văn bản đó để trả lời, ghi cảnh báo ⚠️ ngay tại nhận định tương ứng, đồng thời dựa câu trả lời trên văn bản mới hơn (gọi thêm `retrieval_search` để lấy nội dung văn bản thay thế nếu cần) và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ luật cũ sang luật mới. TUYỆT ĐỐI không cảnh báo về văn bản hết hiệu lực mà bạn không dùng đến hoặc không liên quan tới câu hỏi.
 4. Gọi `web_find_source_link` một lần cho mỗi văn bản được trích dẫn để lấy đường dẫn nguồn chính thống. Nếu công cụ trả về `[]`, hãy trích dẫn không kèm đường dẫn. Tuyệt đối không tự bịa URL.
 
 GIỚI HẠN: tối đa 8 lượt gọi công cụ. Nếu các công cụ không trả về thông tin hữu ích, hãy nói rõ rằng bạn không tìm được đủ căn cứ pháp lý thay vì suy đoán.
@@ -142,12 +142,19 @@ class AgentService:
     def _request_llm(self, request: RetrievalRequest) -> Any:
         """Rebind the injected chat model to this request's LLM settings."""
         try:
-            return self.llm.model_copy(
+            llm = self.llm.model_copy(
                 update={
                     "temperature": request.llm.temperature,
                     "max_tokens": request.llm.max_tokens,
                 }
             )
+            # Per-request model override (dropdown). Bound as a call kwarg rather
+            # than via model_copy: the ChatOpenAI field is `model_name` (alias
+            # `model`), and model_copy would silently drop a bare "model" key.
+            model = (request.llm.model or "").strip()
+            if model:
+                llm = llm.bind(model=model)
+            return llm
         except Exception:
             logger.warning("Could not rebind LLM per request; using defaults", exc_info=True)
             return self.llm
@@ -226,7 +233,9 @@ class AgentService:
             trace["resolutions"] = list(state.resolutions)
         return trace
 
-    def _run_safety_net(self, request: RetrievalRequest, state: AgentRunState) -> str:
+    def _run_safety_net(
+        self, request: RetrievalRequest, state: AgentRunState, answer_text: str = ""
+    ) -> str:
         """§4.6: the ReAct agent may skip graph_validate — resolve deterministically.
 
         Returns the warning line to append to the answer, or "".
@@ -254,7 +263,22 @@ class AgentService:
         if resolved is None:
             return ""
         state.resolutions.extend(item.to_dict() for item in resolved.resolutions)
-        if any(item.action in _WARNING_ACTIONS for item in resolved.resolutions):
+        # Relevance gate: don't duplicate a warning the model already wrote inline,
+        # and only fire for a warned doc among the top-3 hits — a tangential expired
+        # doc lower in the ranking must not trigger the blanket footer.
+        if "⚠️" in answer_text:
+            return ""
+        top_ids = {
+            DocumentResolver._clean_id(hit.doc_id)
+            for hit in state.hits[:3]
+            if hit.doc_id
+        }
+        relevant_warning = any(
+            item.action in _WARNING_ACTIONS
+            and DocumentResolver._clean_id(item.original_doc_id or "") in top_ids
+            for item in resolved.resolutions
+        )
+        if relevant_warning:
             return "\n\n" + EXPIRY_WARNING
         return ""
 
@@ -281,7 +305,7 @@ class AgentService:
             logger.exception("Agent run failed; falling back to the static flow")
             return self._fallback_answer(request, "agent.invoke_failed")
 
-        answer_text += self._run_safety_net(request, state)
+        answer_text += self._run_safety_net(request, state, answer_text)
         return {
             "answer": answer_text,
             "citations": self._citations(state),
@@ -399,7 +423,7 @@ class AgentService:
                 yield from _fallback("agent.no_answer")
                 return
 
-            warning = self._run_safety_net(request, state)
+            warning = self._run_safety_net(request, state, thinking["content"])
             if warning:
                 yield warning
             _finalize()
