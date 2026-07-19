@@ -132,6 +132,25 @@ async def _extract_ocr_text(
                 parts.append(text)
     return "\n\n".join(parts)
 
+
+async def _owui_file_loader(file_id: str) -> "tuple[bytes, str, str] | None":
+    try:
+        from open_webui.models.files import Files
+        from open_webui.storage.provider import Storage
+
+        f = await Files.get_file_by_id(file_id)
+        if not f or not f.path:
+            return None
+        mime = ((f.meta or {}).get("content_type")) or ""
+        extracted = ((f.data or {}).get("content", "")) or ""
+        local_path = Storage.get_file(f.path)
+        with open(local_path, "rb") as fh:
+            content = fh.read()
+        return content, mime, extracted
+    except Exception:
+        logger.warning("OWUI file loader failed for %s", file_id, exc_info=True)
+        return None
+
 # Ensure legacy imports work by adding package directories if not present
 from pathlib import Path
 _PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -544,6 +563,27 @@ class Pipe:
             await _emit_status("Lỗi kết nối hệ thống RAG", done=True)
             yield f"⚠️ Không thể kết nối dịch vụ: {type(e).__name__}. Vui lòng kiểm tra cấu hình trong Valves."
             return
+
+        try:
+            from config import get_settings
+            _ocr_settings = get_settings()
+            _allowed_mimes = frozenset(_ocr_settings.ocr_allowed_mime_types)
+            _max_bytes = int(_ocr_settings.ocr_max_file_bytes)
+            _ocr_service = getattr(services, "ocr_service", None)
+        except Exception:
+            _ocr_service = None
+
+        if _ocr_service is not None:
+            await _emit_status("Đang đọc văn bản từ ảnh/tài liệu...")
+            ocr_text = await _extract_ocr_text(
+                body,
+                _ocr_service,
+                _owui_file_loader,
+                allowed_mimes=_allowed_mimes,
+                max_file_bytes=_max_bytes,
+            )
+            if ocr_text:
+                user_message = f"{_OCR_MERGE_PREFIX}\n{ocr_text}\n\n{user_message}"
 
         # 2. Build search request
         from vietlegal_rag.schemas import build_search_request
