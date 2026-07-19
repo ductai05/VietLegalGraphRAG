@@ -61,8 +61,12 @@ class RerankConfig:
 class LLMConfig:
     temperature: float = 0.2
     max_context_chunks: int = 8
-    max_tokens: int = 2048
+    max_tokens: int = 16384
     system_prompt: str = ""
+    # Per-request model override from the Open WebUI dropdown; "" = use the
+    # model baked into the built service. Threaded per request so concurrent
+    # users never clobber a shared valve.
+    model: str = ""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.temperature <= 1.0:
@@ -77,7 +81,7 @@ class LLMConfig:
 class GraphConfig:
     enabled: bool = True
     use_lightrag: bool = True
-    max_hops: int = 1
+    max_hops: int = 2
     auto_depth: bool = True
 
     def __post_init__(self) -> None:

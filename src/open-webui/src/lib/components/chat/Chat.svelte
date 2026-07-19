@@ -399,6 +399,27 @@
 	};
 
 	let settingDefaults = false;
+	const applyModelParamDefaults = (model) => {
+		const modelParams = model?.info?.params ?? {};
+		const hasChatSystem = Object.prototype.hasOwnProperty.call(params ?? {}, 'system');
+		const hasChatMaxTokens = Object.prototype.hasOwnProperty.call(params ?? {}, 'llm_max_tokens');
+		const nextParams = { ...(params ?? {}) };
+
+		if (!hasChatSystem && modelParams.system) {
+			nextParams.system = modelParams.system;
+		}
+		if (
+			!hasChatMaxTokens &&
+			modelParams.llm_max_tokens !== undefined &&
+			modelParams.llm_max_tokens !== null
+		) {
+			nextParams.llm_max_tokens = modelParams.llm_max_tokens;
+		}
+		if (!equal(nextParams, params)) {
+			params = nextParams;
+		}
+	};
+
 	const setDefaults = async () => {
 		if (settingDefaults) return;
 		settingDefaults = true;
@@ -419,6 +440,8 @@
 
 			const model = atSelectedModel ?? $models.find((m) => m.id === selectedModels[0]);
 			if (model) {
+				applyModelParamDefaults(model);
+
 				// Set Default Tools
 				if (model?.info?.meta?.toolIds) {
 					const defaultIds = [
@@ -1629,6 +1652,12 @@
 				chatTitle.set(chatContent.title);
 
 				params = structuredClone(chatContent?.params ?? {});
+				if (selectedModels.length === 1) {
+					const model = $models.find((m) => m.id === selectedModels[0]);
+					if (model) {
+						applyModelParamDefaults(model);
+					}
+				}
 				chatFiles = structuredClone(chatContent?.files ?? []);
 
 				// Load tasks from chat-level DB field

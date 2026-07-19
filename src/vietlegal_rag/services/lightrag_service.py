@@ -113,6 +113,8 @@ class LightRAGService:
                 contexts,
                 request.llm.temperature,
                 request.llm.system_prompt,
+                request.llm.model,
+                request.llm.max_tokens,
             )
         except Exception:
             answer_error = "llm.answer_failed"
@@ -233,6 +235,8 @@ class LightRAGService:
                     contexts,
                     request.llm.temperature,
                     request.llm.system_prompt,
+                    request.llm.model,
+                    request.llm.max_tokens,
                 )
             except Exception:
                 logger.exception("Failed to initialize primary LLM stream, falling back to extractive")

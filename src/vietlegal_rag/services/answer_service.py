@@ -9,10 +9,10 @@ SYSTEM_PROMPT = (
     "1. Chỉ trả lời dựa trên ngữ cảnh pháp lý được cung cấp. Tuyệt đối không tự bịa căn cứ pháp lý, điều luật, số hiệu văn bản, mức phạt, thời hạn, thủ tục hoặc URL.\n"
     "2. Mỗi nhận định pháp lý quan trọng phải có citation inline dạng [1], [2] khớp với số thứ tự đoạn ngữ cảnh. Đặt citation ngay sau câu hoặc mệnh đề được hỗ trợ bởi nguồn đó.\n"
     "3. Không tự tạo mục 'Căn cứ pháp lý', 'Nguồn', danh sách tài liệu hoặc URL ở cuối câu trả lời. Open WebUI sẽ hiển thị chi tiết căn cứ trong Sources và citation modal.\n"
-    "4. Luôn kiểm tra và cảnh báo rõ ràng về hiệu lực của văn bản. Nếu tài liệu đi kèm ghi nhận trạng thái [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ], bạn PHẢI chủ động ghi thêm cảnh báo bằng biểu tượng ⚠️ ở phần trả lời tương ứng.\n"
-    "5. Nếu có văn bản mới hơn hoặc văn bản thay thế trong ngữ cảnh, ưu tiên áp dụng quy định mới, đồng thời giải thích ngắn gọn điểm chuyển tiếp pháp lý từ văn bản cũ sang văn bản mới.\n"
-    "6. Nếu ngữ cảnh không đủ để trả lời chắc chắn, nói rõ phần chưa đủ căn cứ thay vì suy đoán. Không thay thế tư vấn pháp lý của luật sư trong vụ việc cụ thể.\n"
-    "7. Trình bày bằng tiếng Việt, rõ ràng, có cấu trúc, ưu tiên câu trả lời trực tiếp trước rồi mới giải thích."
+    "4. Cảnh báo hiệu lực CHỈ áp dụng cho văn bản bạn thực sự dùng làm căn cứ trong câu trả lời. Nếu một đoạn ngữ cảnh có trạng thái [TRẠNG THÁI: HẾT HIỆU LỰC] hoặc [TRẠNG THÁI: PHIÊN BẢN CŨ] VÀ bạn dựa vào nó để trả lời, ghi cảnh báo ⚠️ ngay tại nhận định đó. TUYỆT ĐỐI không cảnh báo về văn bản hết hiệu lực mà bạn không dùng đến hoặc không liên quan tới câu hỏi.\n"
+    "5. Nếu ngữ cảnh có văn bản mới hơn hoặc văn bản thay thế cho một văn bản cũ, ưu tiên áp dụng quy định mới và giải thích ngắn gọn điểm chuyển tiếp pháp lý từ văn bản cũ sang văn bản mới.\n"
+    "6. Bỏ qua các đoạn ngữ cảnh không liên quan đến câu hỏi; không gượng ép đưa chúng vào câu trả lời. Nếu một phần câu hỏi không có căn cứ trong ngữ cảnh, nói rõ phần đó chưa đủ căn cứ trong tài liệu được cung cấp; khi đó bạn có thể đưa hướng dẫn thực tế an toàn chung (ví dụ: trình báo cơ quan công an, giữ chứng cứ) nhưng KHÔNG được bịa điều luật, số hiệu, mức phạt hay thủ tục cụ thể. Không thay thế tư vấn pháp lý của luật sư trong vụ việc cụ thể.\n"
+    "7. Trình bày bằng tiếng Việt rõ ràng, có cấu trúc. Ưu tiên trả lời trực tiếp trước rồi mới giải thích; câu hỏi nhiều vấn đề thì tách thành từng phần. Ngắn gọn, súc tích, độ dài co giãn theo câu hỏi; không lặp lại hoặc nhồi citation thừa."
 )
 
 
@@ -23,6 +23,8 @@ class AnswerService(Protocol):
         contexts: list[AnswerContext],
         temperature: float,
         system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -32,6 +34,8 @@ class AnswerService(Protocol):
         contexts: list[AnswerContext],
         temperature: float,
         system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> Generator[str, None, None]:
         ...
 
@@ -44,6 +48,8 @@ class ExtractiveAnswerService:
         contexts: list[AnswerContext],
         temperature: float,
         system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         if not contexts:
             return {
@@ -80,6 +86,8 @@ class ExtractiveAnswerService:
         contexts: list[AnswerContext],
         temperature: float,
         system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> Generator[str, None, None]:
         res = self.answer(query, contexts, temperature)
         yield res.get("answer", "")
@@ -98,6 +106,8 @@ class OpenAICompatibleAnswerService:
         contexts: list[AnswerContext],
         temperature: float,
         system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         if not contexts:
             return ExtractiveAnswerService().answer(query, contexts, temperature)
@@ -120,7 +130,7 @@ class OpenAICompatibleAnswerService:
 
         context_text = "\n\n".join(formatted_contexts)
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             temperature=temperature,
             messages=[
                 {
@@ -136,7 +146,7 @@ class OpenAICompatibleAnswerService:
                     ),
                 },
             ],
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens or self.max_tokens,
         )
         answer = response.choices[0].message.content or ""
         return {
@@ -159,6 +169,8 @@ class OpenAICompatibleAnswerService:
         contexts: list[AnswerContext],
         temperature: float,
         system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> Generator[str, None, None]:
         if not contexts:
             for chunk in ExtractiveAnswerService().stream_answer(query, contexts, temperature):
@@ -183,7 +195,7 @@ class OpenAICompatibleAnswerService:
  
         context_text = "\n\n".join(formatted_contexts)
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             temperature=temperature,
             messages=[
                 {
@@ -200,7 +212,7 @@ class OpenAICompatibleAnswerService:
                 },
             ],
             stream=True,
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens or self.max_tokens,
         )
         
         in_thinking = False
@@ -236,4 +248,3 @@ class OpenAICompatibleAnswerService:
     @staticmethod
     def _system_prompt(system_prompt: str | None = None) -> str:
         return (system_prompt or "").strip() or SYSTEM_PROMPT
-

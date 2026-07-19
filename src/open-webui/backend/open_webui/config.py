@@ -63,6 +63,8 @@ async def seed_registered_defaults():
         from open_webui.models.models import Models, ModelForm, ModelMeta, ModelParams
         model = await Models.get_model_by_id('vietlegal_rag')
 
+        VIETLEGAL_DEFAULT_MAX_TOKENS = 16384
+
         OLD_VIETLEGAL_SYSTEM_PROMPT = (
             "Bạn là trợ lý pháp lý AI chuyên nghiệp của Việt Nam. Nhiệm vụ của bạn là giải thích luật pháp và phân tích tình huống pháp lý một cách chính xác, khách quan.\n\n"
             "QUY TẮC PHÁP LÝ BẮT BUỘC:\n"
@@ -110,16 +112,26 @@ async def seed_registered_defaults():
                     capabilities={'file_context': True}
                 ),
                 params=ModelParams(
-                    system=VIETLEGAL_SYSTEM_PROMPT
+                    system=VIETLEGAL_SYSTEM_PROMPT,
+                    llm_max_tokens=VIETLEGAL_DEFAULT_MAX_TOKENS
                 )
             )
             await Models.insert_new_model(form_data, user_id=admin_user_id)
             log.info("Successfully seeded 'vietlegal_rag' model with system prompt.")
         current_system = getattr(model.params, 'system', None) if model and model.params else None
-        if model and (not current_system or current_system == OLD_VIETLEGAL_SYSTEM_PROMPT):
+        current_llm_max_tokens = getattr(model.params, 'llm_max_tokens', None) if model and model.params else None
+        legacy_max_tokens = getattr(model.params, 'max_tokens', None) if model and model.params else None
+        if model and (
+            not current_system
+            or current_system == OLD_VIETLEGAL_SYSTEM_PROMPT
+            or current_llm_max_tokens is None
+        ):
             meta = ModelMeta(**(model.meta.model_dump() if model.meta else {}))
             params_dict = model.params.model_dump() if model.params else {}
-            params_dict['system'] = VIETLEGAL_SYSTEM_PROMPT
+            if not current_system or current_system == OLD_VIETLEGAL_SYSTEM_PROMPT:
+                params_dict['system'] = VIETLEGAL_SYSTEM_PROMPT
+            if current_llm_max_tokens is None:
+                params_dict['llm_max_tokens'] = legacy_max_tokens or VIETLEGAL_DEFAULT_MAX_TOKENS
             form_data = ModelForm(
                 id=model.id,
                 base_model_id=model.base_model_id,
@@ -128,7 +140,7 @@ async def seed_registered_defaults():
                 params=ModelParams(**params_dict)
             )
             await Models.update_model_by_id(model.id, form_data)
-            log.info("Successfully updated 'vietlegal_rag' model system prompt.")
+            log.info("Successfully updated 'vietlegal_rag' model defaults.")
     except Exception as e:
         log.exception(f"Error seeding vietlegal_rag model system prompt: {e}")
 

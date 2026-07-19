@@ -153,7 +153,7 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL"),
         llm_api_key=os.getenv("LLM_API_KEY"),
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        llm_max_tokens=_getenv_int("LLM_MAX_TOKENS", 2048),
+        llm_max_tokens=_getenv_int("LLM_MAX_TOKENS", 16384),
         # LangGraph ReAct agent: off by default, static LightRAG flow stays the fallback.
         agent_enabled=_getenv_bool("AGENT_ENABLED", False),
         agent_max_iterations=_getenv_int("AGENT_MAX_ITERATIONS", 8),

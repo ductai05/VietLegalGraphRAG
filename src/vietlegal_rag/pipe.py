@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vietlegal_rag.pipe")
 _STREAM_DONE = object()
+DEFAULT_LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "16384"))
 
 # Ensure legacy imports work by adding package directories if not present
 from pathlib import Path
@@ -117,8 +118,8 @@ class Pipe:
             description="Whether to perform Neo4j knowledge graph traversal"
         )
         max_hops: int = Field(
-            default=1, 
-            description="Maximum relationship hops in graph traversal"
+            default=2,
+            description="Maximum relationship hops in graph traversal (2 catches transitive supersession A->B->C)"
         )
         llm_temperature: float = Field(
             default=0.2, 
@@ -129,7 +130,7 @@ class Pipe:
             description="Maximum context chunks allowed in prompt template"
         )
         llm_max_tokens: int = Field(
-            default=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
+            default=DEFAULT_LLM_MAX_TOKENS,
             description="Maximum tokens for LLM generation"
         )
         llm_streaming: bool = Field(
@@ -143,7 +144,7 @@ class Pipe:
             description="Use the LangGraph ReAct agent instead of the static RAG flow"
         )
         agent_max_iterations: int = Field(
-            default=8,
+            default=int(os.environ.get("AGENT_MAX_ITERATIONS", "10")),
             description="Maximum agent tool-calling iterations"
         )
         web_search_provider: str = Field(
@@ -201,6 +202,8 @@ class Pipe:
         self,
         answer_stream,
         drain_status_queue: Callable[[], Awaitable[None]],
+        *,
+        llm_streaming: bool,
     ) -> AsyncGenerator[str, None]:
         """Bridge a blocking sync token generator into the async SSE loop."""
         loop = asyncio.get_running_loop()
@@ -208,7 +211,7 @@ class Pipe:
 
         def _worker() -> None:
             try:
-                if self.valves.llm_streaming:
+                if llm_streaming:
                     for token in answer_stream:
                         loop.call_soon_threadsafe(output_queue.put_nowait, token)
                 else:
@@ -272,7 +275,10 @@ class Pipe:
 
         if has_override:
             logger.info(f"Overriding RAG LLM model with selected option: {actual_model}")
-            self.valves.llm_model = actual_model
+            # Threaded onto the request below (not written to the shared singleton
+            # valve): Pipe serves concurrent users, and the valves fingerprint
+            # keys the heavy service cache — mutating it here would race across
+            # requests and rebuild every service on each model switch.
 
         def _message_content_to_text(content: Any) -> str:
             if isinstance(content, str):
@@ -297,6 +303,105 @@ class Pipe:
             for message in messages
             if message.get("role") == "system"
         ).strip()
+
+        def _coerce_int_param(name: str, fallback: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+            value = request_params.get(name)
+            if value in (None, ""):
+                return fallback
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid %s value from Advanced Params: %r", name, value)
+                return fallback
+            if minimum is not None and parsed < minimum:
+                return fallback
+            if maximum is not None and parsed > maximum:
+                return fallback
+            return parsed
+
+        request_params = body.get("params") if isinstance(body.get("params"), dict) else {}
+
+        def _coerce_float_param(
+            name: str,
+            fallback: float,
+            *,
+            minimum: float | None = None,
+            maximum: float | None = None,
+        ) -> float:
+            value = request_params.get(name)
+            if value in (None, ""):
+                return fallback
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid %s value from Advanced Params: %r", name, value)
+                return fallback
+            if minimum is not None and parsed < minimum:
+                return fallback
+            if maximum is not None and parsed > maximum:
+                return fallback
+            return parsed
+
+        def _coerce_bool_param(name: str, fallback: bool) -> bool:
+            value = request_params.get(name)
+            if value in (None, ""):
+                return fallback
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {"true", "1", "yes", "on"}:
+                    return True
+                if lowered in {"false", "0", "no", "off"}:
+                    return False
+            logger.warning("Ignoring invalid %s value from Advanced Params: %r", name, value)
+            return fallback
+
+        def _coerce_choice_param(name: str, fallback: str, choices: set[str]) -> str:
+            value = request_params.get(name)
+            if value in (None, ""):
+                return fallback
+            parsed = str(value).strip()
+            if parsed in choices:
+                return parsed
+            logger.warning("Ignoring invalid %s value from Advanced Params: %r", name, value)
+            return fallback
+
+        def _coerce_str_param(name: str, fallback: str) -> str:
+            value = request_params.get(name)
+            if value in (None, ""):
+                return fallback
+            return str(value)
+
+        retrieval_mode = _coerce_choice_param(
+            "retrieval_mode",
+            self.valves.retrieval_mode,
+            {"dense", "sparse", "hybrid"},
+        )
+        top_k = _coerce_int_param("top_k", self.valves.top_k, minimum=1, maximum=50)
+        rerank_enabled = _coerce_bool_param("rerank_enabled", self.valves.rerank_enabled)
+        rerank_model = _coerce_str_param("rerank_model", self.valves.rerank_model)
+        graph_enabled = _coerce_bool_param("graph_enabled", self.valves.graph_enabled)
+        max_hops = _coerce_int_param("max_hops", self.valves.max_hops, minimum=0, maximum=2)
+        llm_temperature = _coerce_float_param(
+            "llm_temperature",
+            self.valves.llm_temperature,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        max_context_chunks = _coerce_int_param(
+            "max_context_chunks",
+            self.valves.max_context_chunks,
+            minimum=1,
+            maximum=32,
+        )
+        llm_max_tokens = _coerce_int_param(
+            "llm_max_tokens",
+            _coerce_int_param("max_tokens", self.valves.llm_max_tokens, minimum=1),
+            minimum=1,
+        )
+        llm_streaming = _coerce_bool_param("llm_streaming", self.valves.llm_streaming)
+        agent_enabled = _coerce_bool_param("agent_enabled", self.valves.agent_enabled)
         status_queue: "queue.Queue[str]" = queue.Queue()
 
         async def _emit_status(description: str, done: bool = False):
@@ -328,22 +433,24 @@ class Pipe:
 
         search_model = build_search_request(
             query=user_message,
-            retrieval_mode=self.valves.retrieval_mode,
-            top_k=self.valves.top_k,
-            rerank_enabled=self.valves.rerank_enabled,
-            rerank_model=self.valves.rerank_model,
-            graph_enabled=self.valves.graph_enabled,
-            max_hops=self.valves.max_hops,
-            llm_temperature=self.valves.llm_temperature,
-            max_context_chunks=self.valves.max_context_chunks,
-            llm_max_tokens=self.valves.llm_max_tokens,
+            retrieval_mode=retrieval_mode,
+            top_k=top_k,
+            rerank_enabled=rerank_enabled,
+            rerank_model=rerank_model,
+            graph_enabled=graph_enabled,
+            max_hops=max_hops,
+            llm_temperature=llm_temperature,
+            max_context_chunks=max_context_chunks,
+            llm_max_tokens=llm_max_tokens,
         )
         request = RetrievalRequest(**search_model.model_dump())
         request.llm.system_prompt = system_prompt
+        if has_override:
+            request.llm.model = actual_model
 
 
         # 3. Stream pipeline phases
-        use_agent = bool(self.valves.agent_enabled and services.agent_service)
+        use_agent = bool(agent_enabled and services.agent_service)
         if use_agent:
             await _emit_status("Agent đang phân tích câu hỏi...")
         else:
@@ -370,7 +477,11 @@ class Pipe:
         # 4. Stream response tokens
         try:
             await _drain_status_queue()
-            async for token in self._stream_sync_generator(answer_stream, _drain_status_queue):
+            async for token in self._stream_sync_generator(
+                answer_stream,
+                _drain_status_queue,
+                llm_streaming=llm_streaming,
+            ):
                 yield token
         except Exception:
             logger.exception("LLM token streaming failed")
@@ -383,7 +494,7 @@ class Pipe:
         # Sources list and citation modal are the canonical citation UI.
         if __event_emitter__ and citations:
             from vietlegal_rag.services.citation_formatter import parse_citation, shorten_title
-            for cite in citations:
+            for citation_index, cite in enumerate(citations, start=1):
                 try:
                     parsed = parse_citation(cite.get("citation") or "")
                     section_path = parsed["section_path"]
@@ -393,17 +504,24 @@ class Pipe:
                     shortened_label = f"{section_path}, {shorten_title(title)}" if section_path else shorten_title(title)
                     
                     text = cite.get("text") or ""
-                    url = cite.get("url") or "N/A"
+                    url = cite.get("url")
+                    source_id = (
+                        cite.get("chunk_id")
+                        or parsed.get("chunk_id")
+                        or cite.get("doc_id")
+                        or cite.get("citation")
+                        or f"citation-{citation_index}"
+                    )
                     
                     source_data = {
                         "source": {
                             "name": shortened_label,
-                            "url": url if url != "N/A" else None
+                            "url": url or None
                         },
                         "document": [text],
                         "metadata": [
                             {
-                                "source": url,
+                                "source": f"vietlegal:{citation_index}:{source_id}",
                                 "name": label
                             }
                         ]
