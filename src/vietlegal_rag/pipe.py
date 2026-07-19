@@ -5,6 +5,7 @@ import logging
 import asyncio
 import queue
 import threading
+import base64
 from typing import Callable, Awaitable, AsyncGenerator, Any
 from pydantic import BaseModel, Field
 
@@ -13,6 +14,81 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vietlegal_rag.pipe")
 _STREAM_DONE = object()
 DEFAULT_LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "16384"))
+
+_OCR_MERGE_PREFIX = "[Nội dung trích từ tài liệu người dùng gửi]:"
+
+
+def _decode_data_url(url: str) -> tuple[bytes, str] | None:
+    # data:<mime>;base64,<payload>
+    if not url.startswith("data:") or ";base64," not in url:
+        return None
+    header, b64 = url.split(";base64,", 1)
+    mime = header[len("data:"):].strip()
+    try:
+        return base64.b64decode(b64), mime
+    except Exception:
+        return None
+
+
+def _inline_image_sources(body: dict) -> list[tuple[bytes, str]]:
+    messages = body.get("messages") or []
+    if not messages:
+        return []
+    content = messages[-1].get("content")
+    if not isinstance(content, list):
+        return []
+    out: list[tuple[bytes, str]] = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "image_url":
+            continue
+        url = (item.get("image_url") or {}).get("url") or ""
+        decoded = _decode_data_url(url)
+        if decoded:
+            out.append(decoded)
+    return out
+
+
+async def _ocr_one(
+    ocr_service: Any,
+    content: bytes,
+    mime: str,
+    *,
+    allowed_mimes: frozenset[str],
+    max_file_bytes: int,
+) -> str:
+    if mime not in allowed_mimes:
+        logger.info("OCR skip: mime %r not allowed", mime)
+        return ""
+    if len(content) > max_file_bytes:
+        logger.info("OCR skip: %d bytes over cap %d", len(content), max_file_bytes)
+        return ""
+    try:
+        result = await asyncio.to_thread(ocr_service.process, content, mime)
+    except Exception:
+        logger.warning("OCR provider failed for mime %s", mime, exc_info=True)
+        return ""
+    if not result or not result.get("success"):
+        return ""
+    return (result.get("text") or "").strip()
+
+
+async def _extract_ocr_text(
+    body: dict,
+    ocr_service: Any,
+    file_loader: "Callable[[str], Awaitable[tuple[bytes, str, str] | None]] | None" = None,
+    *,
+    allowed_mimes: frozenset[str],
+    max_file_bytes: int,
+) -> str:
+    parts: list[str] = []
+    for content, mime in _inline_image_sources(body):
+        text = await _ocr_one(
+            ocr_service, content, mime, allowed_mimes=allowed_mimes, max_file_bytes=max_file_bytes
+        )
+        if text:
+            parts.append(text)
+    # Attached files handled in Task 2.
+    return "\n\n".join(parts)
 
 # Ensure legacy imports work by adding package directories if not present
 from pathlib import Path
