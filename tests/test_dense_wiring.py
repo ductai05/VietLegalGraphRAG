@@ -69,6 +69,7 @@ def _settings(**overrides) -> Settings:
         ocr_config_invalid=False,
         agent_enabled=False,
         agent_max_iterations=5,
+        agent_max_request_tokens=8000,
         web_search_provider="none",
         exa_api_key=None,
         web_search_domains=(),
