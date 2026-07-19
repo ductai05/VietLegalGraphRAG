@@ -222,19 +222,19 @@ class AgentService:
     def _request_llm(self, request: RetrievalRequest) -> Any:
         """Rebind the injected chat model to this request's LLM settings."""
         try:
-            llm = self.llm.model_copy(
-                update={
-                    "temperature": request.llm.temperature,
-                    "max_tokens": request.llm.max_tokens,
-                }
-            )
-            # Per-request model override (dropdown). Bound as a call kwarg rather
-            # than via model_copy: the ChatOpenAI field is `model_name` (alias
-            # `model`), and model_copy would silently drop a bare "model" key.
             model = (request.llm.model or "").strip()
+            update_dict: dict[str, Any] = {
+                "temperature": request.llm.temperature,
+                "max_tokens": request.llm.max_tokens,
+            }
+            # Per-request model override (dropdown). The ChatOpenAI field is `model_name`
+            # (alias `model`). Overriding model_name directly in model_copy avoids the
+            # LangChain RunnableBinding delegation bug where calling bind_tools() 
+            # drops keys bound via llm.bind().
             if model:
-                llm = llm.bind(model=model)
-            return llm
+                update_dict["model_name"] = model
+
+            return self.llm.model_copy(update=update_dict)
         except Exception:
             logger.warning("Could not rebind LLM per request; using defaults", exc_info=True)
             return self.llm
