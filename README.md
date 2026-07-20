@@ -4,7 +4,7 @@ VietLegalGraphRAG là hệ thống hỏi đáp pháp luật tiếng Việt dựa
 
 > Lưu ý: hệ thống chỉ hỗ trợ tra cứu và giải thích thông tin pháp luật từ ngữ cảnh được truy xuất. Kết quả sinh ra không thay thế tư vấn pháp lý chính thức từ luật sư, cơ quan nhà nước hoặc chuyên gia có thẩm quyền.
 
-Demo Video: [![VietLegalGraphRAG Demo](https://img.youtube.com/vi/CkdYwaeIEU8/maxresdefault.jpg)](https://www.youtube.com/watch?v=CkdYwaeIEU8)
+Demo Video: [VietLegalGraphRAG Demo](https://www.youtube.com/watch?v=CkdYwaeIEU8)
 
 ## Thành viên thực hiện
 
