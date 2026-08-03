@@ -1,0 +1,571 @@
+{
+  "doc-60ef5ac8b83dc9c23eaf9fca2f088447": {
+    "status": "processed",
+    "content_summary": "ỦY BAN NHÂN DÂN TỈNH PHÚ THỌ | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 486/QĐ-UBND | Phú Thọ, ngày 30 tháng 7 năm 2025 QUYẾT ĐỊNH VỀ VIỆC CÔNG BỐ DANH MỤC THỦ TỤC HÀNH CHÍNH ĐƯỢC SỬA ĐỔI, BỔ SUNG LĨNH VỰC QUỐC TỊCH THUỘC TH...",
+    "content_length": 12619,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:04:10.482508+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "60ef5ac8b83dc9c23eaf9fca2f088447",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495753,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495753,
+      "process_end_time": 1785495850,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-60ef5ac8b83dc9c23eaf9fca2f088447-chunk-000",
+      "doc-60ef5ac8b83dc9c23eaf9fca2f088447-chunk-001",
+      "doc-60ef5ac8b83dc9c23eaf9fca2f088447-chunk-002",
+      "doc-60ef5ac8b83dc9c23eaf9fca2f088447-chunk-003",
+      "doc-60ef5ac8b83dc9c23eaf9fca2f088447-chunk-004"
+    ]
+  },
+  "doc-2e095add498f00013e78e86a44a6b500": {
+    "status": "processed",
+    "content_summary": "ỦY BAN NHÂN DÂN TỈNH KON TUM | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 784/QĐ-UBND | Kon Tum, ngày 23 tháng 10 năm 2019 QUYẾT ĐỊNH VỀ VIỆC PHÊ DUYỆT DANH MỤC THỦ TỤC HÀNH CHÍNH THUỘC THẨM QUYỀN GIẢI QUYẾT CỦA BAN QUẢN LÝ KH...",
+    "content_length": 9634,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:03:06.744262+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "2e095add498f00013e78e86a44a6b500",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495753,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495753,
+      "process_end_time": 1785495786,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-2e095add498f00013e78e86a44a6b500-chunk-000",
+      "doc-2e095add498f00013e78e86a44a6b500-chunk-001",
+      "doc-2e095add498f00013e78e86a44a6b500-chunk-002"
+    ]
+  },
+  "doc-5c8072e559d300ccfe2ae8799ba2f0b6": {
+    "status": "processed",
+    "content_summary": "BỘ LAO ĐỘNG – THƯƠNG BINH VÀ XÃ HỘI | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập – Tự do – Hạnh phúc Số: 2126/LĐTBXH-LĐTL V/v trợ cấp thôi việc | Hà Nội, ngày 18 tháng 06 năm 2009 Kính gửi: | Công ty trách nhiệm hữu hạn Sản xuất Upgain (64-66-68 khu ...",
+    "content_length": 2119,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:03:54.675029+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "5c8072e559d300ccfe2ae8799ba2f0b6",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495753,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495753,
+      "process_end_time": 1785495834,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-5c8072e559d300ccfe2ae8799ba2f0b6-chunk-000"
+    ]
+  },
+  "doc-fd63d5068e8dfa266602c21589f1a4de": {
+    "status": "processed",
+    "content_summary": "THỦ TƯỚNG CHÍNH PHỦ | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập – Tự do – Hạnh phúc Số: 1717/QĐ-TTg | Hà Nội, ngày 17 tháng 09 năm 2010 QUYẾT ĐỊNH VỀ VIỆC PHÊ CHUẨN KẾT QUẢ BẦU CỬ BỔ SUNG THÀNH VIÊN ỦY BAN NHÂN DÂN TỈNH THANH HÓA NHIỆM KỲ 2004 - 201...",
+    "content_length": 1591,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:04:15.300155+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "fd63d5068e8dfa266602c21589f1a4de",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495753,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495834,
+      "process_end_time": 1785495855,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-fd63d5068e8dfa266602c21589f1a4de-chunk-000"
+    ]
+  },
+  "doc-6d759fc3e4d4476b58ba942d9e7c6aca": {
+    "status": "processed",
+    "content_summary": "ỦY BAN NHÂN DÂN TỈNH SÓC TRĂNG | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 1396/QĐ-UBND | Sóc Trăng , ngày 20 tháng 5 năm 2019 QUYẾT ĐỊNH VỀ VIỆC BAN HÀNH DANH MỤC SẢN PHẨM NÔNG NGHIỆP CHỦ LỰC CẤP TỈNH TRÊN ĐỊA BÀN TỈNH SÓC T...",
+    "content_length": 1856,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:04:17.527442+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "6d759fc3e4d4476b58ba942d9e7c6aca",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495753,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495836,
+      "process_end_time": 1785495857,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-6d759fc3e4d4476b58ba942d9e7c6aca-chunk-000"
+    ]
+  },
+  "doc-d5f6bb3b05426437dce69bfae16387f0": {
+    "status": "processed",
+    "content_summary": "BỘ GIAO THÔNG VẬN TẢI | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 3010 /BGTVT-VT V/v: Hạn chế vận tải hành khách đường hàng không đi/đ ế n thành phố Hải Phòng và thành phố Hồ Chí Minh. | Hà Nội, ngày 31 tháng 3 năm 2020 Kính ...",
+    "content_length": 1755,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:04:49.532821+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "d5f6bb3b05426437dce69bfae16387f0",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495853,
+      "process_end_time": 1785495889,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-d5f6bb3b05426437dce69bfae16387f0-chunk-000"
+    ]
+  },
+  "doc-b6578a923275f9b1d5998d353a0130db": {
+    "status": "processed",
+    "content_summary": "ỦY BAN NHÂN DÂN THÀNH PHỐ HỒ CHÍ MINH SỞ XÂY DỰNG | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 7386/HD-SXD-CPXD | Thành phố Hồ Chí Minh, ngày 30 tháng 9 năm 2011 HƯỚNG DẪN THỦ TỤC CẤP GIẤY PHÉP XÂY DỰNG, CHUẨN BỊ VÀ THỰC HIỆN ...",
+    "content_length": 12525,
+    "created_at": "2026-07-31T11:02:33.796759+00:00",
+    "updated_at": "2026-07-31T11:04:59.564262+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "b6578a923275f9b1d5998d353a0130db",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495857,
+      "process_end_time": 1785495899,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-b6578a923275f9b1d5998d353a0130db-chunk-000",
+      "doc-b6578a923275f9b1d5998d353a0130db-chunk-001",
+      "doc-b6578a923275f9b1d5998d353a0130db-chunk-002",
+      "doc-b6578a923275f9b1d5998d353a0130db-chunk-003"
+    ]
+  },
+  "doc-186e730e06a15121072894c5cf62c29a": {
+    "status": "processed",
+    "content_summary": "TỔNG CỤC THUẾ CỤC THUẾ TP.HỒ CHÍ MINH | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 4090/CT-TTHT V/v: Chính sách thuế | TP. Hồ Chí Minh, ngày 22 tháng 5 năm 2015 Kính gửi: | Công ty TNHH Acacia I.T Việt Nam Đ/chỉ: Tầng 3 cao ốc...",
+    "content_length": 1345,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:05:01.494846+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "186e730e06a15121072894c5cf62c29a",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495875,
+      "process_end_time": 1785495901,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-186e730e06a15121072894c5cf62c29a-chunk-000"
+    ]
+  },
+  "doc-1b19738a7160384322cf278647e3d3b3": {
+    "status": "processed",
+    "content_summary": "BỘ XÂY DỰNG | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 3308/BXD-KTXD V/v hướng dẫn xác định chi phí thẩm tra tính hiệu quả , tính khả thi dự án. | Hà Nội, ngày 08 tháng 7 năm 2020 Kính gửi: Sở Xây dựng tỉnh Ninh Thuận. Bộ Xâ...",
+    "content_length": 1491,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:05:20.967367+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "1b19738a7160384322cf278647e3d3b3",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495891,
+      "process_end_time": 1785495920,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-1b19738a7160384322cf278647e3d3b3-chunk-000"
+    ]
+  },
+  "doc-cab04c0874385ba89e74f367111f13b4": {
+    "status": "processed",
+    "content_summary": "CHỈ THỊ CỦA ỦY BAN NHÂN DÂN TỈNH\nV/v Tăng cường công tác DQTV và công tác quốc phòng địa phương trên địa bàn Tỉnh ________________________\n- Trong những năm qua các cấp uỷ Đảng, chính quyền đã thường xuyên quan tâm củng cố lực lương vũ trang, trong đ...",
+    "content_length": 2792,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:05:20.967367+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "cab04c0874385ba89e74f367111f13b4",
+    "metadata": {
+      "parse_start_time": 1785495753,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495901,
+      "process_end_time": 1785495920,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-cab04c0874385ba89e74f367111f13b4-chunk-000"
+    ]
+  },
+  "doc-a34c97cbde47acb9106b9c5559d152cc": {
+    "status": "processed",
+    "content_summary": "ỦY BAN NHÂN DÂN TỈNH ĐỒNG NAI | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 1109 /QĐ-UBND | Đồng Nai, ngày 29 tháng 4 năm 2022 QUYẾT ĐỊNH PHÊ DUYỆT KẾ HOẠCH THỰC HIỆN “HỖ TRỢ HỆ SINH THÁI KHỞI NGHIỆP ĐỔI MỚI SÁNG TẠO TRÊN ĐỊA B...",
+    "content_length": 42477,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:08:00.391193+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "a34c97cbde47acb9106b9c5559d152cc",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495904,
+      "process_end_time": 1785496080,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 12,
+    "chunks_list": [
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-000",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-001",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-002",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-003",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-004",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-005",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-006",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-007",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-008",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-009",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-010",
+      "doc-a34c97cbde47acb9106b9c5559d152cc-chunk-011"
+    ]
+  },
+  "doc-e069871077e034d3a171a7473496d425": {
+    "status": "processed",
+    "content_summary": "UỶ BAN NHÂN DÂN TỈNH BÌNH DƯƠNG | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 35/2007/QĐ-UBND | Thủ Dầu Một, ngày 06 tháng 4 năm 2007 QUYẾT ĐỊNH VỀ VIỆC BAN HÀNH QUY ĐỊNH ĐƠN GIÁ BỒI THƯỜNG, HỖ TRỢ VỀ ĐẤT VÀ TÀI SẢN TRÊN ĐẤT CÔ...",
+    "content_length": 13201,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:07:41.152736+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "e069871077e034d3a171a7473496d425",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495754,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495975,
+      "process_end_time": 1785496061,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-e069871077e034d3a171a7473496d425-chunk-000",
+      "doc-e069871077e034d3a171a7473496d425-chunk-001",
+      "doc-e069871077e034d3a171a7473496d425-chunk-002",
+      "doc-e069871077e034d3a171a7473496d425-chunk-003",
+      "doc-e069871077e034d3a171a7473496d425-chunk-004"
+    ]
+  },
+  "doc-f5ea4d7c02259c43d60671d5db1231fb": {
+    "status": "processed",
+    "content_summary": "CHỈ THỊ\nVề việc triển khai thực hiện chuyển đổi mô hình quản lý điện nông thôn trên địa bàn tỉnh Hà Tây Để thực hiện Nghị định số 45/2001/NĐ-CP ngày 02/8/2001 của Chính phủ về hoạt động điện lực và sử dụng điện; Quyết định số 27/2002/QĐ-BCN ngày 18/6...",
+    "content_length": 3441,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:06:54.374748+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "f5ea4d7c02259c43d60671d5db1231fb",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495834,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785495975,
+      "process_end_time": 1785496014,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-f5ea4d7c02259c43d60671d5db1231fb-chunk-000"
+    ]
+  },
+  "doc-60484a714045b1f9124fd07bf5484851": {
+    "status": "processed",
+    "content_summary": "HỘI ĐỒNG NHÂN DÂN TỈNH LÀO CAI | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 14/2018/NQ-HĐND | Lào Cai, ngày 12 tháng 12 năm 2018 NGHỊ QUYẾT QUY ĐỊNH MỨC CHI TỔ CHỨC HỘI THI SÁNG TẠO KỸ THUẬT VÀ CUỘC THI SÁNG TẠO THANH THIẾU NI...",
+    "content_length": 4681,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:07:55.506343+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "60484a714045b1f9124fd07bf5484851",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495836,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496038,
+      "process_end_time": 1785496075,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-60484a714045b1f9124fd07bf5484851-chunk-000",
+      "doc-60484a714045b1f9124fd07bf5484851-chunk-001"
+    ]
+  },
+  "doc-b0864dfaa5c3a12d1619453393ce5fb6": {
+    "status": "processed",
+    "content_summary": "QUYẾT ĐỊNH\n\nCỦA HỘI ĐỒNG BỘ TRƯỞNG SỐ 67/HĐBT NGÀY 12-9-1981 VỀ VIỆC PHÂN VẠCH ĐỊA GIỚI THỊ TRẤN AN LẠC THUỘC HUYỆN BÌNH CHÁNH VÀ MỘT SỐ XÃ, PHƯỜNG THUỘC THÀNH PHỐ HỒ CHÍ MINH.\n\nHỘI ĐỒNG BỘ TRƯỞNG\nCăn cứ điều 107 Hiến pháp của nước Cộng hoà xã hội ch...",
+    "content_length": 1417,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:08:42.725944+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "b0864dfaa5c3a12d1619453393ce5fb6",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495853,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496069,
+      "process_end_time": 1785496122,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-b0864dfaa5c3a12d1619453393ce5fb6-chunk-000"
+    ]
+  },
+  "doc-33bca1ac1c6a5f93cd85e5c3045aa1f5": {
+    "status": "processed",
+    "content_summary": "NGHỊ QUYẾT\nBan hành quy định một số chế độ chi phục vụ hoạt động Hội đồng nhân dân các cấp trên địa bàn tỉnh Bình Dương _____________________\n\nHỘI ĐỒNG NHÂN DÂN TỈNH BÌNH DƯƠNG\n\nKHÓA X - KỲ HỌP THỨ SÁU\nCăn cứ Luật Tổ chức chính quyền địa phương ngày ...",
+    "content_length": 13709,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:10:07.353971+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "33bca1ac1c6a5f93cd85e5c3045aa1f5",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495857,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496077,
+      "process_end_time": 1785496207,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-33bca1ac1c6a5f93cd85e5c3045aa1f5-chunk-000",
+      "doc-33bca1ac1c6a5f93cd85e5c3045aa1f5-chunk-001",
+      "doc-33bca1ac1c6a5f93cd85e5c3045aa1f5-chunk-002",
+      "doc-33bca1ac1c6a5f93cd85e5c3045aa1f5-chunk-003",
+      "doc-33bca1ac1c6a5f93cd85e5c3045aa1f5-chunk-004"
+    ]
+  },
+  "doc-10c57c112e5926cc92bce1db6ac49a63": {
+    "status": "processed",
+    "content_summary": "ỦY BAN NHÂN DÂN TỈNH BẠC LIÊU | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 1762 /QĐ-UBND | Bạc Liêu, ngày 29 tháng 9 năm 2017 QUYẾT ĐỊNH VỀ VIỆC CÔNG BỐ DANH MỤC THỦ TỤC HÀNH CHÍNH THUỘC THẨM QUYỀN GIẢI QUYẾT CỦA ỦY BAN NHÂN D...",
+    "content_length": 27968,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:11:37.820959+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "10c57c112e5926cc92bce1db6ac49a63",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495875,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496100,
+      "process_end_time": 1785496297,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 9,
+    "chunks_list": [
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-000",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-001",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-002",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-003",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-004",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-005",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-006",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-007",
+      "doc-10c57c112e5926cc92bce1db6ac49a63-chunk-008"
+    ]
+  },
+  "doc-a4794f1edf9be23d0c3c2eba4708884a": {
+    "status": "processed",
+    "content_summary": "Chương I\n\nQUY ĐỊNH CHUNG\nĐiều 1. Phạm vi điều chỉnh Thông tư này quy định chi tiết một số điều của Luật Lưu trữ gồm:\n1. Quản lý tài liệu lưu trữ trong trường hợp cơ quan, tổ chức giải thể, phá sản hoặc tổ chức lại (khoản 2\nĐiều 13).\n2. Trình tự, thủ ...",
+    "content_length": 41413,
+    "created_at": "2026-07-31T11:02:33.796759+00:00",
+    "updated_at": "2026-07-31T11:12:08.300984+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "a4794f1edf9be23d0c3c2eba4708884a",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495891,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496174,
+      "process_end_time": 1785496328,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 12,
+    "chunks_list": [
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-000",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-001",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-002",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-003",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-004",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-005",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-006",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-007",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-008",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-009",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-010",
+      "doc-a4794f1edf9be23d0c3c2eba4708884a-chunk-011"
+    ]
+  },
+  "doc-104d7b97b1e96aec330cb3ac0081fea9": {
+    "status": "processed",
+    "content_summary": "BỘ TÀI CHÍNH TỔNG CỤC THUẾ | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 2830 TCT/NV5 V / v Thuế TNDN đối với bảo hiểm y tế | Hà Nội, ngày 26 tháng 7 năm 2001 Kính gửi: Cục thuế Thành phố Hải Phòng Trả lời công văn số 277/CT-ĐT...",
+    "content_length": 1706,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:11:27.566041+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "104d7b97b1e96aec330cb3ac0081fea9",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495901,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496257,
+      "process_end_time": 1785496287,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-104d7b97b1e96aec330cb3ac0081fea9-chunk-000"
+    ]
+  },
+  "doc-5f4b95c0c01547e74d38fafc2162e419": {
+    "status": "processed",
+    "content_summary": "TỔNG CỤC HẢI QUAN CỤC THUẾ XUẤT NHẬP KHẨU | CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM Độc lập - Tự do - Hạnh phúc Số: 6790/ TX NK-CST V/v mã số hàng hóa và thuế GTGT | Hà Nội, ngày 29 tháng 7 năm 2019 Kính gửi: Công ty TNHH Osstem Implant Vi Na. (Phòng K0.0...",
+    "content_length": 4042,
+    "created_at": "2026-07-31T11:02:33.795760+00:00",
+    "updated_at": "2026-07-31T11:12:04.705832+00:00",
+    "file_path": "unknown_source",
+    "track_id": "insert_20260731_180233_7000961d",
+    "content_hash": "5f4b95c0c01547e74d38fafc2162e419",
+    "metadata": {
+      "parse_start_time": 1785495754,
+      "parse_stage_skipped": true,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "analyzing_start_time": 1785495904,
+      "analyzing_stage_skipped": true,
+      "process_start_time": 1785496289,
+      "process_end_time": 1785496324,
+      "chunk_method": "legacy_chunking_func",
+      "chunk_opts": "size=1200, split_only=False, overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-5f4b95c0c01547e74d38fafc2162e419-chunk-000",
+      "doc-5f4b95c0c01547e74d38fafc2162e419-chunk-001"
+    ]
+  }
+}

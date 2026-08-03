@@ -1,0 +1,96 @@
+{
+  "summary": {
+    "LightRAG-naive": {
+      "avg_rouge_l": 0.2677,
+      "avg_recall_1": 0.2473,
+      "avg_latency_ms": 315.17,
+      "avg_word_count": 17.8,
+      "samples_evaluated": 4
+    },
+    "LightRAG-hybrid": {
+      "avg_rouge_l": 0.0,
+      "avg_recall_1": 0.0,
+      "avg_latency_ms": 377.04,
+      "avg_word_count": 11.0,
+      "samples_evaluated": 4
+    }
+  },
+  "details": {
+    "naive": [
+      {
+        "query": "Điều kiện thành lập công ty TNHH một thành viên là gì?",
+        "ground_truth": "Công ty TNHH một thành viên do một tổ chức hoặc một cá nhân làm chủ sở hữu; chủ sở hữu chịu trách nhiệm hữu hạn trong phạm vi vốn điều lệ.",
+        "answer": "[Mock Legal LLM Answer for prompt: Điều kiện thành lập công ty TNHH một thành viên là gì?...]",
+        "latency_ms": 345.56,
+        "rouge_l": 0.24,
+        "ngram_recall_1": 0.25,
+        "word_count": 18
+      },
+      {
+        "query": "Mức phạt xe ô tô vượt đèn đỏ theo quy định hiện hành?",
+        "ground_truth": "Người điều khiển xe ô tô không chấp hành hiệu lệnh của đèn tín hiệu giao thông bị phạt tiền từ 4.000.000 đồng đến 6.000.000 đồng và tước GPLX 1 đến 3 tháng.",
+        "answer": "[Mock Legal LLM Answer for prompt: Mức phạt xe ô tô vượt đèn đỏ theo quy định hiện hành?...]",
+        "latency_ms": 313.96,
+        "rouge_l": 0.1538,
+        "ngram_recall_1": 0.1515,
+        "word_count": 19
+      },
+      {
+        "query": "Thủ tục đăng ký kết hôn cần những giấy tờ gì?",
+        "ground_truth": "Đăng ký kết hôn nộp hồ sơ tại UBND cấp xã gồm Tờ khai đăng ký kết hôn và Giấy xác nhận tình trạng hôn nhân.",
+        "answer": "[Mock Legal LLM Answer for prompt: Thủ tục đăng ký kết hôn cần những giấy tờ gì?...]",
+        "latency_ms": 290.39,
+        "rouge_l": 0.2326,
+        "ngram_recall_1": 0.2308,
+        "word_count": 17
+      },
+      {
+        "query": "Người lao động được hưởng trợ cấp thôi việc khi nào?",
+        "ground_truth": "Người lao động làm việc thường xuyên từ đủ 12 tháng trở lên được hưởng trợ cấp thôi việc khi chấm dứt hợp đồng lao động hợp pháp.",
+        "answer": "[Mock Legal LLM Answer for prompt: Người lao động được hưởng trợ cấp thôi việc khi nào?...]",
+        "latency_ms": 310.76,
+        "rouge_l": 0.4444,
+        "ngram_recall_1": 0.3571,
+        "word_count": 17
+      }
+    ],
+    "hybrid": [
+      {
+        "query": "Điều kiện thành lập công ty TNHH một thành viên là gì?",
+        "ground_truth": "Công ty TNHH một thành viên do một tổ chức hoặc một cá nhân làm chủ sở hữu; chủ sở hữu chịu trách nhiệm hữu hạn trong phạm vi vốn điều lệ.",
+        "answer": "Sorry, I'm not able to provide an answer to that question.[no-context]",
+        "latency_ms": 393.86,
+        "rouge_l": 0.0,
+        "ngram_recall_1": 0.0,
+        "word_count": 11
+      },
+      {
+        "query": "Mức phạt xe ô tô vượt đèn đỏ theo quy định hiện hành?",
+        "ground_truth": "Người điều khiển xe ô tô không chấp hành hiệu lệnh của đèn tín hiệu giao thông bị phạt tiền từ 4.000.000 đồng đến 6.000.000 đồng và tước GPLX 1 đến 3 tháng.",
+        "answer": "Sorry, I'm not able to provide an answer to that question.[no-context]",
+        "latency_ms": 374.03,
+        "rouge_l": 0.0,
+        "ngram_recall_1": 0.0,
+        "word_count": 11
+      },
+      {
+        "query": "Thủ tục đăng ký kết hôn cần những giấy tờ gì?",
+        "ground_truth": "Đăng ký kết hôn nộp hồ sơ tại UBND cấp xã gồm Tờ khai đăng ký kết hôn và Giấy xác nhận tình trạng hôn nhân.",
+        "answer": "Sorry, I'm not able to provide an answer to that question.[no-context]",
+        "latency_ms": 360.17,
+        "rouge_l": 0.0,
+        "ngram_recall_1": 0.0,
+        "word_count": 11
+      },
+      {
+        "query": "Người lao động được hưởng trợ cấp thôi việc khi nào?",
+        "ground_truth": "Người lao động làm việc thường xuyên từ đủ 12 tháng trở lên được hưởng trợ cấp thôi việc khi chấm dứt hợp đồng lao động hợp pháp.",
+        "answer": "Sorry, I'm not able to provide an answer to that question.[no-context]",
+        "latency_ms": 380.11,
+        "rouge_l": 0.0,
+        "ngram_recall_1": 0.0,
+        "word_count": 11
+      }
+    ]
+  }
+}

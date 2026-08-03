@@ -1,0 +1,212 @@
+{
+  "doc-abf5dae219d78e569bb548337b5eb2e4-chunk-000": {
+    "tokens": 73,
+    "content": "Xử phạt người điều khiển xe ô tô không chấp hành hiệu lệnh của đèn tín hiệu giao thông (vượt đèn đỏ): Phạt tiền từ 4.000.000 đồng đến 6.000.000 đồng và bị tước quyền sử dụng Giấy phép lái xe từ 01 tháng đến 03 tháng.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-abf5dae219d78e569bb548337b5eb2e4",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:58b8419a719a74f67b01fdfb77f514c4",
+      "default:extract:3d90dcba7bda5ed07928463db9e688b2"
+    ],
+    "create_time": 1785493757,
+    "update_time": 1785493779,
+    "_id": "doc-abf5dae219d78e569bb548337b5eb2e4-chunk-000"
+  },
+  "doc-937e53b33d0a082d73c7930653560c01-chunk-000": {
+    "tokens": 39,
+    "content": "Quyền tác giả phát sinh kể từ khi tác phẩm được sáng tạo và được thể hiện dưới một hình thức vật chất nhất định, không bắt buộc phải đăng ký hay bảo hộ.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-937e53b33d0a082d73c7930653560c01",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:326840c11653f1712b67c71cf8c27033",
+      "default:extract:d44b74e1f5d3706e43e6559408f33c69"
+    ],
+    "create_time": 1785493757,
+    "update_time": 1785493774,
+    "_id": "doc-937e53b33d0a082d73c7930653560c01-chunk-000"
+  },
+  "doc-7864a84c4ccf3bc65e47b73bb44dc3b2-chunk-000": {
+    "tokens": 51,
+    "content": "Trợ cấp thôi việc: NSDLĐ có trách nhiệm trả trợ cấp thôi việc cho người lao động đã làm việc thường xuyên cho mình từ đủ 12 tháng trở lên, mỗi năm làm việc được tính bằng một nửa tháng tiền lương.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-7864a84c4ccf3bc65e47b73bb44dc3b2",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:77833b48e24848002d4660c2d6bd0b81",
+      "default:extract:f5099b5a12c6f1eb4208a978f88f1f69"
+    ],
+    "create_time": 1785493757,
+    "update_time": 1785493779,
+    "_id": "doc-7864a84c4ccf3bc65e47b73bb44dc3b2-chunk-000"
+  },
+  "doc-1227f25820dbab89aa66b390f12ea35e-chunk-000": {
+    "tokens": 70,
+    "content": "Điều kiện thành lập công ty TNHH một thành viên theo Luật Doanh nghiệp 2020: Chủ sở hữu công ty là một tổ chức hoặc một cá nhân; công ty có quyền sở hữu tài sản độc lập và chịu trách nhiệm hữu hạn về các khoản nợ và nghĩa vụ tài sản khác trong phạm vi vốn điều lệ.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-1227f25820dbab89aa66b390f12ea35e",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:31200a9c155427e8658479559507160e",
+      "default:extract:22be15c89184919cdd8429db4411608a"
+    ],
+    "create_time": 1785493779,
+    "update_time": 1785493795,
+    "_id": "doc-1227f25820dbab89aa66b390f12ea35e-chunk-000"
+  },
+  "doc-b45736a44e1f618dfee2238f73c43251-chunk-000": {
+    "tokens": 66,
+    "content": "Đăng ký kết hôn: Nam, nữ muốn kết hôn phải nộp hồ sơ đăng ký kết hôn tại Ủy ban nhân dân cấp xã nơi cư trú của một trong hai bên. Hồ sơ bao gồm Tờ khai đăng ký kết hôn và Giấy xác nhận tình trạng hôn nhân.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-b45736a44e1f618dfee2238f73c43251",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:2a9a6831b94a85d7fee65ee0d80bdd04",
+      "default:extract:947f9cb35b96b172fabea27d7458879a"
+    ],
+    "create_time": 1785493779,
+    "update_time": 1785493796,
+    "_id": "doc-b45736a44e1f618dfee2238f73c43251-chunk-000"
+  },
+  "doc-5070e708aab997542c2d8b2ed1a6e03d-chunk-000": {
+    "tokens": 63,
+    "content": "Hành vi bị nghiêm cấm trên không gian mạng: Sử dụng không gian mạng để tuyên truyền chống Nhà nước, xúi giục gian dối, phá hoại khối đại đoàn kết toàn dân tộc, hoặc phát tán thông tin sai sự thật gây hoang mang.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-5070e708aab997542c2d8b2ed1a6e03d",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:be1e81a157a8560b745535868e39e45c",
+      "default:extract:1089b37b5863959d7fa0bb8de246ca06"
+    ],
+    "create_time": 1785493779,
+    "update_time": 1785493796,
+    "_id": "doc-5070e708aab997542c2d8b2ed1a6e03d-chunk-000"
+  },
+  "doc-7623c813f1bd26086aadac4da0cbf527-chunk-000": {
+    "tokens": 57,
+    "content": "Thủ tục đăng ký doanh nghiệp đối với công ty TNHH: Người thành lập doanh nghiệp hoặc người được ủy quyền nộp hồ sơ đăng ký doanh nghiệp tại Cơ quan đăng ký kinh doanh thuộc Sở Kế hoạch và Đầu tư tỉnh/thành phố.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-7623c813f1bd26086aadac4da0cbf527",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:50734b6ca94b6d3d0f87f285929ea660",
+      "default:extract:bd4719b1c37a1c0b10916869f1dfdd8c"
+    ],
+    "create_time": 1785493796,
+    "update_time": 1785493812,
+    "_id": "doc-7623c813f1bd26086aadac4da0cbf527-chunk-000"
+  },
+  "doc-28b4049d21825f9322ba0fe3336d5b1e-chunk-000": {
+    "tokens": 48,
+    "content": "Nghị định 01/2021/NĐ-CP quy định chi tiết về đăng ký doanh nghiệp, cấp giấy chứng nhận đăng ký doanh nghiệp và hướng dẫn thi hành một số điều của Luật Doanh nghiệp 2020.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-28b4049d21825f9322ba0fe3336d5b1e",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:63ab1d0e96bf269191b83a3da483b1d0",
+      "default:extract:4740cd4a494b9ac9445129da51eaff47"
+    ],
+    "create_time": 1785493796,
+    "update_time": 1785493813,
+    "_id": "doc-28b4049d21825f9322ba0fe3336d5b1e-chunk-000"
+  },
+  "doc-383c129e79c9b093a72d561527fc90ff-chunk-000": {
+    "tokens": 62,
+    "content": "Quyền lợi của người lao động khi đơn phương chấm dứt hợp đồng lao động hợp pháp: Người lao động đã làm việc thường xuyên từ đủ 12 tháng trở lên được hưởng trợ cấp mất việc làm hoặc trợ cấp thất nghiệp theo quy định của Bộ luật Lao động 2019.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-383c129e79c9b093a72d561527fc90ff",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:e8ec89076fc0bc64fadf09d26b85c298",
+      "default:extract:2771eaf2f6f9fcd01923275da8a62e8c"
+    ],
+    "create_time": 1785493796,
+    "update_time": 1785493813,
+    "_id": "doc-383c129e79c9b093a72d561527fc90ff-chunk-000"
+  },
+  "doc-6e3ac0c93abb168e9d8c6ec36ef088cc-chunk-000": {
+    "tokens": 75,
+    "content": "Tội lừa đảo chiếm đoạt tài sản: Người nào bằng thủ đoạn gian dối chiếm đoạt tài sản của người khác trị giá từ 2.000.000 đồng đến dưới 50.000.000 đồng thì bị phạt cải tạo không giam giữ đến 03 năm hoặc phạt tù từ 06 tháng đến 03 năm.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-6e3ac0c93abb168e9d8c6ec36ef088cc",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:6e1293c5183093754efed3fc52d74592",
+      "default:extract:17253a0cc431885139b8be9446e08f61"
+    ],
+    "create_time": 1785493813,
+    "update_time": 1785493829,
+    "_id": "doc-6e3ac0c93abb168e9d8c6ec36ef088cc-chunk-000"
+  },
+  "doc-fc7394f82dd0c72edcd7ac2c8a487f0c-chunk-000": {
+    "tokens": 49,
+    "content": "Điều kiện kết hôn: Nam từ đủ 20 tuổi trở lên, nữ từ đủ 18 tuổi trở lên; việc kết hôn do nam và nữ tự nguyện quyết định; không bị mất năng lực hành vi dân sự.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-fc7394f82dd0c72edcd7ac2c8a487f0c",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:01b1e9c0e17a9a496ef0a09de378c27d",
+      "default:extract:d8f49239d6fc911ee85d7d914a751c42"
+    ],
+    "create_time": 1785493813,
+    "update_time": 1785493829,
+    "_id": "doc-fc7394f82dd0c72edcd7ac2c8a487f0c-chunk-000"
+  },
+  "doc-12f3ff038b03a558488ffe5157c097b3-chunk-000": {
+    "tokens": 62,
+    "content": "Điều kiện có hiệu lực của giao dịch dân sự: Chủ thể có năng lực hành vi dân sự phù hợp; chủ thể tham gia giao dịch hoàn toàn tự nguyện; mục đích và nội dung của giao dịch không vi phạm điều cấm của luật, không trái đạo đức xã hội.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-12f3ff038b03a558488ffe5157c097b3",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:457fe0142245fa7c3a53c52f50d75dbd",
+      "default:extract:97d8bd0ef803f5737f4af844bb715b30"
+    ],
+    "create_time": 1785493813,
+    "update_time": 1785493829,
+    "_id": "doc-12f3ff038b03a558488ffe5157c097b3-chunk-000"
+  },
+  "doc-9101f127aa4dc7631aa3d73ee3f9a2da-chunk-000": {
+    "tokens": 49,
+    "content": "Nghị định 123/2020/NĐ-CP quy định về hóa đơn, chứng từ; quản lý, sử dụng hóa đơn điện tử trong giao dịch bán hàng hóa, cung cấp dịch vụ của các tổ chức, cá nhân.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-9101f127aa4dc7631aa3d73ee3f9a2da",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:b45741ad7564e1c1612e85e40f87212b",
+      "default:extract:683ffa9f3f72473f833587c3d26747fa"
+    ],
+    "create_time": 1785493829,
+    "update_time": 1785493846,
+    "_id": "doc-9101f127aa4dc7631aa3d73ee3f9a2da-chunk-000"
+  },
+  "doc-75fba5c8bb226e88753b7df779f49a24-chunk-000": {
+    "tokens": 66,
+    "content": "Xử phạt người điều khiển xe mô tô, xe gắn máy không chấp hành hiệu lệnh của đèn tín hiệu giao thông: Phạt tiền từ 800.000 đồng đến 1.000.000 đồng và tước Giấy phép lái xe từ 01 tháng đến 03 tháng.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-75fba5c8bb226e88753b7df779f49a24",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:0f4bdc1a8e606e7b35740627dfe27f73",
+      "default:extract:9a95e016f14b0e6ed7be8a98be23f2be"
+    ],
+    "create_time": 1785493830,
+    "update_time": 1785493846,
+    "_id": "doc-75fba5c8bb226e88753b7df779f49a24-chunk-000"
+  },
+  "doc-8c7ab3c89ec8c877124455816cb40c04-chunk-000": {
+    "tokens": 36,
+    "content": "Thuế giá trị gia tăng là thuế tính trên giá trị tăng thêm của hàng hóa, dịch vụ phát sinh trong quá trình từ sản xuất, lưu thông đến tiêu dùng.",
+    "chunk_order_index": 0,
+    "full_doc_id": "doc-8c7ab3c89ec8c877124455816cb40c04",
+    "file_path": "unknown_source",
+    "llm_cache_list": [
+      "default:extract:9b9017c44c8546f5514ec280f60f3d6c",
+      "default:extract:580f0548af9f63a0a6b738c3c818b900"
+    ],
+    "create_time": 1785493830,
+    "update_time": 1785493846,
+    "_id": "doc-8c7ab3c89ec8c877124455816cb40c04-chunk-000"
+  }
+}
